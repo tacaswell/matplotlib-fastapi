@@ -1,0 +1,35 @@
+  <head>
+    <link rel="stylesheet" href="/static/css/page.css" type="text/css">
+    <link rel="stylesheet" href="/static/css/boilerplate.css" type="text/css" />
+    <link rel="stylesheet" href="/static/css/fbm.css" type="text/css" />
+    <link rel="stylesheet" href="/static/css/mpl.css" type="text/css">
+    <script src="/js/mpl.js"></script>
+    <script>
+      function ready(fn) {
+        if (document.readyState != "loading") {
+          fn();
+        } else {
+          document.addEventListener("DOMContentLoaded", fn);
+        }
+      }
+
+      ready(
+        function () {
+          var websocket_type = mpl.get_websocket_type();
+          var websocket = new websocket_type(
+              "{{ ws_uri }}/ws/{{ fig_id }}");
+          var fig = new mpl.figure(
+              "{{ fig_id }}", websocket, (figure, format)=>nil,
+              document.getElementById("figure"));
+        }
+      );
+    </script>
+
+    <title>matplotlib</title>
+  </head>
+
+  <body>
+    <div id="mpl-warnings" class="mpl-warnings"></div>
+    <div id="figure" style="margin: 10px 10px;"></div>
+  </body>
+</html>
