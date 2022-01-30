@@ -312,12 +312,6 @@ class FastAPIBackend(_Backend):
 
 mg.select_gui_toolkit(FastAPIBackend)
 fr = mg.FigureRegistry()
-fig, axd = fr.subplot_mosaic("AA;BC", label="bob")
-manager = mg.promote_figure(fig)
-axd["A"].plot(range(5))
-axd["B"].imshow([[1, 2], [3, 4]])
-fig2, axd = fr.subplot_mosaic("AG;BC", label="bill")
-manager2 = mg.promote_figure(fig2)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -435,5 +429,8 @@ async def websocket_endpoint(websocket: WebSocket, fignum: str):
             handler = getattr(
                 canvas, "handle_{0}".format(e_type), canvas.handle_unknown_event
             )
+            # TODO we need to pass a list of all websockets associated with this
+            # figure, not just the one the message came in on so all views stay
+            # in sync
             await handler(data, websocket)
         await canvas.drain_queue(websocket)
