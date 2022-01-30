@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from collections import deque
 
+from pydantic import BaseModel
+
 from starlette.websockets import WebSocketDisconnect
 
 from fastapi import FastAPI, WebSocket, Request
@@ -16,7 +18,7 @@ from PIL import Image
 from matplotlib.backend_bases import _Backend, FigureManagerBase, NavigationToolbar2
 
 from matplotlib.backends.backend_agg import FigureCanvasAgg, RendererAgg
-
+from mpl_fastapi.utils import get_base_url
 import mpl_gui as mg
 
 
@@ -342,6 +344,22 @@ async def read_item(request: Request, figname: str):
         },
     )
 
+
+class MosaicFigure(BaseModel):
+    name: str
+    pattern: str
+    width: float = 6.4
+    height: float = 4.8
+
+
+@app.post("/figure/create")
+async def read_item(request: Request, figure: MosaicFigure):
+    print(figure)
+    base_url = get_base_url(request)
+    fig, axd = fr.subplot_mosaic(figure.pattern, label=figure.name)
+    mg.promote_figure(fig)
+    fig.set_size_inches(figure.width, figure.height, forward=True)
+    return {"figure_url": f"{base_url}figure/view/{figure.name}"}
 
 
 # TODO add caching logic
