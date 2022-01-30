@@ -331,6 +331,19 @@ async def read_item(request: Request):
     )
 
 
+@app.get("/figure/view/{figname}", response_class=HTMLResponse)
+async def read_item(request: Request, figname: str):
+    return templates.TemplateResponse(
+        "figure.html",
+        {
+            "request": request,
+            "ws_uri": f"ws://{request.url.hostname}:{request.url.port}",
+            "fig_id": figname,
+        },
+    )
+
+
+
 # TODO add caching logic
 @app.get("/js/mpl.js", response_class=PlainTextResponse)
 async def get_mpl_js(request: Request):
