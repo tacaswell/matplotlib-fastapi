@@ -307,7 +307,7 @@ class FastAPIBackend(_Backend):
     FigureManager = FastAPIManger
 
 
-mg.switch_backend(FastAPIBackend)
+mg.select_gui_toolkit(FastAPIBackend)
 fr = mg.FigureRegistry()
 fig, axd = fr.subplot_mosaic("AA;BC", label="bob")
 manager = mg.promote_figure(fig)
