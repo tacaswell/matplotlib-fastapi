@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from starlette.websockets import WebSocketDisconnect
 
-from fastapi import FastAPI, WebSocket, Request
+from fastapi import FastAPI, WebSocket, Request, Depends, Form
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -315,6 +315,8 @@ fig, axd = fr.subplot_mosaic("AA;BC", label="bob")
 manager = mg.promote_figure(fig)
 axd["A"].plot(range(5))
 axd["B"].imshow([[1, 2], [3, 4]])
+fig2, axd = fr.subplot_mosaic("AG;BC", label="bill")
+manager2 = mg.promote_figure(fig2)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -352,14 +354,42 @@ class MosaicFigure(BaseModel):
     height: float = 4.8
 
 
+async def _create_figure(name, pattern):
+    fig, axd = fr.subplot_mosaic(pattern, label=name)
+    mg.promote_figure(fig)
+    return fig, axd
+
+
 @app.post("/figure/create")
-async def read_item(request: Request, figure: MosaicFigure):
+async def create_figure(request: Request, figure: MosaicFigure):
     print(figure)
     base_url = get_base_url(request)
-    fig, axd = fr.subplot_mosaic(figure.pattern, label=figure.name)
-    mg.promote_figure(fig)
+    fig, ax = await _create_figure(figure.name, figure.pattern)
     fig.set_size_inches(figure.width, figure.height, forward=True)
-    return {"figure_url": f"{base_url}figure/view/{figure.name}"}
+    return {
+        "figure_url": f"{base_url}figure/view/{figure.name}",
+        "fig_id": figure.name,
+    }
+
+
+@app.get("/figure/form")
+async def figure_form(request: Request):
+    return templates.TemplateResponse("create_form.html", {"request": request})
+
+
+@app.post("/figure/form")
+async def figure_form(
+    request: Request, name: str = Form(...), pattern: str = Form(...)
+):
+    fig, axd = await _create_figure(name, pattern)
+    return templates.TemplateResponse(
+        "figure.html",
+        {
+            "request": request,
+            "ws_uri": f"ws://{request.url.hostname}:{request.url.port}",
+            "fig_id": name,
+        },
+    )
 
 
 # TODO add caching logic
