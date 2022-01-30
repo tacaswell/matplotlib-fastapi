@@ -341,6 +341,7 @@ async def get_mpl_js(request: Request):
 @app.websocket("/ws/{fignum}")
 async def websocket_endpoint(websocket: WebSocket, fignum: str):
     await websocket.accept()
+    fig = fr.by_label[fignum]
     canvas = fig.canvas
     manager = canvas.manager
     await websocket.send_json({"type": "image_mode", "mode": "full"})
