@@ -1,4 +1,5 @@
 from io import BytesIO, StringIO
+from typing import List
 import json
 from pathlib import Path
 from collections import deque
@@ -347,6 +348,19 @@ async def read_item(request: Request, figname: str):
     )
 
 
+class PlotData(BaseModel):
+    x: List[float]
+    y: List[float]
+    label: str | None = None
+
+
+@app.post("/axes/plot/{figname}/{axes}")
+async def read_item(request: Request, figname: str, axes: str, payload: PlotData):
+    fig = fr.by_label[figname]
+    ax = fig.axd[axes]
+    ax.plot(payload.x, payload.y, label=payload.label)
+
+
 class MosaicFigure(BaseModel):
     name: str
     pattern: str
@@ -357,6 +371,8 @@ class MosaicFigure(BaseModel):
 async def _create_figure(name, pattern):
     fig, axd = fr.subplot_mosaic(pattern, label=name)
     mg.promote_figure(fig)
+    # monkey patch the axes dictionary on....
+    fig.axd = axd
     return fig, axd
 
 
@@ -405,6 +421,7 @@ async def websocket_endpoint(websocket: WebSocket, fignum: str):
     fig = fr.by_label[fignum]
     canvas = fig.canvas
     manager = canvas.manager
+
     await websocket.send_json({"type": "image_mode", "mode": "full"})
     while True:
         try:
