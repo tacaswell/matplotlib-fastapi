@@ -1,4 +1,7 @@
-def get_base_url(request):
+from fastapi import Request
+
+
+def get_base_url(request: Request) -> str:
     # We want to get the scheme, host, and root_path (if any)
     # *as it appears to the client* for use in assembling links to
     # include in our responses.

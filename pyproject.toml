@@ -59,7 +59,7 @@ packages = ["mpl_fastapi"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-mpl_fastapi = ["static/**/*", "templates/**/*"]
+mpl_fastapi = ["static/**/*", "templates/**/*", "py.typed"]
 
 [tool.setuptools_scm]
 write_to = "mpl_fastapi/_version.py"

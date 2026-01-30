@@ -12,3 +12,4 @@ recursive-exclude * *.py[co]
 recursive-include docs *.rst conf.py Makefile make.bat
 recursive-include mpl_fastapi/static *
 recursive-include mpl_fastapi/templates *
+include mpl_fastapi/py.typed

@@ -1,5 +1,5 @@
 from io import BytesIO, StringIO
-from typing import List
+from typing import Any, Literal
 import json
 from pathlib import Path
 from collections import deque
@@ -14,33 +14,49 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 import numpy as np
+import numpy.typing as npt
 from PIL import Image
 
-from matplotlib.backend_bases import _Backend, FigureManagerBase, NavigationToolbar2
+from matplotlib.backend_bases import (_Backend, FigureManagerBase,
+                                      NavigationToolbar2, MouseEvent, LocationEvent)
+from matplotlib.figure import Figure
+from matplotlib.axes import Axes
 
 from matplotlib.backends.backend_agg import FigureCanvasAgg, RendererAgg
 from mpl_fastapi.utils import get_base_url
-from mpl_fastapi.registry import FigureRegistry, select_gui_toolkit, promote_figure
+from mpl_fastapi.registry import FigureRegistry, select_gui_toolkit
 
 
 class FastAPICanvas(FigureCanvasAgg):
-    def __init__(self, *args, **kwargs):
+    # Attributes from this class
+    _force_full: bool
+    _current_image_mode: str
+    _msg_queue: deque[dict[str, Any]]
+    _png_is_old: bool
+    _last_buff: npt.NDArray[np.uint32]
+    _renderer: RendererAgg
+    supports_binary: bool = True
+
+    # Declare attributes from parent FigureCanvasBase that we use
+    call_info: dict[str, Any]
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._force_full = False
         self._current_image_mode = "full"
         self._msg_queue = deque()
 
-    def start_event_loop(self, timeout=0):
+    def start_event_loop(self, timeout: float = 0) -> None:
         self.call_info["start_event_loop"] = {"timeout": timeout}
 
-    async def handle_unknown_event(self, ev, websocket):
+    async def handle_unknown_event(self, ev: dict[str, Any], websocket: WebSocket) -> None:
         print(ev["type"], ev)
         return None
 
-    async def handle_ack(self, ev, websocket):
+    async def handle_ack(self, ev: dict[str, Any], websocket: WebSocket) -> None:
         ...
 
-    async def handle_resize(self, ev, websocket):
+    async def handle_resize(self, ev: dict[str, Any], websocket: WebSocket) -> None:
         w = int(ev["width"] * self.device_pixel_ratio)
         h = int(ev["height"] * self.device_pixel_ratio)
         fig = self.figure
@@ -57,25 +73,25 @@ class FastAPICanvas(FigureCanvasAgg):
             }
         )
 
-    async def handle_set_device_pixel_ratio(self, ev, websocket):
+    async def handle_set_device_pixel_ratio(self, ev: dict[str, Any], websocket: WebSocket) -> None:
         device_pixel_ratio = ev["device_pixel_ratio"]
-        if self._set_device_pixel_ratio(device_pixel_ratio):
+        if self._set_device_pixel_ratio(device_pixel_ratio):  # type: ignore[attr-defined]
             self._force_full = True
             await websocket.send_json({"type": "draw"})
 
-    async def handle_send_image_mode(self, ev, websocket):
+    async def handle_send_image_mode(self, ev: dict[str, Any], websocket: WebSocket) -> None:
         await websocket.send_json(
             {"type": "image_mode", "mode": self._current_image_mode}
         )
 
-    async def handle_refresh(self, ev, websocket):
+    async def handle_refresh(self, ev: dict[str, Any], websocket: WebSocket) -> None:
         await websocket.send_json(
             {"type": "figure_label", "label": self.figure.get_label()}
         )
         self._force_full = True
         await websocket.send_json({"type": "draw"})
 
-    async def handle_draw(self, ev, websocket):
+    async def handle_draw(self, ev: dict[str, Any], websocket: WebSocket) -> None:
         self._png_is_old = True
         try:
             super().draw()
@@ -84,7 +100,7 @@ class FastAPICanvas(FigureCanvasAgg):
             if diff is not None:
                 await websocket.send_bytes(diff)
 
-    async def set_image_mode(self, mode, websocket):
+    async def set_image_mode(self, mode: Literal["full", "diff"], websocket: WebSocket) -> None:
         """
         Set the image mode for any subsequent images which will be sent
         to the clients. The modes may currently be either 'full' or 'diff'.
@@ -100,7 +116,7 @@ class FastAPICanvas(FigureCanvasAgg):
                 {"type": "image_mode", "mode": self._current_image_mode}
             )
 
-    async def get_diff_image(self, websocket):
+    async def get_diff_image(self, websocket: WebSocket) -> bytes | None:
         if self._png_is_old:
             renderer = self.get_renderer()
 
@@ -132,14 +148,15 @@ class FastAPICanvas(FigureCanvasAgg):
             with BytesIO() as png:
                 Image.fromarray(data).save(png, format="png")
                 return png.getvalue()
+        return None
 
-    def get_renderer(self, cleared=None):
+    def get_renderer(self, cleared: bool | None = None) -> RendererAgg:
         # Mirrors super.get_renderer, but caches the old one so that we can do
         # things such as produce a diff image in get_diff_image.
-        w, h = self.figure.bbox.size.astype(int)
+        w, h = np.asarray(self.figure.bbox.size).astype(int)
         key = w, h, self.figure.dpi
         try:
-            self._lastKey, self._renderer
+            _,_ = self._lastKey, self._renderer
         except AttributeError:
             need_new_renderer = True
         else:
@@ -147,7 +164,7 @@ class FastAPICanvas(FigureCanvasAgg):
 
         if need_new_renderer:
             self._renderer = RendererAgg(w, h, self.figure.dpi)
-            self._lastKey = key
+            self._lastKey = key  # type: ignore[assignment]
             self._last_buff = np.copy(
                 np.frombuffer(self._renderer.buffer_rgba(), dtype=np.uint32).reshape(
                     (self._renderer.height, self._renderer.width)
@@ -159,7 +176,7 @@ class FastAPICanvas(FigureCanvasAgg):
 
         return self._renderer
 
-    async def _handle_mouse(self, event, websocket):
+    async def _handle_mouse(self, event: dict[str, Any], websocket: WebSocket) -> None:
         x = event["x"]
         y = event["y"]
         y = self.get_renderer().height - y
@@ -171,19 +188,19 @@ class FastAPICanvas(FigureCanvasAgg):
         e_type = event["type"]
         guiEvent = event.get("guiEvent", None)
         if e_type == "button_press":
-            self.button_press_event(x, y, button, guiEvent=guiEvent)
+            MouseEvent("button_press_event", self, x, y, button, guiEvent=guiEvent)._process()  # type: ignore[attr-defined]
         elif e_type == "dblclick":
-            self.button_press_event(x, y, button, dblclick=True, guiEvent=guiEvent)
+            MouseEvent("button_press_event", self, x, y, button, dblclick=True, guiEvent=guiEvent)._process()  # type: ignore[attr-defined]
         elif e_type == "button_release":
-            self.button_release_event(x, y, button, guiEvent=guiEvent)
+            MouseEvent("button_release_event", self, x, y, button, guiEvent=guiEvent)._process()  # type: ignore[attr-defined]
         elif e_type == "motion_notify":
-            self.motion_notify_event(x, y, guiEvent=guiEvent)
+            MouseEvent("motion_notify_event", self, x, y, guiEvent=guiEvent)._process()  # type: ignore[attr-defined]
         elif e_type == "figure_enter":
-            self.enter_notify_event(xy=(x, y), guiEvent=guiEvent)
+            LocationEvent("figure_enter_event", self, x, y, guiEvent=guiEvent)._process()  # type: ignore[attr-defined]
         elif e_type == "figure_leave":
-            self.leave_notify_event()
+            LocationEvent("figure_leave_event", self, x, y, guiEvent=guiEvent)._process()  # type: ignore[attr-defined]
         elif e_type == "scroll":
-            self.scroll_event(x, y, event["step"], guiEvent=guiEvent)
+            MouseEvent("scroll_event", self, x, y, step=event["step"], guiEvent=guiEvent)._process()  # type: ignore[attr-defined]
 
     handle_button_press = (
         handle_button_release
@@ -193,20 +210,20 @@ class FastAPICanvas(FigureCanvasAgg):
         handle_figure_enter
     ) = handle_figure_leave = handle_motion_notify = handle_scroll = _handle_mouse
 
-    async def handle_toolbar_button(self, event, websocket):
+    async def handle_toolbar_button(self, event: dict[str, Any], websocket: WebSocket) -> None:
         # TODO: Be more suspicious of the input
         getattr(self.toolbar, event["name"])()
 
-    def queue_event(self, event_type, **kwargs):
+    def queue_event(self, event_type: str, **kwargs: Any) -> None:
         self._msg_queue.append({"type": event_type, **kwargs})
 
-    async def drain_queue(self, websocket):
+    async def drain_queue(self, websocket: WebSocket) -> None:
         while len(self._msg_queue):
             payload = self._msg_queue.popleft()
             await websocket.send_json(payload)
 
 
-_ALLOWED_TOOL_ITEMS = {
+_ALLOWED_TOOL_ITEMS: set[str | None] = {
     "home",
     "back",
     "forward",
@@ -220,44 +237,51 @@ _ALLOWED_TOOL_ITEMS = {
 class NavigationToolbar2FastAPI(NavigationToolbar2):
 
     # Use the standard toolbar items + download button
-    toolitems = [
-        (text, tooltip_text, image_file, name_of_method)
+    toolitems = tuple(
+        (text, tooltip_text, image_file, name_of_method)  # type: ignore[misc]
         for text, tooltip_text, image_file, name_of_method in (
             *NavigationToolbar2.toolitems,
             ("Download", "Download plot", "filesave", "download"),
         )
         if name_of_method in _ALLOWED_TOOL_ITEMS
-    ]
+    )
 
-    def __init__(self, canvas):
+    message: str
+    _cursor: None
+    canvas: FastAPICanvas  # Override parent type to be more specific
+
+    # Declare parent class attribute we use
+    _nav_stack: Any  # NavigationToolbar2._NavStack
+
+    def __init__(self, canvas: FastAPICanvas) -> None:
         self.message = ""
         self._cursor = None  # Remove with deprecation.
         super().__init__(canvas)
 
-    def set_message(self, message):
+    def set_message(self, message: str) -> None:
         if message != self.message:
             self.canvas.queue_event("message", message=message)
         self.message = message
 
-    def draw_rubberband(self, event, x0, y0, x1, y1):
+    def draw_rubberband(self, event: Any, x0: float, y0: float, x1: float, y1: float) -> None:
         self.canvas.queue_event("rubberband", x0=x0, y0=y0, x1=x1, y1=y1)
 
-    def remove_rubberband(self):
+    def remove_rubberband(self) -> None:
         self.canvas.queue_event("rubberband", x0=-1, y0=-1, x1=-1, y1=-1)
 
-    def save_figure(self, *args):
+    def save_figure(self, *args: Any) -> None:
         """Save the current figure"""
         self.canvas.queue_event("save")
 
-    def pan(self):
+    def pan(self) -> None:
         super().pan()
         self.canvas.queue_event("navigate_mode", mode=self.mode.name)
 
-    def zoom(self):
+    def zoom(self) -> None:
         super().zoom()
         self.canvas.queue_event("navigate_mode", mode=self.mode.name)
 
-    def set_history_buttons(self):
+    def set_history_buttons(self) -> None:
         can_backward = self._nav_stack._pos > 0
         can_forward = self._nav_stack._pos < len(self._nav_stack._elements) - 1
         self.canvas.queue_event(
@@ -267,14 +291,17 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
 
 class FastAPIManger(FigureManagerBase):
     ToolbarCls = NavigationToolbar2FastAPI
+    web_sockets: set[WebSocket]
+    toolbar: NavigationToolbar2FastAPI
+    supports_binary: bool = True
 
-    def __init__(self, canvas, num):
+    def __init__(self, canvas: FastAPICanvas, num: int) -> None:
         self.web_sockets = set()
         super().__init__(canvas, num)
         self.toolbar = self.ToolbarCls(canvas)
 
     @classmethod
-    def get_javascript(cls):
+    def get_javascript(cls) -> str:
         output = StringIO()
 
         output.write(
@@ -286,7 +313,7 @@ class FastAPIManger(FigureManagerBase):
             if name is None:
                 toolitems.append(["", "", "", ""])
             else:
-                toolitems.append([name, tooltip, image, method])
+                toolitems.append([name, tooltip, image, method])  # type: ignore[list-item]
         output.write("mpl.toolbar_items = {0};\n\n".format(json.dumps(toolitems)))
 
         extensions = []
@@ -319,7 +346,7 @@ templates = Jinja2Templates(directory="templates")
 
 
 @app.get("/", response_class=HTMLResponse)
-async def read_item(request: Request):
+async def root(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         "figure.html",
         {
@@ -331,7 +358,7 @@ async def read_item(request: Request):
 
 
 @app.get("/figure/view/{figname}", response_class=HTMLResponse)
-async def read_item(request: Request, figname: str):
+async def view_figure(request: Request, figname: str) -> HTMLResponse:
     return templates.TemplateResponse(
         "figure.html",
         {
@@ -343,15 +370,15 @@ async def read_item(request: Request, figname: str):
 
 
 class PlotData(BaseModel):
-    x: List[float]
-    y: List[float]
+    x: list[float]
+    y: list[float]
     label: str | None = None
 
 
 @app.post("/axes/plot/{figname}/{axes}")
-async def read_item(request: Request, figname: str, axes: str, payload: PlotData):
+async def plot_data(request: Request, figname: str, axes: str, payload: PlotData) -> None:
     fig = fr.by_label[figname]
-    ax = fig.axd[axes]
+    ax = fig.axd[axes]  # type: ignore[attr-defined]
     ax.plot(payload.x, payload.y, label=payload.label)
 
 
@@ -362,16 +389,15 @@ class MosaicFigure(BaseModel):
     height: float = 4.8
 
 
-async def _create_figure(name, pattern):
+async def _create_figure(name: str, pattern: str) -> tuple[Figure, dict[str, Axes]]:
     fig, axd = fr.subplot_mosaic(pattern, label=name)
-    promote_figure(fig)
     # monkey patch the axes dictionary on....
-    fig.axd = axd
+    fig.axd = axd  # type: ignore[attr-defined]
     return fig, axd
 
 
 @app.post("/figure/create")
-async def create_figure(request: Request, figure: MosaicFigure):
+async def create_figure(request: Request, figure: MosaicFigure) -> dict[str, str]:
     print(figure)
     base_url = get_base_url(request)
     fig, ax = await _create_figure(figure.name, figure.pattern)
@@ -383,14 +409,14 @@ async def create_figure(request: Request, figure: MosaicFigure):
 
 
 @app.get("/figure/form")
-async def figure_form(request: Request):
+async def figure_form_get(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("create_form.html", {"request": request})
 
 
 @app.post("/figure/form")
-async def figure_form(
+async def figure_form_post(
     request: Request, name: str = Form(...), pattern: str = Form(...)
-):
+) -> HTMLResponse:
     fig, axd = await _create_figure(name, pattern)
     return templates.TemplateResponse(
         "figure.html",
@@ -404,17 +430,23 @@ async def figure_form(
 
 # TODO add caching logic
 @app.get("/js/mpl.js", response_class=PlainTextResponse)
-async def get_mpl_js(request: Request):
+async def get_mpl_js(request: Request) -> PlainTextResponse:
     js = FastAPIManger.get_javascript()
     return PlainTextResponse(js, headers={"Content-Type": "application/javascript"})
 
 
 @app.websocket("/ws/{fignum}")
-async def websocket_endpoint(websocket: WebSocket, fignum: str):
+async def websocket_endpoint(websocket: WebSocket, fignum: str) -> None:
     await websocket.accept()
     fig = fr.by_label[fignum]
     canvas = fig.canvas
     manager = canvas.manager
+
+    # Type narrowing: ensure we have the correct types
+    if not isinstance(canvas, FastAPICanvas):
+        raise TypeError(f"Expected FastAPICanvas, got {type(canvas)}")
+    if not isinstance(manager, FastAPIManger):
+        raise TypeError(f"Expected FastAPIManger, got {type(manager)}")
 
     await websocket.send_json({"type": "image_mode", "mode": "full"})
     while True:
@@ -427,7 +459,7 @@ async def websocket_endpoint(websocket: WebSocket, fignum: str):
         else:
             e_type = data["type"]
             handler = getattr(
-                canvas, "handle_{0}".format(e_type), canvas.handle_unknown_event
+                canvas, f"handle_{e_type}", canvas.handle_unknown_event
             )
             # TODO we need to pass a list of all websockets associated with this
             # figure, not just the one the message came in on so all views stay

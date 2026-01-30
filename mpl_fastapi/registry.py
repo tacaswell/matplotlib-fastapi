@@ -4,29 +4,14 @@ Figure registry and backend management for matplotlib-fastapi.
 This module provides a FigureRegistry class to manage matplotlib figures
 and ensure they use the FastAPI backend. It does not import matplotlib.pyplot.
 """
-import functools
+from typing import Any
 import weakref
 import warnings
 from collections import Counter
 
-from matplotlib import is_interactive
 from matplotlib.figure import Figure
 from matplotlib.backend_bases import FigureCanvasBase as _FigureCanvasBase
-
-
-def _promote_figure(fig, num=None):
-    """
-    Promote a figure to have a manager.
-
-    This attaches a manager to the figure's canvas if it doesn't have one.
-    The manager handles the interactive aspects of the figure.
-    """
-    from mpl_fastapi.main import FastAPIManger
-
-    if fig.canvas.manager is None:
-        manager = FastAPIManger(fig.canvas, num)
-        fig.canvas.manager = manager
-    return fig
+from matplotlib.axes import Axes
 
 
 class FigureRegistry:
@@ -61,28 +46,28 @@ class FigureRegistry:
         Prefix for auto-generated figure labels. Defaults to "Figure ".
     """
 
-    def __init__(self, *, block=None, timeout=0, prefix="Figure "):
+    def __init__(self, *, block: bool | None = None, timeout: float = 0, prefix: str = "Figure ") -> None:
         # settings stashed to set defaults on show
-        self._timeout = timeout
-        self._block = block
+        self._timeout: float = timeout
+        self._block: bool | None = block
         # the canonical location for storing the Figures this registry owns.
         # any additional views must never include a figure that is not a key but
         # may omit figures
-        self._fig_to_number = dict()
+        self._fig_to_number: dict[Figure, int] = dict()
         # Settings / state to control the default figure label
-        self._prefix = prefix
+        self._prefix: str = prefix
 
     @property
-    def figures(self):
+    def figures(self) -> tuple[Figure, ...]:
         """Return tuple of all registered figures."""
         return tuple(self._fig_to_number)
 
-    def _register_fig(self, fig):
+    def _register_fig(self, fig: Figure) -> Figure:
         """Register a figure with this registry."""
         # if the user closes the figure by any other mechanism, drop our
         # reference to it.  This is important for getting a "pyplot" like user
         # experience
-        def registry_cleanup(fig_wr):
+        def registry_cleanup(fig_wr: weakref.ref[Figure]) -> None:
             fig = fig_wr()
             if fig is not None:
                 if fig.canvas is not None:
@@ -100,20 +85,18 @@ class FigureRegistry:
         if fig.get_label() == "":
             fig.set_label(f"{self._prefix}{fignum:d}")
         self._fig_to_number[fig] = fignum
-        if is_interactive():
-            _promote_figure(fig, num=fignum)
         return fig
 
     @property
-    def by_label(self):
+    def by_label(self) -> dict[str, Figure]:
         """
         Return a dictionary of the current mapping labels -> figures.
 
         If there are duplicate labels, newer figures will take precedence.
         """
-        mapping = {fig.get_label(): fig for fig in self.figures}
+        mapping = {str(fig.get_label()): fig for fig in self.figures}
         if len(mapping) != len(self.figures):
-            counts = Counter(fig.get_label() for fig in self.figures)
+            counts = Counter(str(fig.get_label()) for fig in self.figures)
             multiples = {k: v for k, v in counts.items() if v > 1}
             warnings.warn(
                 (
@@ -125,14 +108,13 @@ class FigureRegistry:
         return mapping
 
     @property
-    def by_number(self):
+    def by_number(self) -> dict[int|str, Figure]:
         """
         Return a dictionary of the current mapping number -> figures.
         """
-        self._ensure_all_figures_promoted()
-        return {fig.canvas.manager.num: fig for fig in self.figures}
+        return {fig.canvas.manager.num: fig for fig in self.figures if fig.canvas.manager is not None}
 
-    def figure(self, *args, **kwargs):
+    def figure(self, *args: Any, **kwargs: Any) -> Figure:
         """
         Create a new figure and register it.
 
@@ -148,7 +130,7 @@ class FigureRegistry:
 
         return self._register_fig(fig)
 
-    def subplots(self, nrows=1, ncols=1, **kwargs):
+    def subplots(self, nrows: int = 1, ncols: int = 1, **kwargs: Any) -> tuple[Figure, Any]:
         """
         Create a figure and a set of subplots.
 
@@ -167,7 +149,7 @@ class FigureRegistry:
 
         return self._register_fig(fig), axs
 
-    def subplot_mosaic(self, mosaic, **kwargs):
+    def subplot_mosaic(self, mosaic: str | list[list[str]], **kwargs: Any) -> tuple[Figure, dict[str, Axes]]:
         """
         Create a figure with a mosaic of named subplots.
 
@@ -182,17 +164,11 @@ class FigureRegistry:
         canvas = FastAPICanvas(fig)
 
         # Create subplot mosaic
-        axd = fig.subplot_mosaic(mosaic)
+        axd = fig.subplot_mosaic(mosaic)  # type: ignore[arg-type]
 
         return self._register_fig(fig), axd
 
-    def _ensure_all_figures_promoted(self):
-        """Ensure all figures have managers."""
-        for f in self.figures:
-            if f.canvas.manager is None:
-                _promote_figure(f, num=self._fig_to_number[f])
-
-    def close_all(self):
+    def close_all(self) -> None:
         """
         Close all Figures known to this Registry.
 
@@ -209,7 +185,7 @@ class FigureRegistry:
         for fig in list(self.figures):
             self.close(fig)
 
-    def close(self, val):
+    def close(self, val: str | int | Figure) -> None:
         """
         Close (meaning destroy the UI) and forget a managed Figure.
 
@@ -257,7 +233,7 @@ class FigureRegistry:
         if fig.canvas.manager is not None:
             fig.canvas.manager.destroy()
             # disconnect figure from canvas
-            fig.canvas.figure = None
+            fig.canvas.figure = None  # type: ignore[assignment]
             # disconnect canvas from figure
             _FigureCanvasBase(figure=fig)
         assert fig.canvas.manager is None
@@ -265,7 +241,7 @@ class FigureRegistry:
         return
 
 
-def select_gui_toolkit(backend_class):
+def select_gui_toolkit(backend_class: type) -> None:
     """
     Set the matplotlib backend to use our custom FastAPI backend.
 
@@ -278,18 +254,10 @@ def select_gui_toolkit(backend_class):
         The backend class (should have FigureCanvas and FigureManager).
     """
     import matplotlib
+    import matplotlib.backend_bases
 
     # Register our backend module
     matplotlib.backend_bases.register_backend('module://mpl_fastapi.backend', backend_class)
 
     # Use our backend
     matplotlib.use('module://mpl_fastapi.backend', force=True)
-
-
-def promote_figure(fig, num=None):
-    """
-    Public interface to promote a figure.
-
-    Ensures the figure has a manager attached.
-    """
-    return _promote_figure(fig, num=num)
