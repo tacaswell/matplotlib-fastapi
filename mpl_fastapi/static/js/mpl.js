@@ -353,8 +353,9 @@ mpl.figure.prototype._init_toolbar = function () {
         button.addEventListener('mouseover', on_mouseover_closure(tooltip));
 
         var icon_img = document.createElement('img');
-        icon_img.src = '/static/images/' + image + '.png';
-        icon_img.srcset = '/static/images/' + image + '_large.png 2x';
+        var static_path = window.MPL_STATIC_PATH || '/static';
+        icon_img.src = static_path + '/images/' + image + '.png';
+        icon_img.srcset = static_path + '/images/' + image + '_large.png 2x';
         icon_img.alt = tooltip;
         button.appendChild(icon_img);
 

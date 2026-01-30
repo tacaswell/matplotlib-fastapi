@@ -1,9 +1,13 @@
 <html>
   <head>
-    <link rel="stylesheet" href="/static/css/page.css" type="text/css">
-    <link rel="stylesheet" href="/static/css/boilerplate.css" type="text/css" />
-    <link rel="stylesheet" href="/static/css/fbm.css" type="text/css" />
-    <link rel="stylesheet" href="/static/css/mpl.css" type="text/css">
+    <link rel="stylesheet" href="{{ static_path }}/css/page.css" type="text/css">
+    <link rel="stylesheet" href="{{ static_path }}/css/boilerplate.css" type="text/css" />
+    <link rel="stylesheet" href="{{ static_path }}/css/fbm.css" type="text/css" />
+    <link rel="stylesheet" href="{{ static_path }}/css/mpl.css" type="text/css">
+    <script>
+      // Set the static path for matplotlib to use
+      window.MPL_STATIC_PATH = "{{ static_path }}";
+    </script>
     <script src="/js/mpl.js"></script>
     <script>
       function ready(fn) {
@@ -17,8 +21,12 @@
       ready(
         function () {
           var websocket_type = mpl.get_websocket_type();
-          var websocket = new websocket_type(
-              "{{ ws_uri }}/ws/{{ fig_id }}");
+          // Pass query parameters from the page URL to the WebSocket
+          var ws_url = "{{ ws_uri }}/ws/{{ fig_id }}";
+          if (window.location.search) {
+            ws_url += window.location.search;
+          }
+          var websocket = new websocket_type(ws_url);
           var fig = new mpl.figure(
               "{{ fig_id }}", websocket, (figure, format)=>nil,
               document.getElementById("figure"));
