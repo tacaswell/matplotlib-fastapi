@@ -20,7 +20,7 @@ from matplotlib.backend_bases import _Backend, FigureManagerBase, NavigationTool
 
 from matplotlib.backends.backend_agg import FigureCanvasAgg, RendererAgg
 from mpl_fastapi.utils import get_base_url
-import mpl_gui as mg
+from mpl_fastapi.registry import FigureRegistry, select_gui_toolkit, promote_figure
 
 
 class FastAPICanvas(FigureCanvasAgg):
@@ -310,8 +310,8 @@ class FastAPIBackend(_Backend):
     FigureManager = FastAPIManger
 
 
-mg.select_gui_toolkit(FastAPIBackend)
-fr = mg.FigureRegistry()
+select_gui_toolkit(FastAPIBackend)
+fr = FigureRegistry()
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -364,7 +364,7 @@ class MosaicFigure(BaseModel):
 
 async def _create_figure(name, pattern):
     fig, axd = fr.subplot_mosaic(pattern, label=name)
-    mg.promote_figure(fig)
+    promote_figure(fig)
     # monkey patch the axes dictionary on....
     fig.axd = axd
     return fig, axd

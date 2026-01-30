@@ -1,3 +1,12 @@
 # List required packages in this file, one per line.
-fastapi
-matplotlib
+# Note: pixi.toml is the primary environment management tool.
+# This file is maintained for compatibility.
+fastapi>=0.100.0
+matplotlib>=3.10.0
+uvicorn>=0.20.0
+python-multipart>=0.0.6
+websockets>=11.0
+jinja2>=3.1.0
+pillow>=10.0.0
+numpy>=1.24.0
+aiofiles>=23.0.0

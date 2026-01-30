@@ -1,4 +1,6 @@
-from ._version import get_versions
+try:
+    from ._version import __version__
+except ImportError:
+    __version__ = "unknown"
 
-__version__ = get_versions()["version"]
-del get_versions
+__all__ = ["__version__"]
