@@ -3,11 +3,19 @@ try:
 except ImportError:
     __version__ = "unknown"
 
-from .main import create_mpl_router, MPLRouter, PlotGenerator
+from .main import (
+    create_mpl_router,
+    MPLRouter,
+    PlotGenerator,
+    PlotInfo,
+    PlotsListResponse,
+)
 
 __all__ = [
     "__version__",
     "create_mpl_router",
     "MPLRouter",
     "PlotGenerator",
+    "PlotInfo",
+    "PlotsListResponse",
 ]

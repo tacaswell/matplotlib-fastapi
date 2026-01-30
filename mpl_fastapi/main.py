@@ -1,4 +1,5 @@
 import json
+import logging
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -8,8 +9,8 @@ from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
-from fastapi import APIRouter, Request, WebSocket
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from matplotlib.backend_bases import (
@@ -27,8 +28,25 @@ from starlette.websockets import WebSocketDisconnect
 
 from mpl_fastapi.registry import select_gui_toolkit
 
+# Set up logging
+logger = logging.getLogger(__name__)
+
 # Type alias for plot generator functions
 PlotGenerator = Callable[[Figure, BaseModel], None]
+
+
+# Response models for type safety and documentation
+class PlotInfo(BaseModel):
+    """Information about a single plot."""
+
+    description: str
+    parameters: dict[str, Any]
+
+
+class PlotsListResponse(BaseModel):
+    """Response model for the plots list endpoint."""
+
+    plots: dict[str, PlotInfo]
 
 
 class FastAPICanvas(FigureCanvasAgg):
@@ -56,7 +74,7 @@ class FastAPICanvas(FigureCanvasAgg):
     async def handle_unknown_event(
         self, ev: dict[str, Any], websocket: WebSocket
     ) -> None:
-        print(ev["type"], ev)
+        logger.debug(f"Unknown event type: {ev['type']}, data: {ev}")
         return
 
     async def handle_ack(self, ev: dict[str, Any], websocket: WebSocket) -> None: ...
@@ -187,7 +205,7 @@ class FastAPICanvas(FigureCanvasAgg):
 
         return self._renderer
 
-    async def _handle_mouse(self, event: dict[str, Any], websocket: WebSocket) -> None:
+    async def _handle_mouse(self, event: dict[str, Any], _websocket: WebSocket) -> None:
         x = event["x"]
         y = event["y"]
         y = self.get_renderer().height - y
@@ -197,10 +215,10 @@ class FastAPICanvas(FigureCanvasAgg):
         button = event["button"] + 1
 
         e_type = event["type"]
-        guiEvent = event.get("guiEvent")
+        gui_event = event.get("guiEvent")
         if e_type == "button_press":
             MouseEvent(
-                "button_press_event", self, x, y, button, guiEvent=guiEvent
+                "button_press_event", self, x, y, button, guiEvent=gui_event
             )._process()  # type: ignore[attr-defined]
         elif e_type == "dblclick":
             MouseEvent(
@@ -210,25 +228,25 @@ class FastAPICanvas(FigureCanvasAgg):
                 y,
                 button,
                 dblclick=True,
-                guiEvent=guiEvent,
+                guiEvent=gui_event,
             )._process()  # type: ignore[attr-defined]
         elif e_type == "button_release":
             MouseEvent(
-                "button_release_event", self, x, y, button, guiEvent=guiEvent
+                "button_release_event", self, x, y, button, guiEvent=gui_event
             )._process()  # type: ignore[attr-defined]
         elif e_type == "motion_notify":
-            MouseEvent("motion_notify_event", self, x, y, guiEvent=guiEvent)._process()  # type: ignore[attr-defined]
+            MouseEvent("motion_notify_event", self, x, y, guiEvent=gui_event)._process()  # type: ignore[attr-defined]
         elif e_type == "figure_enter":
             LocationEvent(
-                "figure_enter_event", self, x, y, guiEvent=guiEvent
+                "figure_enter_event", self, x, y, guiEvent=gui_event
             )._process()  # type: ignore[attr-defined]
         elif e_type == "figure_leave":
             LocationEvent(
-                "figure_leave_event", self, x, y, guiEvent=guiEvent
+                "figure_leave_event", self, x, y, guiEvent=gui_event
             )._process()  # type: ignore[attr-defined]
         elif e_type == "scroll":
             MouseEvent(
-                "scroll_event", self, x, y, step=event["step"], guiEvent=guiEvent
+                "scroll_event", self, x, y, step=event["step"], guiEvent=gui_event
             )._process()  # type: ignore[attr-defined]
 
     handle_button_press = handle_button_release = handle_dblclick = (
@@ -236,7 +254,7 @@ class FastAPICanvas(FigureCanvasAgg):
     ) = handle_figure_leave = handle_motion_notify = handle_scroll = _handle_mouse
 
     async def handle_toolbar_button(
-        self, event: dict[str, Any], websocket: WebSocket
+        self, event: dict[str, Any], _websocket: WebSocket
     ) -> None:
         # Call the toolbar method
         getattr(self.toolbar, event["name"])()
@@ -351,7 +369,7 @@ class FastAPIManger(FigureManagerBase):
         output.write(f"mpl.toolbar_items = {json.dumps(toolitems)};\n\n")
 
         extensions = []
-        for filetype, ext in sorted(
+        for _filetype, ext in sorted(
             FastAPICanvas.get_supported_filetypes_grouped().items()
         ):
             extensions.append(ext[0])
@@ -440,6 +458,17 @@ def create_mpl_router(
     static_dir = Path(__file__).parent / "static"
     static_files = StaticFiles(directory=str(static_dir))
 
+    # Dependency for validating plot name
+    def get_plot_config(plot_name: str) -> tuple[PlotGenerator, type[BaseModel], str]:
+        """Dependency to validate and retrieve plot configuration."""
+        if plot_name not in plot_generators:
+            available = ", ".join(plot_generators.keys())
+            raise HTTPException(
+                status_code=404,
+                detail=f"Plot '{plot_name}' not found. Available plots: {available}",
+            )
+        return plot_generators[plot_name]
+
     # Route: HTML plots list (root)
     @router.get("/", response_class=HTMLResponse)
     async def plots_list_html(request: Request) -> HTMLResponse:
@@ -459,25 +488,25 @@ def create_mpl_router(
         )
 
     # Route: List all available plots (JSON API)
-    @router.get("/plots", response_class=JSONResponse)
-    async def list_plots() -> dict[str, Any]:
+    @router.get("/plots", response_model=PlotsListResponse)
+    async def list_plots() -> PlotsListResponse:
         """List all available plots with their parameter schemas."""
         plots_info = {}
         for name, (_, param_model, description) in plot_generators.items():
-            plots_info[name] = {
-                "description": description,
-                "parameters": param_model.model_json_schema(),
-            }
-        return {"plots": plots_info}
+            plots_info[name] = PlotInfo(
+                description=description,
+                parameters=param_model.model_json_schema(),
+            )
+        return PlotsListResponse(plots=plots_info)
 
     # Route: View a specific plot
     @router.get("/plot/{plot_name}", response_class=HTMLResponse)
-    async def view_plot(request: Request, plot_name: str) -> HTMLResponse:
+    async def view_plot(
+        request: Request,
+        plot_name: str,
+        plot_config: tuple[PlotGenerator, type[BaseModel], str] = Depends(get_plot_config),
+    ) -> HTMLResponse:
         """Render the plot viewer HTML."""
-        if plot_name not in plot_generators:
-            return HTMLResponse(
-                content=f"Plot '{plot_name}' not found", status_code=404
-            )
 
         return templates.TemplateResponse(
             "figure.html",
@@ -497,6 +526,7 @@ def create_mpl_router(
 
         # Validate plot exists
         if plot_name not in plot_generators:
+            logger.warning(f"WebSocket connection attempted for unknown plot: {plot_name}")
             await websocket.close(code=1003, reason=f"Unknown plot: {plot_name}")
             return
 
@@ -506,12 +536,25 @@ def create_mpl_router(
         try:
             params = param_model(**websocket.query_params)
         except ValidationError as e:
+            logger.warning(f"Invalid parameters for plot {plot_name}: {e}")
             await websocket.close(code=1003, reason=f"Invalid params: {e}")
             return
 
+        logger.info(f"WebSocket connected for plot '{plot_name}' with params: {params}")
+
         # Create figure and call generator to populate it
+        # Note: generator is synchronous and may block for complex plots
+        # For production use with heavy computation, consider:
+        # - Using asyncio.to_thread() for CPU-bound operations
+        # - Pre-generating figures with a background worker
+        # - Adding timeouts for generator execution
         fig = Figure()
-        generator(fig, params)
+        try:
+            generator(fig, params)
+        except Exception as e:
+            logger.error(f"Error generating plot '{plot_name}': {e}", exc_info=True)
+            await websocket.close(code=1011, reason=f"Plot generation failed: {e}")
+            return
 
         # Attach FastAPICanvas after figure is populated
         canvas = FastAPICanvas(fig)
@@ -534,19 +577,35 @@ def create_mpl_router(
                 try:
                     data = await websocket.receive_json()
                 except WebSocketDisconnect:
+                    logger.info(f"WebSocket disconnected for plot '{plot_name}'")
                     return
-                if data["type"] == "supports_binary":
-                    manager.supports_binary = data["value"]
-                else:
-                    e_type = data["type"]
-                    handler = getattr(
-                        canvas, f"handle_{e_type}", canvas.handle_unknown_event
+                except Exception as e:
+                    logger.error(f"Error receiving WebSocket message: {e}", exc_info=True)
+                    return
+
+                try:
+                    if data["type"] == "supports_binary":
+                        manager.supports_binary = data["value"]
+                    else:
+                        e_type = data["type"]
+                        handler = getattr(
+                            canvas, f"handle_{e_type}", canvas.handle_unknown_event
+                        )
+                        await handler(data, websocket)
+                    await canvas.drain_queue(websocket)
+                except Exception as e:
+                    logger.error(
+                        f"Error handling event '{data.get('type', 'unknown')}': {e}",
+                        exc_info=True,
                     )
-                    await handler(data, websocket)
-                await canvas.drain_queue(websocket)
+                    # Continue processing other events
         finally:
             # Cleanup on disconnect
-            manager.destroy()
+            logger.debug(f"Cleaning up resources for plot '{plot_name}'")
+            try:
+                manager.destroy()
+            except Exception as e:
+                logger.error(f"Error during cleanup: {e}", exc_info=True)
 
     # Route: Serve matplotlib JavaScript
     @router.get("/js/mpl.js", response_class=PlainTextResponse)
