@@ -83,3 +83,4 @@ target/
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+_version.py
