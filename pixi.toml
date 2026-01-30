@@ -16,6 +16,9 @@ pillow = ">=10.0.0"
 numpy = ">=1.24.0"
 aiofiles = ">=23.0.0"
 
+[pypi-dependencies]
+mpl-fastapi = { path = ".", editable = true }
+
 [feature.dev.dependencies]
 pytest = ">=7.0.0"
 pytest-asyncio = ">=0.21.0"
@@ -38,7 +41,6 @@ docs = ["docs"]
 
 [tasks]
 # Development tasks
-install-editable = "pip install -e ."
 test = "pytest -v"
 test-cov = "pytest --cov=mpl_fastapi --cov-report=html --cov-report=term"
 lint = "ruff check mpl_fastapi"
