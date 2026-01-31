@@ -1,18 +1,24 @@
+"""Matplotlib backend implementation for FastAPI integration.
+
+This module provides the matplotlib backend classes that handle:
+- Figure rendering with differential updates (FastAPICanvas)
+- Navigation toolbar with WebSocket communication (NavigationToolbar2FastAPI)
+- Figure manager and backend registration (FastAPIManger, FastAPIBackend)
+
+The backend uses WebSocket for bidirectional communication and supports
+efficient differential image updates to minimize data transfer.
+"""
+
 import json
 import logging
 from collections import deque
-from collections.abc import Callable
-from dataclasses import dataclass
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
-from fastapi.responses import HTMLResponse, PlainTextResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from fastapi import WebSocket
 from matplotlib.backend_bases import (
     FigureManagerBase,
     LocationEvent,
@@ -21,35 +27,42 @@ from matplotlib.backend_bases import (
     _Backend,
 )
 from matplotlib.backends.backend_agg import FigureCanvasAgg, RendererAgg
-from matplotlib.figure import Figure
 from PIL import Image
-from pydantic import BaseModel, ValidationError
-from starlette.websockets import WebSocketDisconnect
-
-from mpl_fastapi.registry import select_gui_toolkit
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Type alias for plot generator functions
-PlotGenerator = Callable[[Figure, BaseModel], None]
 
+def _register_backend(backend_class: type) -> None:
+    """
+    Register and activate a matplotlib backend.
 
-# Response models for type safety and documentation
-class PlotInfo(BaseModel):
-    """Information about a single plot."""
+    Parameters
+    ----------
+    backend_class : type
+        The backend class with FigureCanvas and FigureManager attributes.
+    """
+    import matplotlib
+    import matplotlib.backend_bases
 
-    description: str
-    parameters: dict[str, Any]
+    # Register our backend module
+    matplotlib.backend_bases.register_backend(
+        "module://mpl_fastapi.backend", backend_class
+    )
 
-
-class PlotsListResponse(BaseModel):
-    """Response model for the plots list endpoint."""
-
-    plots: dict[str, PlotInfo]
+    # Use our backend
+    matplotlib.use("module://mpl_fastapi.backend", force=True)
 
 
 class FastAPICanvas(FigureCanvasAgg):
+    """Matplotlib canvas with WebSocket communication for FastAPI.
+
+    This canvas extends the Agg backend with:
+    - Differential image updates to reduce bandwidth
+    - Event queue for async WebSocket messages
+    - Mouse and keyboard event handling from browser
+    """
+
     # Attributes from this class
     _force_full: bool
     _current_image_mode: str
@@ -146,6 +159,7 @@ class FastAPICanvas(FigureCanvasAgg):
             )
 
     async def get_diff_image(self, websocket: WebSocket) -> bytes | None:
+        """Generate differential or full image for transmission."""
         if self._png_is_old:
             renderer = self.get_renderer()
 
@@ -180,6 +194,7 @@ class FastAPICanvas(FigureCanvasAgg):
         return None
 
     def get_renderer(self, cleared: bool | None = None) -> RendererAgg:
+        """Get renderer with caching for differential updates."""
         # Mirrors super.get_renderer, but caches the old one so that we can do
         # things such as produce a diff image in get_diff_image.
         w, h = np.asarray(self.figure.bbox.size).astype(int)
@@ -206,6 +221,7 @@ class FastAPICanvas(FigureCanvasAgg):
         return self._renderer
 
     async def _handle_mouse(self, event: dict[str, Any], _websocket: WebSocket) -> None:
+        """Handle mouse events from the browser."""
         x = event["x"]
         y = event["y"]
         y = self.get_renderer().height - y
@@ -256,12 +272,14 @@ class FastAPICanvas(FigureCanvasAgg):
     async def handle_toolbar_button(
         self, event: dict[str, Any], _websocket: WebSocket
     ) -> None:
+        """Handle toolbar button clicks from the browser."""
         # Call the toolbar method
         getattr(self.toolbar, event["name"])()
         # Queue a draw event for the client to request
         self.queue_event("draw")
 
     def queue_event(self, event_type: str, **kwargs: Any) -> None:
+        """Queue a message to be sent to the client."""
         self._msg_queue.append({"type": event_type, **kwargs})
 
     def draw_idle(self) -> None:
@@ -269,6 +287,7 @@ class FastAPICanvas(FigureCanvasAgg):
         self.queue_event("draw")
 
     async def drain_queue(self, websocket: WebSocket) -> None:
+        """Send all queued messages to the client."""
         while len(self._msg_queue):
             payload = self._msg_queue.popleft()
             await websocket.send_json(payload)
@@ -286,6 +305,11 @@ _ALLOWED_TOOL_ITEMS: set[str | None] = {
 
 
 class NavigationToolbar2FastAPI(NavigationToolbar2):
+    """Navigation toolbar with WebSocket communication.
+
+    Sends toolbar state changes and navigation events to the browser client.
+    """
+
     # Use the standard toolbar items + download button
     toolitems = tuple(
         (text, tooltip_text, image_file, name_of_method)  # type: ignore[misc]
@@ -309,6 +333,7 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
         super().__init__(canvas)
 
     def set_message(self, message: str) -> None:
+        """Display a message in the browser toolbar."""
         if message != self.message:
             self.canvas.queue_event("message", message=message)
         self.message = message
@@ -316,9 +341,11 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
     def draw_rubberband(
         self, event: Any, x0: float, y0: float, x1: float, y1: float
     ) -> None:
+        """Draw a rubberband selection rectangle."""
         self.canvas.queue_event("rubberband", x0=x0, y0=y0, x1=x1, y1=y1)
 
     def remove_rubberband(self) -> None:
+        """Remove the rubberband selection rectangle."""
         self.canvas.queue_event("rubberband", x0=-1, y0=-1, x1=-1, y1=-1)
 
     def save_figure(self, *args: Any) -> None:
@@ -326,14 +353,17 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
         self.canvas.queue_event("save")
 
     def pan(self) -> None:
+        """Activate pan/zoom mode."""
         super().pan()
         self.canvas.queue_event("navigate_mode", mode=self.mode.name)
 
     def zoom(self) -> None:
+        """Activate zoom mode."""
         super().zoom()
         self.canvas.queue_event("navigate_mode", mode=self.mode.name)
 
     def set_history_buttons(self) -> None:
+        """Update the enabled state of back/forward buttons."""
         can_backward = self._nav_stack._pos > 0
         can_forward = self._nav_stack._pos < len(self._nav_stack._elements) - 1
         self.canvas.queue_event(
@@ -342,6 +372,12 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
 
 
 class FastAPIManger(FigureManagerBase):
+    """Figure manager for FastAPI integration.
+
+    Manages the canvas and toolbar, and provides the JavaScript bundle
+    for the browser client.
+    """
+
     ToolbarCls = NavigationToolbar2FastAPI
     web_sockets: set[WebSocket]
     toolbar: NavigationToolbar2FastAPI
@@ -354,6 +390,7 @@ class FastAPIManger(FigureManagerBase):
 
     @classmethod
     def get_javascript(cls) -> str:
+        """Generate the complete JavaScript bundle for the browser client."""
         output = StringIO()
 
         output.write(
@@ -383,239 +420,11 @@ class FastAPIManger(FigureManagerBase):
 
 
 class FastAPIBackend(_Backend):
+    """Matplotlib backend for FastAPI integration."""
+
     FigureCanvas = FastAPICanvas
     FigureManager = FastAPIManger
 
 
 # Configure matplotlib to use our backend
-select_gui_toolkit(FastAPIBackend)
-
-
-@dataclass
-class MPLRouter:
-    """Container for matplotlib router and its static assets."""
-
-    router: APIRouter
-    static_files: StaticFiles
-    static_mount_path: str
-
-
-def create_mpl_router(
-    plot_generators: dict[str, tuple[PlotGenerator, type[BaseModel], str]],
-    *,
-    template_dir: Path | str | None = None,
-    static_mount_path: str = "/mpl-static",
-) -> MPLRouter:
-    """
-    Create a mountable router for matplotlib figures.
-
-    Parameters
-    ----------
-    plot_generators : dict[str, tuple[PlotGenerator, type[BaseModel], str]]
-        Mapping of plot names to (generator_func, params_model, description).
-        - generator_func: Callable[[Figure, BaseModel], None] that populates the figure
-        - params_model: Pydantic model for parameter validation
-        - description: Human-readable description for the plot
-    template_dir : Path | str, optional
-        Custom template directory (defaults to package templates)
-    static_mount_path : str, optional
-        URL path for static assets (default: "/mpl-static")
-
-    Returns
-    -------
-    MPLRouter
-        Container with .router (APIRouter), .static_files (StaticFiles),
-        and .static_mount_path (str)
-
-    Example
-    -------
-    >>> class SinePlotParams(BaseModel):
-    ...     frequency: float = 1.0
-    ...     amplitude: float = 1.0
-    >>>
-    >>> def create_sine_plot(fig: Figure, params: SinePlotParams) -> None:
-    ...     ax = fig.add_subplot(111)
-    ...     x = np.linspace(0, 4*np.pi, 200)
-    ...     y = params.amplitude * np.sin(params.frequency * x)
-    ...     ax.plot(x, y)
-    >>>
-    >>> mpl = create_mpl_router({
-    ...     "sine": (create_sine_plot, SinePlotParams, "Sine wave visualization"),
-    ... })
-    >>> app.include_router(mpl.router, prefix="/plots")
-    >>> app.mount(mpl.static_mount_path, mpl.static_files, name="mpl_static")
-    """
-    router = APIRouter()
-
-    # Setup templates
-    if template_dir is None:
-        template_dir = Path(__file__).parent / "templates"
-    else:
-        template_dir = Path(template_dir)
-    templates = Jinja2Templates(directory=str(template_dir))
-
-    # Setup static files
-    static_dir = Path(__file__).parent / "static"
-    static_files = StaticFiles(directory=str(static_dir))
-
-    # Dependency for validating plot name
-    def get_plot_config(plot_name: str) -> tuple[PlotGenerator, type[BaseModel], str]:
-        """Dependency to validate and retrieve plot configuration."""
-        if plot_name not in plot_generators:
-            available = ", ".join(plot_generators.keys())
-            raise HTTPException(
-                status_code=404,
-                detail=f"Plot '{plot_name}' not found. Available plots: {available}",
-            )
-        return plot_generators[plot_name]
-
-    # Route: HTML plots list (root)
-    @router.get("/", response_class=HTMLResponse)
-    async def plots_list_html(request: Request) -> HTMLResponse:
-        """Render an HTML page listing all available plots."""
-        plots_info = {}
-        for name, (_, param_model, description) in plot_generators.items():
-            plots_info[name] = {
-                "description": description,
-                "parameters": param_model.model_json_schema(),
-            }
-        return templates.TemplateResponse(
-            "plots_list.html",
-            {
-                "request": request,
-                "plots": plots_info,
-            },
-        )
-
-    # Route: List all available plots (JSON API)
-    @router.get("/plots", response_model=PlotsListResponse)
-    async def list_plots() -> PlotsListResponse:
-        """List all available plots with their parameter schemas."""
-        plots_info = {}
-        for name, (_, param_model, description) in plot_generators.items():
-            plots_info[name] = PlotInfo(
-                description=description,
-                parameters=param_model.model_json_schema(),
-            )
-        return PlotsListResponse(plots=plots_info)
-
-    # Route: View a specific plot
-    @router.get("/plot/{plot_name}", response_class=HTMLResponse)
-    async def view_plot(
-        request: Request,
-        plot_name: str,
-        plot_config: tuple[PlotGenerator, type[BaseModel], str] = Depends(get_plot_config),
-    ) -> HTMLResponse:
-        """Render the plot viewer HTML."""
-
-        return templates.TemplateResponse(
-            "figure.html",
-            {
-                "request": request,
-                "ws_uri": f"ws://{request.url.hostname}:{request.url.port}",
-                "fig_id": plot_name,
-                "static_path": static_mount_path,
-            },
-        )
-
-    # Route: WebSocket connection for interactive plotting
-    @router.websocket("/ws/{plot_name}")
-    async def websocket_endpoint(websocket: WebSocket, plot_name: str) -> None:
-        """Handle WebSocket connection for a plot."""
-        await websocket.accept()
-
-        # Validate plot exists
-        if plot_name not in plot_generators:
-            logger.warning(f"WebSocket connection attempted for unknown plot: {plot_name}")
-            await websocket.close(code=1003, reason=f"Unknown plot: {plot_name}")
-            return
-
-        generator, param_model, _ = plot_generators[plot_name]
-
-        # Parse parameters from query string
-        try:
-            params = param_model(**websocket.query_params)
-        except ValidationError as e:
-            logger.warning(f"Invalid parameters for plot {plot_name}: {e}")
-            await websocket.close(code=1003, reason=f"Invalid params: {e}")
-            return
-
-        logger.info(f"WebSocket connected for plot '{plot_name}' with params: {params}")
-
-        # Create figure and call generator to populate it
-        # Note: generator is synchronous and may block for complex plots
-        # For production use with heavy computation, consider:
-        # - Using asyncio.to_thread() for CPU-bound operations
-        # - Pre-generating figures with a background worker
-        # - Adding timeouts for generator execution
-        fig = Figure()
-        try:
-            generator(fig, params)
-        except Exception as e:
-            logger.error(f"Error generating plot '{plot_name}': {e}", exc_info=True)
-            await websocket.close(code=1011, reason=f"Plot generation failed: {e}")
-            return
-
-        # Attach FastAPICanvas after figure is populated
-        canvas = FastAPICanvas(fig)
-
-        # Attach manager
-        manager = FastAPIManger(canvas, 0)
-
-        # Type narrowing for safety
-        if not isinstance(canvas, FastAPICanvas):
-            raise TypeError(f"Expected FastAPICanvas, got {type(canvas)}")
-        if not isinstance(manager, FastAPIManger):
-            raise TypeError(f"Expected FastAPIManger, got {type(manager)}")
-
-        # Initial sync
-        await websocket.send_json({"type": "image_mode", "mode": "full"})
-
-        # Event loop
-        try:
-            while True:
-                try:
-                    data = await websocket.receive_json()
-                except WebSocketDisconnect:
-                    logger.info(f"WebSocket disconnected for plot '{plot_name}'")
-                    return
-                except Exception as e:
-                    logger.error(f"Error receiving WebSocket message: {e}", exc_info=True)
-                    return
-
-                try:
-                    if data["type"] == "supports_binary":
-                        manager.supports_binary = data["value"]
-                    else:
-                        e_type = data["type"]
-                        handler = getattr(
-                            canvas, f"handle_{e_type}", canvas.handle_unknown_event
-                        )
-                        await handler(data, websocket)
-                    await canvas.drain_queue(websocket)
-                except Exception as e:
-                    logger.error(
-                        f"Error handling event '{data.get('type', 'unknown')}': {e}",
-                        exc_info=True,
-                    )
-                    # Continue processing other events
-        finally:
-            # Cleanup on disconnect
-            logger.debug(f"Cleaning up resources for plot '{plot_name}'")
-            try:
-                manager.destroy()
-            except Exception as e:
-                logger.error(f"Error during cleanup: {e}", exc_info=True)
-
-    # Route: Serve matplotlib JavaScript
-    @router.get("/js/mpl.js", response_class=PlainTextResponse)
-    async def get_mpl_js() -> PlainTextResponse:
-        """Serve the matplotlib JavaScript bundle."""
-        js = FastAPIManger.get_javascript()
-        return PlainTextResponse(js, headers={"Content-Type": "application/javascript"})
-
-    return MPLRouter(
-        router=router,
-        static_files=static_files,
-        static_mount_path=static_mount_path,
-    )
+_register_backend(FastAPIBackend)
