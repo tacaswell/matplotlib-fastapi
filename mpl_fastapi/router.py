@@ -115,15 +115,14 @@ def create_mpl_router(
     static_files = StaticFiles(directory=str(static_dir))
 
     # Dependency for validating plot name
-    def get_plot_config(plot_name: str) -> tuple[PlotGenerator, type[BaseModel], str]:
-        """Dependency to validate and retrieve plot configuration."""
+    def validate_plot_name(plot_name: str) -> None:
+        """Dependency to validate plot name exists."""
         if plot_name not in plot_generators:
             available = ", ".join(plot_generators.keys())
             raise HTTPException(
                 status_code=404,
                 detail=f"Plot '{plot_name}' not found. Available plots: {available}",
             )
-        return plot_generators[plot_name]
 
     # Route: HTML plots list (root)
     @router.get("/", response_class=HTMLResponse)
@@ -160,9 +159,7 @@ def create_mpl_router(
     async def view_plot(
         request: Request,
         plot_name: str,
-        plot_config: tuple[PlotGenerator, type[BaseModel], str] = Depends(
-            get_plot_config
-        ),
+        _: None = Depends(validate_plot_name),
     ) -> HTMLResponse:
         """Render the plot viewer HTML."""
 

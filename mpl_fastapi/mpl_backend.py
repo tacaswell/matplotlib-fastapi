@@ -85,7 +85,9 @@ class FastAPICanvas(FigureCanvasAgg):
         self.call_info["start_event_loop"] = {"timeout": timeout}
 
     async def handle_unknown_event(
-        self, ev: dict[str, Any], websocket: WebSocket
+        self,
+        ev: dict[str, Any],
+        websocket: WebSocket,  # noqa: ARG002
     ) -> None:
         logger.debug(f"Unknown event type: {ev['type']}, data: {ev}")
         return
@@ -118,20 +120,22 @@ class FastAPICanvas(FigureCanvasAgg):
             await websocket.send_json({"type": "draw"})
 
     async def handle_send_image_mode(
-        self, ev: dict[str, Any], websocket: WebSocket
+        self,
+        ev: dict[str, Any],
+        websocket: WebSocket,  # noqa: ARG002
     ) -> None:
         await websocket.send_json(
             {"type": "image_mode", "mode": self._current_image_mode}
         )
 
-    async def handle_refresh(self, ev: dict[str, Any], websocket: WebSocket) -> None:
+    async def handle_refresh(self, ev: dict[str, Any], websocket: WebSocket) -> None:  # noqa: ARG002
         await websocket.send_json(
             {"type": "figure_label", "label": self.figure.get_label()}
         )
         self._force_full = True
         await websocket.send_json({"type": "draw"})
 
-    async def handle_draw(self, ev: dict[str, Any], websocket: WebSocket) -> None:
+    async def handle_draw(self, ev: dict[str, Any], websocket: WebSocket) -> None:  # noqa: ARG002
         self._png_is_old = True
         try:
             super().draw()
@@ -339,7 +343,12 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
         self.message = message
 
     def draw_rubberband(
-        self, event: Any, x0: float, y0: float, x1: float, y1: float
+        self,
+        event: Any,
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,  # noqa: ARG002
     ) -> None:
         """Draw a rubberband selection rectangle."""
         self.canvas.queue_event("rubberband", x0=x0, y0=y0, x1=x1, y1=y1)
@@ -348,7 +357,7 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
         """Remove the rubberband selection rectangle."""
         self.canvas.queue_event("rubberband", x0=-1, y0=-1, x1=-1, y1=-1)
 
-    def save_figure(self, *args: Any) -> None:
+    def save_figure(self, *args: Any) -> None:  # noqa: ARG002
         """Save the current figure"""
         self.canvas.queue_event("save")
 
