@@ -118,6 +118,12 @@
             display: block;
             margin-bottom: 8px;
         }
+        .parameter-constraints {
+            font-size: 11px;
+            color: #6c757d;
+            margin-top: 2px;
+            font-style: italic;
+        }
     </style>
     <script>
         function openPlotWithParams(plotName, formId) {
@@ -179,12 +185,32 @@
                                 {{ param_info.description }}
                             </div>
                             {% endif %}
+                            {% if param_info.minimum is defined or param_info.maximum is defined or param_info.exclusiveMinimum is defined or param_info.exclusiveMaximum is defined %}
+                            <div class="parameter-constraints">
+                                {% if param_info.minimum is defined %}
+                                    min: {{ param_info.minimum }}
+                                {% elif param_info.exclusiveMinimum is defined %}
+                                    min: &gt;{{ param_info.exclusiveMinimum }}
+                                {% endif %}
+                                {% if param_info.maximum is defined %}
+                                    {% if param_info.minimum is defined or param_info.exclusiveMinimum is defined %} | {% endif %}
+                                    max: {{ param_info.maximum }}
+                                {% elif param_info.exclusiveMaximum is defined %}
+                                    {% if param_info.minimum is defined or param_info.exclusiveMinimum is defined %} | {% endif %}
+                                    max: &lt;{{ param_info.exclusiveMaximum }}
+                                {% endif %}
+                            </div>
+                            {% endif %}
                             <input
                                 type="{% if param_info.type == 'number' or param_info.type == 'integer' %}number{% else %}text{% endif %}"
                                 name="{{ param_name }}"
                                 class="parameter-input"
                                 placeholder="{% if param_info.default is defined %}{{ param_info.default }}{% else %}Enter value{% endif %}"
                                 {% if param_info.type == 'number' %}step="any"{% endif %}
+                                {% if param_info.minimum is defined %}min="{{ param_info.minimum }}"{% endif %}
+                                {% if param_info.maximum is defined %}max="{{ param_info.maximum }}"{% endif %}
+                                {% if param_info.exclusiveMinimum is defined %}min="{{ param_info.exclusiveMinimum }}" step="0.01"{% endif %}
+                                {% if param_info.exclusiveMaximum is defined %}max="{{ param_info.exclusiveMaximum }}"{% endif %}
                             >
                         </label>
                     </div>
