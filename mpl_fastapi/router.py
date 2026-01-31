@@ -66,6 +66,7 @@ class PlotInfo(BaseModel):
 
     description: str
     parameters: dict[str, Any]
+    update_schema: dict[str, Any] | None = None
 
 
 class PlotsListResponse(BaseModel):
@@ -178,11 +179,16 @@ def create_mpl_router(
                 "description": config.description,
                 "parameters": config.init.params_model.model_json_schema(),
             }
+        
+        # Extract base path from request URL
+        base_path = request.url.path.rstrip('/')
+        
         return templates.TemplateResponse(
             "plots_list.html",
             {
                 "request": request,
                 "plots": plots_info,
+                "base_path": base_path,
             },
         )
 
@@ -192,9 +198,14 @@ def create_mpl_router(
         """List all available plots with their parameter schemas."""
         plots_info = {}
         for name, config in plot_generators.items():
+            update_schema = None
+            if config.update is not None:
+                update_schema = config.update.params_model.model_json_schema()
+
             plots_info[name] = PlotInfo(
                 description=config.description,
                 parameters=config.init.params_model.model_json_schema(),
+                update_schema=update_schema,
             )
         return PlotsListResponse(plots=plots_info)
 
@@ -213,11 +224,29 @@ def create_mpl_router(
         if config.update is not None:
             update_params_schema = config.update.params_model.model_json_schema()
 
+        # Build WebSocket URI including the router prefix
+        ws_uri = f"ws://{request.url.hostname}:{request.url.port}"
+        # Extract the prefix from the request path
+        # If request path is /plots/plot/name, we want /plots
+        path_parts = request.url.path.rstrip('/').split('/')
+        base_path = ""
+        if len(path_parts) >= 2:
+            # Get everything before /plot/name
+            prefix_parts = []
+            for part in path_parts[1:]:  # Skip empty string from leading /
+                if part == 'plot':
+                    break
+                prefix_parts.append(part)
+            if prefix_parts:
+                base_path = '/' + '/'.join(prefix_parts)
+                ws_uri += base_path
+
         return templates.TemplateResponse(
             "figure.html",
             {
                 "request": request,
-                "ws_uri": f"ws://{request.url.hostname}:{request.url.port}",
+                "ws_uri": ws_uri,
+                "base_path": base_path,
                 "fig_id": plot_name,
                 "static_path": static_mount_path,
                 "update_params_schema": update_params_schema,
@@ -228,15 +257,15 @@ def create_mpl_router(
     @router.websocket("/ws/{plot_name}")
     async def websocket_endpoint(websocket: WebSocket, plot_name: str) -> None:
         """Handle WebSocket connection for a plot."""
-        await websocket.accept()
-
-        # Validate plot exists
+        # Validate plot exists BEFORE accepting connection
         if plot_name not in plot_generators:
             logger.warning(
                 f"WebSocket connection attempted for unknown plot: {plot_name}"
             )
-            await websocket.close(code=1003, reason=f"Unknown plot: {plot_name}")
+            await websocket.close(code=1008, reason=f"Unknown plot: {plot_name}")
             return
+
+        await websocket.accept()
 
         config = plot_generators[plot_name]
 
@@ -245,7 +274,8 @@ def create_mpl_router(
             params = config.init.params_model(**websocket.query_params)
         except ValidationError as e:
             logger.warning(f"Invalid parameters for plot {plot_name}: {e}")
-            await websocket.close(code=1003, reason=f"Invalid params: {e}")
+            await websocket.send_json({"type": "error", "message": f"Invalid parameters: {e}"})
+            await websocket.close(code=1008, reason=f"Invalid params: {e}")
             return
 
         logger.info(f"WebSocket connected for plot '{plot_name}' with params: {params}")
@@ -293,9 +323,13 @@ def create_mpl_router(
                     )
                     return
 
+                # Log all received messages
+                logger.debug(f"Received message type='{data.get('type')}' for plot '{plot_name}'")
+
                 try:
                     if data["type"] == "supports_binary":
                         manager.supports_binary = data["value"]
+                        logger.debug(f"Set supports_binary={data['value']}")
                     elif data["type"] == "update_params":
                         # Handle update request
                         if config.update is None:
@@ -333,7 +367,15 @@ def create_mpl_router(
                         handler = getattr(
                             canvas, f"handle_{e_type}", canvas.handle_unknown_event
                         )
+                        # Skip logging for motion events to reduce noise
+                        if e_type not in ('motion_notify', 'figure_enter', 'figure_leave'):
+                            logger.debug(f"Calling handler for event type '{e_type}'")
                         await handler(data, websocket)
+
+                    # Drain the message queue and send responses
+                    queue_size = len(canvas._msg_queue)
+                    if queue_size > 0:
+                        logger.debug(f"Draining queue with {queue_size} messages")
                     await canvas.drain_queue(websocket)
                 except Exception as e:
                     logger.error(
@@ -355,6 +397,42 @@ def create_mpl_router(
         """Serve the matplotlib JavaScript bundle."""
         js = FastAPIManger.get_javascript()
         return PlainTextResponse(js, headers={"Content-Type": "application/javascript"})
+
+    # Route: Serve embeddable component bundle
+    @router.get("/component.js", response_class=PlainTextResponse)
+    async def get_component_js() -> PlainTextResponse:
+        """Serve the embeddable matplotlib component JavaScript."""
+        # Read mpl.js and mpl_embeddable.js and combine them
+        mpl_js = FastAPIManger.get_javascript()
+        embeddable_path = Path(__file__).parent / "static" / "js" / "mpl_embeddable.js"
+        embeddable_js = embeddable_path.read_text()
+
+        # Combine both scripts
+        combined_js = f"{mpl_js}\n\n{embeddable_js}"
+        return PlainTextResponse(
+            combined_js, headers={"Content-Type": "application/javascript"}
+        )
+
+    # Route: Get schema for a specific plot
+    @router.get("/api/plots/{plot_name}/schema")
+    async def get_plot_schema(
+        plot_name: str,
+        _: None = Depends(validate_plot_name),
+    ) -> dict[str, Any]:
+        """Get the parameter schemas for a specific plot."""
+        config = plot_generators[plot_name]
+
+        response = {
+            "plot_name": plot_name,
+            "description": config.description,
+            "init_schema": config.init.params_model.model_json_schema(),
+            "update_schema": None,
+        }
+
+        if config.update is not None:
+            response["update_schema"] = config.update.params_model.model_json_schema()
+
+        return response
 
     return MPLRouter(
         router=router,

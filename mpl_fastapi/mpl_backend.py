@@ -228,7 +228,8 @@ class FastAPICanvas(FigureCanvasAgg):
         """Handle mouse events from the browser."""
         x = event["x"]
         y = event["y"]
-        y = self.get_renderer().height - y
+        renderer_height = self.get_renderer().height
+        y = renderer_height - y
 
         # Javascript button numbers and matplotlib button numbers are
         # off by 1
@@ -277,6 +278,7 @@ class FastAPICanvas(FigureCanvasAgg):
         self, event: dict[str, Any], _websocket: WebSocket
     ) -> None:
         """Handle toolbar button clicks from the browser."""
+        logger.info(f"Toolbar button pressed: {event['name']}")
         # Call the toolbar method
         getattr(self.toolbar, event["name"])()
         # Queue a draw event for the client to request
@@ -284,6 +286,7 @@ class FastAPICanvas(FigureCanvasAgg):
 
     def queue_event(self, event_type: str, **kwargs: Any) -> None:
         """Queue a message to be sent to the client."""
+        logger.debug(f"Queueing event: type={event_type}, kwargs={kwargs}")
         self._msg_queue.append({"type": event_type, **kwargs})
 
     def draw_idle(self) -> None:
@@ -294,6 +297,7 @@ class FastAPICanvas(FigureCanvasAgg):
         """Send all queued messages to the client."""
         while len(self._msg_queue):
             payload = self._msg_queue.popleft()
+            logger.debug(f"Sending message to client: type={payload.get('type')}")
             await websocket.send_json(payload)
 
 
@@ -338,6 +342,7 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
 
     def set_message(self, message: str) -> None:
         """Display a message in the browser toolbar."""
+        logger.debug(f"set_message called: '{message}'")
         if message != self.message:
             self.canvas.queue_event("message", message=message)
         self.message = message

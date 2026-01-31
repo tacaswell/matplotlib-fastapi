@@ -9,17 +9,33 @@ Run with:
     uvicorn demos.sine_wave:app --reload
 
 Then visit:
-    http://localhost:8000 - List all available plots
-    http://localhost:8000/plot/sine?frequency=2.0&amplitude=1.5 - Sine wave with params
-    http://localhost:8000/plot/interactive_sine - Interactive sine with update controls
+    http://localhost:8000/plots - List all available plots
+    http://localhost:8000/plots/plot/sine?frequency=2.0&amplitude=1.5 - Sine wave with params
+    http://localhost:8000/plots/plot/interactive_sine - Interactive sine with update controls
+    http://localhost:8000/embeddable - Embeddable component demos
 """
 
+import logging
 import numpy as np
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from matplotlib.figure import Figure
 from pydantic import BaseModel, Field
 
 from mpl_fastapi import InitConfig, PlotConfig, UpdateConfig, create_mpl_router
+
+# Configure logging to see debug messages
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Ensure mpl_fastapi loggers are at DEBUG level
+logging.getLogger('mpl_fastapi').setLevel(logging.DEBUG)
+logging.getLogger('mpl_fastapi.router').setLevel(logging.DEBUG)
+logging.getLogger('mpl_fastapi.mpl_backend').setLevel(logging.DEBUG)
 
 
 class SinePlotParams(BaseModel):
@@ -246,8 +262,22 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Mount the matplotlib router
-app.include_router(mpl.router, prefix="")
+# Mount the matplotlib router at /plots
+app.include_router(mpl.router, prefix="/plots")
 
 # Mount static files (required for matplotlib JavaScript and CSS)
 app.mount(mpl.static_mount_path, mpl.static_files, name="mpl_static")
+
+# Add route to serve home page
+@app.get("/")
+async def home():
+    """Serve the main menu page."""
+    index_path = Path(__file__).parent / "index.html"
+    return FileResponse(index_path, media_type="text/html")
+
+# Add route to serve embeddable demo
+@app.get("/embeddable")
+async def embeddable_demo():
+    """Serve the embeddable component demo page."""
+    demo_path = Path(__file__).parent / "embeddable_demo.html"
+    return FileResponse(demo_path, media_type="text/html")

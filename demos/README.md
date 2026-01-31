@@ -23,12 +23,27 @@ uvicorn demos.sine_wave:app --reload
 ```
 
 Then visit:
-- http://localhost:8000/ - Redirects to plots list
-- http://localhost:8000/plots - JSON API listing all available plots
-- http://localhost:8000/plot/sine - Interactive sine wave viewer
-- http://localhost:8000/plot/sine?frequency=2.0&amplitude=1.5 - With custom parameters
-- http://localhost:8000/plot/cosine - Cosine wave with damping
-- http://localhost:8000/plot/lissajous - Lissajous curves
+- http://localhost:8000/plots - HTML plots list
+- http://localhost:8000/plots/plots - JSON API listing all available plots
+- http://localhost:8000/plots/plot/sine - Interactive sine wave viewer
+- http://localhost:8000/plots/plot/sine?frequency=2.0&amplitude=1.5 - With custom parameters
+- http://localhost:8000/plots/plot/cosine - Cosine wave with damping
+- http://localhost:8000/plots/plot/lissajous - Lissajous curves
+- **http://localhost:8000/embeddable** - Embeddable component demos
+
+### Embeddable Component Demo
+
+The `embeddable_demo.html` file demonstrates the new **MatplotlibEmbeddable** JavaScript API for framework-agnostic plot integration. This shows:
+
+- Basic usage with auto-connection
+- Manual connection control
+- Programmatic parameter updates
+- Multiple independent plots on one page
+- Animation examples
+- Error handling
+- React integration patterns
+
+Visit http://localhost:8000/embeddable to see interactive examples.
 
 ## How It Works
 

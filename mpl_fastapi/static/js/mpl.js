@@ -599,10 +599,11 @@ mpl.findpos = function (e) {
         targ = targ.parentNode;
     }
 
-    // pageX,Y are the mouse positions relative to the document
+    // Use clientX/Y which are relative to the viewport, and boundingRect
+    // which is also relative to the viewport
     var boundingRect = targ.getBoundingClientRect();
-    var x = e.pageX - (boundingRect.left + document.body.scrollLeft);
-    var y = e.pageY - (boundingRect.top + document.body.scrollTop);
+    var x = e.clientX - boundingRect.left;
+    var y = e.clientY - boundingRect.top;
 
     return { x: x, y: y };
 };

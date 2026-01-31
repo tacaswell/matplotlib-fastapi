@@ -139,8 +139,8 @@
                 }
             });
 
-            // Build the URL
-            let url = '/plot/' + plotName;
+            // Build the URL using the base path from the template
+            let url = '{{ base_path }}/plot/' + plotName;
             const paramString = params.toString();
             if (paramString) {
                 url += '?' + paramString;
