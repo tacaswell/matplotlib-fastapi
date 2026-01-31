@@ -29,8 +29,35 @@ from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Type alias for plot generator functions
-PlotGenerator = Callable[[Figure, BaseModel], None]
+# Type aliases for plot generator and update functions
+# Using Any for parameters to support subclasses of BaseModel
+PlotGenerator = Callable[[Figure, Any], Any]
+UpdateFunction = Callable[[Any, Any], Any]
+
+
+@dataclass
+class InitConfig:
+    """Initial plot generation configuration."""
+
+    function: PlotGenerator
+    params_model: type[BaseModel]
+
+
+@dataclass
+class UpdateConfig:
+    """Plot update configuration."""
+
+    function: UpdateFunction
+    params_model: type[BaseModel]
+
+
+@dataclass
+class PlotConfig:
+    """Configuration for a plot with optional update capability."""
+
+    description: str
+    init: InitConfig
+    update: UpdateConfig | None = None
 
 
 # Response models for type safety and documentation
@@ -57,7 +84,7 @@ class MPLRouter:
 
 
 def create_mpl_router(
-    plot_generators: dict[str, tuple[PlotGenerator, type[BaseModel], str]],
+    plot_generators: dict[str, PlotConfig],
     *,
     template_dir: Path | str | None = None,
     static_mount_path: str = "/mpl-static",
@@ -67,11 +94,12 @@ def create_mpl_router(
 
     Parameters
     ----------
-    plot_generators : dict[str, tuple[PlotGenerator, type[BaseModel], str]]
-        Mapping of plot names to (generator_func, params_model, description).
-        - generator_func: Callable[[Figure, BaseModel], None] that populates the figure
-        - params_model: Pydantic model for parameter validation
-        - description: Human-readable description for the plot
+    plot_generators : dict[str, PlotConfig]
+        Mapping of plot names to PlotConfig objects.
+        Each PlotConfig contains:
+        - description: Human-readable description
+        - init: InitConfig with generator function and params model
+        - update: Optional UpdateConfig with update function and params model
     template_dir : Path | str, optional
         Custom template directory (defaults to package templates)
     static_mount_path : str, optional
@@ -89,14 +117,30 @@ def create_mpl_router(
     ...     frequency: float = 1.0
     ...     amplitude: float = 1.0
     >>>
-    >>> def create_sine_plot(fig: Figure, params: SinePlotParams) -> None:
+    >>> class SineUpdateParams(BaseModel):
+    ...     phase: float = 0.0
+    >>>
+    >>> def create_sine_plot(fig: Figure, params: SinePlotParams) -> dict[str, Any]:
     ...     ax = fig.add_subplot(111)
     ...     x = np.linspace(0, 4*np.pi, 200)
     ...     y = params.amplitude * np.sin(params.frequency * x)
-    ...     ax.plot(x, y)
+    ...     line, = ax.plot(x, y)
+    ...     return {"ax": ax, "line": line, "params": params}
+    >>>
+    >>> def update_sine_plot(state: dict[str, Any], params: SineUpdateParams) -> dict[str, Any]:
+    ...     x = np.linspace(0, 4*np.pi, 200)
+    ...     y = state["params"].amplitude * np.sin(
+    ...         state["params"].frequency * x + params.phase
+    ...     )
+    ...     state["line"].set_ydata(y)
+    ...     return state
     >>>
     >>> mpl = create_mpl_router({
-    ...     "sine": (create_sine_plot, SinePlotParams, "Sine wave visualization"),
+    ...     "sine": PlotConfig(
+    ...         description="Interactive sine wave",
+    ...         init=InitConfig(create_sine_plot, SinePlotParams),
+    ...         update=UpdateConfig(update_sine_plot, SineUpdateParams),
+    ...     ),
     ... })
     >>> app.include_router(mpl.router, prefix="/plots")
     >>> app.mount(mpl.static_mount_path, mpl.static_files, name="mpl_static")
@@ -129,10 +173,10 @@ def create_mpl_router(
     async def plots_list_html(request: Request) -> HTMLResponse:
         """Render an HTML page listing all available plots."""
         plots_info = {}
-        for name, (_, param_model, description) in plot_generators.items():
+        for name, config in plot_generators.items():
             plots_info[name] = {
-                "description": description,
-                "parameters": param_model.model_json_schema(),
+                "description": config.description,
+                "parameters": config.init.params_model.model_json_schema(),
             }
         return templates.TemplateResponse(
             "plots_list.html",
@@ -147,10 +191,10 @@ def create_mpl_router(
     async def list_plots() -> PlotsListResponse:
         """List all available plots with their parameter schemas."""
         plots_info = {}
-        for name, (_, param_model, description) in plot_generators.items():
+        for name, config in plot_generators.items():
             plots_info[name] = PlotInfo(
-                description=description,
-                parameters=param_model.model_json_schema(),
+                description=config.description,
+                parameters=config.init.params_model.model_json_schema(),
             )
         return PlotsListResponse(plots=plots_info)
 
@@ -162,6 +206,12 @@ def create_mpl_router(
         _: None = Depends(validate_plot_name),
     ) -> HTMLResponse:
         """Render the plot viewer HTML."""
+        config = plot_generators[plot_name]
+
+        # Check if update functionality is available
+        update_params_schema = None
+        if config.update is not None:
+            update_params_schema = config.update.params_model.model_json_schema()
 
         return templates.TemplateResponse(
             "figure.html",
@@ -170,6 +220,7 @@ def create_mpl_router(
                 "ws_uri": f"ws://{request.url.hostname}:{request.url.port}",
                 "fig_id": plot_name,
                 "static_path": static_mount_path,
+                "update_params_schema": update_params_schema,
             },
         )
 
@@ -187,11 +238,11 @@ def create_mpl_router(
             await websocket.close(code=1003, reason=f"Unknown plot: {plot_name}")
             return
 
-        generator, param_model, _ = plot_generators[plot_name]
+        config = plot_generators[plot_name]
 
         # Parse parameters from query string
         try:
-            params = param_model(**websocket.query_params)
+            params = config.init.params_model(**websocket.query_params)
         except ValidationError as e:
             logger.warning(f"Invalid parameters for plot {plot_name}: {e}")
             await websocket.close(code=1003, reason=f"Invalid params: {e}")
@@ -207,7 +258,7 @@ def create_mpl_router(
         # - Adding timeouts for generator execution
         fig = Figure()
         try:
-            generator(fig, params)
+            state = config.init.function(fig, params)
         except Exception as e:
             logger.error(f"Error generating plot '{plot_name}': {e}", exc_info=True)
             await websocket.close(code=1011, reason=f"Plot generation failed: {e}")
@@ -245,6 +296,38 @@ def create_mpl_router(
                 try:
                     if data["type"] == "supports_binary":
                         manager.supports_binary = data["value"]
+                    elif data["type"] == "update_params":
+                        # Handle update request
+                        if config.update is None:
+                            logger.warning(
+                                f"Update requested for plot '{plot_name}' "
+                                "but no update function configured"
+                            )
+                        else:
+                            try:
+                                # Validate update parameters
+                                update_params = config.update.params_model(
+                                    **data["params"]
+                                )
+                                logger.info(
+                                    f"Updating plot '{plot_name}' with params: {update_params}"
+                                )
+
+                                # Call update function and get new state
+                                state = config.update.function(state, update_params)
+
+                                # Trigger redraw
+                                canvas.draw_idle()
+
+                            except ValidationError as e:
+                                logger.warning(
+                                    f"Invalid update parameters for plot {plot_name}: {e}"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Error updating plot '{plot_name}': {e}",
+                                    exc_info=True,
+                                )
                     else:
                         e_type = data["type"]
                         handler = getattr(

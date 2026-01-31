@@ -404,6 +404,28 @@ mpl.figure.prototype.send_draw_message = function () {
     }
 };
 
+mpl.figure.prototype.send_update = function (form_id) {
+    var form = document.getElementById(form_id);
+    if (!form) {
+        console.error('Update form not found:', form_id);
+        return;
+    }
+
+    var params = {};
+    var inputs = form.querySelectorAll('input, select');
+    inputs.forEach(function (input) {
+        var value = input.value;
+        // Convert to appropriate type based on input type
+        if (input.type === 'number') {
+            value = parseFloat(value);
+        }
+        params[input.name] = value;
+    });
+
+    console.log('Sending update params:', params);
+    this.send_message('update_params', { params: params });
+};
+
 mpl.figure.prototype.handle_save = function (fig, _msg) {
     var format_dropdown = fig.format_dropdown;
     var format = format_dropdown.options[format_dropdown.selectedIndex].value;

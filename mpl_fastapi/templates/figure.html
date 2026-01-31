@@ -10,11 +10,21 @@
     </script>
     <script src="/js/mpl.js"></script>
     <script>
+      var mplFigure = null;
+
       function ready(fn) {
         if (document.readyState != "loading") {
           fn();
         } else {
           document.addEventListener("DOMContentLoaded", fn);
+        }
+      }
+
+      function sendUpdate() {
+        if (mplFigure) {
+          mplFigure.send_update('update-form');
+        } else {
+          console.error('Figure not initialized');
         }
       }
 
@@ -27,7 +37,7 @@
             ws_url += window.location.search;
           }
           var websocket = new websocket_type(ws_url);
-          var fig = new mpl.figure(
+          mplFigure = new mpl.figure(
               "{{ fig_id }}", websocket, (figure, format)=>nil,
               document.getElementById("figure"));
         }
@@ -40,5 +50,33 @@
   <body>
     <div id="mpl-warnings" class="mpl-warnings"></div>
     <div id="figure" style="margin: 10px 10px;"></div>
+
+    {% if update_params_schema %}
+    <div id="update-controls" style="margin: 10px; padding: 10px; border: 1px solid #ccc; background: #f9f9f9;">
+      <h3>Update Parameters</h3>
+      <form id="update-form">
+        {% for prop_name, prop_info in update_params_schema.properties.items() %}
+        <div style="margin: 5px 0;">
+          <label for="{{ prop_name }}">
+            {{ prop_info.get('title', prop_name) }}
+            {% if prop_info.get('description') %}
+            <span style="font-size: 0.9em; color: #666;">({{ prop_info.description }})</span>
+            {% endif %}
+          </label>
+          <input
+            type="number"
+            id="{{ prop_name }}"
+            name="{{ prop_name }}"
+            value="{{ prop_info.get('default', 0) }}"
+            {% if prop_info.get('minimum') is not none %}min="{{ prop_info.minimum }}"{% endif %}
+            {% if prop_info.get('maximum') is not none %}max="{{ prop_info.maximum }}"{% endif %}
+            step="any"
+          />
+        </div>
+        {% endfor %}
+        <button type="button" onclick="sendUpdate()" style="margin-top: 10px;">Update Plot</button>
+      </form>
+    </div>
+    {% endif %}
   </body>
 </html>
