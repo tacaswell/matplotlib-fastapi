@@ -30,16 +30,17 @@
 
       ready(
         function () {
-          var websocket_type = mpl.get_websocket_type();
           // Pass query parameters from the page URL to the WebSocket
           var ws_url = "{{ ws_uri }}/ws/{{ fig_id }}";
           if (window.location.search) {
             ws_url += window.location.search;
           }
-          var websocket = new websocket_type(ws_url);
+          // Pass URL directly to mpl.figure, it will create the WebSocketManager
           mplFigure = new mpl.figure(
-              "{{ fig_id }}", websocket, (figure, format)=>nil,
-              document.getElementById("figure"));
+              "{{ fig_id }}",
+              ws_url,
+              document.getElementById("figure")
+          );
         }
       );
     </script>

@@ -10,14 +10,16 @@ The router supports:
 - Dynamic parameter passing via query strings
 """
 
+import io
 import logging
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from matplotlib.figure import Figure
@@ -28,6 +30,10 @@ from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+# Module-level cache for active figures (connection-scoped)
+# Maps connection_id -> (Figure, FastAPICanvas)
+_active_figures: dict[str, tuple[Figure, FastAPICanvas]] = {}
 
 # Type aliases for plot generator and update functions
 # Using Any for parameters to support subclasses of BaseModel
@@ -179,10 +185,10 @@ def create_mpl_router(
                 "description": config.description,
                 "parameters": config.init.params_model.model_json_schema(),
             }
-        
+
         # Extract base path from request URL
         base_path = request.url.path.rstrip('/')
-        
+
         return templates.TemplateResponse(
             "plots_list.html",
             {
@@ -253,6 +259,96 @@ def create_mpl_router(
             },
         )
 
+    # Route: Download plot as file
+    @router.get("/download/{connection_id}")
+    async def download_plot(
+        connection_id: str,
+        file_format: str = "png",
+        dpi: int = 100,
+        transparent: bool = False,
+    ) -> StreamingResponse:
+        """
+        Download the current plot as a file in the specified format.
+
+        This endpoint requires an active WebSocket connection to work,
+        as it retrieves the figure from the connection-scoped cache.
+
+        Parameters
+        ----------
+        connection_id : str
+            The unique connection ID provided via WebSocket
+        file_format : str
+            Output format (png, pdf, svg, eps, etc.)
+        dpi : int
+            DPI for raster formats (default: 100)
+        transparent : bool
+            Whether to use transparent background (default: False)
+        """
+        # Validate connection exists
+        if connection_id not in _active_figures:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Connection not found. The WebSocket connection may have been closed. "
+                    "Please refresh the page and try again."
+                ),
+            )
+
+        fig, _ = _active_figures[connection_id]
+
+        # Validate format
+        supported_formats = ["png", "pdf", "svg", "eps", "ps", "jpg", "jpeg", "tiff", "tif"]
+        format_lower = file_format.lower()
+        if format_lower not in supported_formats:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported format '{file_format}'. Supported: {', '.join(supported_formats)}",
+            )
+
+        # Determine MIME type
+        mime_types = {
+            "png": "image/png",
+            "pdf": "application/pdf",
+            "svg": "image/svg+xml",
+            "eps": "application/postscript",
+            "ps": "application/postscript",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "tiff": "image/tiff",
+            "tif": "image/tiff",
+        }
+        mime_type = mime_types.get(format_lower, "application/octet-stream")
+
+        # Save figure to BytesIO
+        buf = io.BytesIO()
+        try:
+            # Set DPI for raster formats
+            save_kwargs: dict[str, Any] = {"format": format_lower}
+            if format_lower in ["png", "jpg", "jpeg", "tiff", "tif"]:
+                save_kwargs["dpi"] = dpi
+            if format_lower == "png":
+                save_kwargs["transparent"] = transparent
+
+            fig.savefig(buf, **save_kwargs)
+            buf.seek(0)
+
+            logger.info(f"Generated {format_lower} download for connection {connection_id}")
+        except Exception as e:
+            logger.error(f"Error generating plot download: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate plot: {str(e)}",
+            ) from e
+
+        # Return as streaming response with download headers
+        return StreamingResponse(
+            buf,
+            media_type=mime_type,
+            headers={
+                "Content-Disposition": f"attachment; filename=plot.{format_lower}"
+            },
+        )
+
     # Route: WebSocket connection for interactive plotting
     @router.websocket("/ws/{plot_name}")
     async def websocket_endpoint(websocket: WebSocket, plot_name: str) -> None:
@@ -266,6 +362,10 @@ def create_mpl_router(
             return
 
         await websocket.accept()
+
+        # Generate unique connection ID for this WebSocket session
+        connection_id = str(uuid.uuid4())
+        logger.debug(f"Generated connection ID: {connection_id}")
 
         config = plot_generators[plot_name]
 
@@ -300,6 +400,10 @@ def create_mpl_router(
         # Attach manager
         manager = FastAPIManger(canvas, 0)
 
+        # Store figure and canvas in cache for download endpoint
+        _active_figures[connection_id] = (fig, canvas)
+        logger.debug(f"Stored figure in cache with connection ID: {connection_id}")
+
         # Type narrowing for safety
         if not isinstance(canvas, FastAPICanvas):
             raise TypeError(f"Expected FastAPICanvas, got {type(canvas)}")
@@ -308,6 +412,9 @@ def create_mpl_router(
 
         # Initial sync
         await websocket.send_json({"type": "image_mode", "mode": "full"})
+
+        # Send connection ID to client for download functionality
+        await websocket.send_json({"type": "connection_id", "id": connection_id})
 
         # Event loop
         try:
@@ -386,6 +493,12 @@ def create_mpl_router(
         finally:
             # Cleanup on disconnect
             logger.debug(f"Cleaning up resources for plot '{plot_name}'")
+
+            # Remove from active figures cache
+            if connection_id in _active_figures:
+                del _active_figures[connection_id]
+                logger.debug(f"Removed figure from cache: {connection_id}")
+
             try:
                 manager.destroy()
             except Exception as e:

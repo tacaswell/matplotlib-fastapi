@@ -17,22 +17,109 @@ mpl.get_websocket_type = function () {
     }
 };
 
-mpl.figure = function (figure_id, websocket, ondownload, parent_element) {
+/**
+ * WebSocketManager - Manages WebSocket connection lifecycle
+ * Ensures proper ordering of connection and message handling
+ */
+mpl.WebSocketManager = function(url) {
+    this.url = url;
+    this.ws = null;
+    this.messageHandlers = [];
+    this.openHandlers = [];
+    this.closeHandlers = [];
+    this.errorHandlers = [];
+    this._isConnecting = false;
+    this._isConnected = false;
+};
+
+mpl.WebSocketManager.prototype.connect = function() {
+    if (this._isConnecting || this._isConnected) {
+        return;
+    }
+
+    this._isConnecting = true;
+    var manager = this;
+    var WebSocketType = mpl.get_websocket_type();
+    this.ws = new WebSocketType(this.url);
+
+    this.ws.onopen = function(event) {
+        manager._isConnecting = false;
+        manager._isConnected = true;
+        manager.openHandlers.forEach(function(handler) {
+            handler(event);
+        });
+    };
+
+    this.ws.onmessage = function(event) {
+        manager.messageHandlers.forEach(function(handler) {
+            handler(event);
+        });
+    };
+
+    this.ws.onclose = function(event) {
+        manager._isConnected = false;
+        manager.closeHandlers.forEach(function(handler) {
+            handler(event);
+        });
+    };
+
+    this.ws.onerror = function(event) {
+        manager.errorHandlers.forEach(function(handler) {
+            handler(event);
+        });
+    };
+};
+
+mpl.WebSocketManager.prototype.onOpen = function(handler) {
+    this.openHandlers.push(handler);
+};
+
+mpl.WebSocketManager.prototype.onMessage = function(handler) {
+    this.messageHandlers.push(handler);
+};
+
+mpl.WebSocketManager.prototype.onClose = function(handler) {
+    this.closeHandlers.push(handler);
+};
+
+mpl.WebSocketManager.prototype.onError = function(handler) {
+    this.errorHandlers.push(handler);
+};
+
+mpl.WebSocketManager.prototype.send = function(data) {
+    if (this.ws && this._isConnected) {
+        this.ws.send(data);
+    }
+};
+
+mpl.WebSocketManager.prototype.close = function() {
+    if (this.ws) {
+        this.ws.close();
+    }
+};
+
+mpl.WebSocketManager.prototype.getReadyState = function() {
+    return this.ws ? this.ws.readyState : WebSocket.CLOSED;
+};
+
+mpl.WebSocketManager.prototype.isConnected = function() {
+    return this._isConnected;
+};
+
+mpl.figure = function (figure_id, ws_manager_or_url, parent_element) {
     this.id = figure_id;
 
-    this.ws = websocket;
-
-    this.supports_binary = this.ws.binaryType !== undefined;
-
-    if (!this.supports_binary) {
-        var warnings = document.getElementById('mpl-warnings');
-        if (warnings) {
-            warnings.style.display = 'block';
-            warnings.textContent =
-                'This browser does not support binary websocket messages. ' +
-                'Performance may be slow.';
-        }
+    // Support both WebSocketManager and URL string
+    if (typeof ws_manager_or_url === 'string') {
+        this.ws_manager = new mpl.WebSocketManager(ws_manager_or_url);
+    } else {
+        this.ws_manager = ws_manager_or_url;
     }
+
+    // Legacy property for backward compatibility (will be set when WebSocket connects)
+    this.ws = null;
+
+    this.supports_binary = true; // Will be updated when WebSocket connects
 
     this.imageObj = new Image();
 
@@ -59,7 +146,23 @@ mpl.figure = function (figure_id, websocket, ondownload, parent_element) {
 
     this.waiting = false;
 
-    this.ws.onopen = function () {
+    // Register open handler with WebSocketManager
+    this.ws_manager.onOpen(function() {
+        // Update legacy ws property
+        fig.ws = fig.ws_manager.ws;
+        fig.supports_binary = fig.ws.binaryType !== undefined;
+
+        if (!fig.supports_binary) {
+            var warnings = document.getElementById('mpl-warnings');
+            if (warnings) {
+                warnings.style.display = 'block';
+                warnings.textContent =
+                    'This browser does not support binary websocket messages. ' +
+                    'Performance may be slow.';
+            }
+        }
+
+        // Send initialization messages
         fig.send_message('supports_binary', { value: fig.supports_binary });
         fig.send_message('send_image_mode', {});
         if (fig.ratio !== 1) {
@@ -68,7 +171,10 @@ mpl.figure = function (figure_id, websocket, ondownload, parent_element) {
             });
         }
         fig.send_message('refresh', {});
-    };
+    });
+
+    // Register message handler with WebSocketManager
+    this.ws_manager.onMessage(this._make_on_message_function(this));
 
     this.imageObj.onload = function () {
         if (fig.image_mode === 'full') {
@@ -81,12 +187,14 @@ mpl.figure = function (figure_id, websocket, ondownload, parent_element) {
     };
 
     this.imageObj.onunload = function () {
-        fig.ws.close();
+        fig.ws_manager.close();
     };
 
-    this.ws.onmessage = this._make_on_message_function(this);
+    this.connection_id = null; // Will be set by server
+    this.ondownload = this._default_download_handler.bind(this);
 
-    this.ondownload = ondownload;
+    // Connect the WebSocket
+    this.ws_manager.connect();
 };
 
 mpl.figure.prototype._init_header = function () {
@@ -394,13 +502,13 @@ mpl.figure.prototype.request_resize = function (x_pixels, y_pixels) {
 mpl.figure.prototype.send_message = function (type, properties) {
     properties['type'] = type;
     properties['figure_id'] = this.id;
-    this.ws.send(JSON.stringify(properties));
+    this.ws_manager.send(JSON.stringify(properties));
 };
 
 mpl.figure.prototype.send_draw_message = function () {
     if (!this.waiting) {
         this.waiting = true;
-        this.ws.send(JSON.stringify({ type: 'draw', figure_id: this.id }));
+        this.ws_manager.send(JSON.stringify({ type: 'draw', figure_id: this.id }));
     }
 };
 
@@ -430,6 +538,40 @@ mpl.figure.prototype.handle_save = function (fig, _msg) {
     var format_dropdown = fig.format_dropdown;
     var format = format_dropdown.options[format_dropdown.selectedIndex].value;
     fig.ondownload(fig, format);
+};
+
+mpl.figure.prototype._default_download_handler = function (fig, format) {
+    // Default download handler using the HTTP endpoint
+    if (!fig.connection_id) {
+        console.error('No connection ID available for download');
+        alert('Download not available: connection not initialized');
+        return;
+    }
+
+    // Construct download URL
+    // Extract base path from WebSocket URL if available
+    var base_path = '';
+    if (fig.ws_manager && fig.ws_manager.url) {
+        // WebSocket URL format: ws://host:port/path/ws/plotname
+        var ws_url = fig.ws_manager.url;
+        var path_match = ws_url.match(/:\/\/[^\/]+(.+)\/ws\//);
+        if (path_match && path_match[1]) {
+            base_path = path_match[1];
+        }
+    }
+
+    var download_url = base_path + '/download/' + fig.connection_id + '?format=' + format;
+
+    // Use figure ID as filename
+    var filename = fig.id || 'plot';
+
+    // Create temporary link and trigger download
+    var link = document.createElement('a');
+    link.href = download_url;
+    link.download = filename + '.' + format;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 };
 
 mpl.figure.prototype.handle_resize = function (fig, msg) {
@@ -484,6 +626,12 @@ mpl.figure.prototype.handle_draw = function (fig, _msg) {
 
 mpl.figure.prototype.handle_image_mode = function (fig, msg) {
     fig.image_mode = msg['mode'];
+};
+
+mpl.figure.prototype.handle_connection_id = function (fig, msg) {
+    // Store connection ID for download functionality
+    fig.connection_id = msg['id'];
+    console.log('Received connection ID:', fig.connection_id);
 };
 
 mpl.figure.prototype.handle_history_buttons = function (fig, msg) {

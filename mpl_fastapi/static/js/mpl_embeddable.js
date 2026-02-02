@@ -150,67 +150,24 @@
                     await this._fetchUpdateSchema();
                 }
 
-                // Create WebSocket connection
-                const WebSocketType = getWebSocketType();
+                // Create WebSocketManager
                 const wsUrl = this._buildWebSocketUrl();
-                this.ws = new WebSocketType(wsUrl);
+                this.ws_manager = new window.mpl.WebSocketManager(wsUrl);
 
-                let figureInitialized = false;
-
-                // Set up error handler before monitoring state
-                this.ws.addEventListener('error', (event) => {
-                    if (this._connectionCheckInterval) {
-                        clearInterval(this._connectionCheckInterval);
-                        this._connectionCheckInterval = null;
+                // Set up connection handlers
+                this.ws_manager.onOpen(() => {
+                    this.connected = true;
+                    // Enable submit button if it exists
+                    if (this.submitButton) {
+                        this.submitButton.disabled = false;
+                        this.submitButton.style.opacity = '1';
+                        this.submitButton.style.cursor = 'pointer';
                     }
-                    this.onError(new Error('WebSocket connection failed'));
+                    this.onConnect();
                 });
 
-                this.ws.addEventListener('close', (event) => {
-                    if (!this.connected && event.code !== 1000) {
-                        // Connection failed before it was established (not a normal close)
-                        if (this._connectionCheckInterval) {
-                            clearInterval(this._connectionCheckInterval);
-                            this._connectionCheckInterval = null;
-                        }
-                        this.onError(new Error(`Connection failed: ${event.reason || 'Unknown error'}`));
-                    }
-                });
-
-                // Don't overwrite the WebSocket handlers that mpl.figure set up!
-                // Instead, monitor the WebSocket state changes
-                // Use a polling approach to detect connection state
-                const checkConnection = () => {
-                    if (this.ws.readyState === WebSocket.OPEN && !this.connected) {
-                        // Initialize the figure ONLY after WebSocket is open
-                        if (!figureInitialized) {
-                            this._initializeFigure();
-                            figureInitialized = true;
-
-                            // Since the WebSocket was already open when we created the figure,
-                            // the figure's onopen handler never fired. We need to manually send
-                            // the initialization messages that would normally be sent on open.
-                            if (this.figure) {
-                                this.figure.send_message('supports_binary', { value: this.figure.supports_binary });
-                                this.figure.send_message('send_image_mode', {});
-                                if (this.figure.ratio !== 1) {
-                                    this.figure.send_message('set_device_pixel_ratio', {
-                                        device_pixel_ratio: this.figure.ratio,
-                                    });
-                                }
-                                this.figure.send_message('refresh', {});
-                            }
-                        }
-
-                        this.connected = true;
-                        // Enable submit button if it exists
-                        if (this.submitButton) {
-                            this.submitButton.disabled = false;
-                            this.submitButton.style.opacity = '1';
-                            this.submitButton.style.cursor = 'pointer';
-                        }
-                        this.onConnect();
-                    } else if (this.ws.readyState === WebSocket.CLOSED && this.connected) {
+                this.ws_manager.onClose((event) => {
+                    if (this.connected) {
                         this.connected = false;
                         // Disable submit button if it exists
                         if (this.submitButton) {
@@ -218,27 +175,22 @@
                             this.submitButton.style.opacity = '0.5';
                             this.submitButton.style.cursor = 'not-allowed';
                         }
-                        // Stop checking since we're closed
-                        if (this._connectionCheckInterval) {
-                            clearInterval(this._connectionCheckInterval);
-                            this._connectionCheckInterval = null;
-                        }
                         this.onDisconnect();
-                    } else if (this.ws.readyState === WebSocket.CLOSED && !this.connected) {
-                        // WebSocket closed before connection was established
-                        // This handles the case where it's rejected immediately
-                        if (this._connectionCheckInterval) {
-                            clearInterval(this._connectionCheckInterval);
-                            this._connectionCheckInterval = null;
-                        }
+                    } else if (event.code !== 1000) {
+                        // Connection failed before it was established
+                        this.onError(new Error(`Connection failed: ${event.reason || 'Unknown error'}`));
                     }
-                };
+                });
 
-                // Check connection state periodically
-                this._connectionCheckInterval = setInterval(checkConnection, 100);
+                this.ws_manager.onError((event) => {
+                    this.onError(new Error('WebSocket connection failed'));
+                });
 
-                // Also check immediately
-                setTimeout(checkConnection, 0);
+                // Initialize figure first (before connecting), it will register its handlers
+                this._initializeFigure();
+
+                // Now connect the WebSocket
+                this.ws_manager.connect();
 
             } catch (error) {
                 this.onError(error);
@@ -289,12 +241,11 @@
             this.container.appendChild(wrapper);
 
             // Initialize the mpl.figure
-            // The existing mpl.figure class expects to be called as a constructor
+            // Pass the WebSocketManager to mpl.figure
             if (window.mpl && window.mpl.figure) {
                 this.figure = new window.mpl.figure(
                     this.plotName,
-                    this.ws,
-                    this._handleDownload.bind(this),
+                    this.ws_manager,
                     figureContainer
                 );
 
@@ -473,31 +424,12 @@
         }
 
         /**
-         * Handle download action
-         */
-        _handleDownload(fig, format) {
-            // Create a download link
-            const link = document.createElement('a');
-            link.href = fig.imageObj.src;
-            link.download = `${this.plotName}.${format}`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        }
-
-        /**
          * Disconnect and cleanup
          */
         disconnect() {
-            // Clear connection check interval
-            if (this._connectionCheckInterval) {
-                clearInterval(this._connectionCheckInterval);
-                this._connectionCheckInterval = null;
-            }
-
-            if (this.ws) {
-                this.ws.close();
-                this.ws = null;
+            if (this.ws_manager) {
+                this.ws_manager.close();
+                this.ws_manager = null;
             }
             if (this.figure && this.figure.root) {
                 this.figure.root.remove();
