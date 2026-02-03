@@ -507,24 +507,29 @@ def create_mpl_router(
     # Route: Serve matplotlib JavaScript
     @router.get("/js/mpl.js", response_class=PlainTextResponse)
     async def get_mpl_js() -> PlainTextResponse:
-        """Serve the matplotlib JavaScript bundle."""
+        """Serve the matplotlib JavaScript bundle (TypeScript-compiled)."""
         js = FastAPIManger.get_javascript()
         return PlainTextResponse(js, headers={"Content-Type": "application/javascript"})
 
     # Route: Serve embeddable component bundle
     @router.get("/component.js", response_class=PlainTextResponse)
     async def get_component_js() -> PlainTextResponse:
-        """Serve the embeddable matplotlib component JavaScript."""
-        # Read mpl.js and mpl_embeddable.js and combine them
-        mpl_js = FastAPIManger.get_javascript()
-        embeddable_path = Path(__file__).parent / "static" / "js" / "mpl_embeddable.js"
-        embeddable_js = embeddable_path.read_text()
+        """Serve the embeddable matplotlib component JavaScript (TypeScript-compiled)."""
+        # This now serves the TypeScript-compiled bundle from dist/
+        js = FastAPIManger.get_javascript()
+        return PlainTextResponse(js, headers={"Content-Type": "application/javascript"})
 
-        # Combine both scripts
-        combined_js = f"{mpl_js}\n\n{embeddable_js}"
-        return PlainTextResponse(
-            combined_js, headers={"Content-Type": "application/javascript"}
-        )
+    # Route: Serve source map for debugging
+    @router.get("/component.js.map", response_class=PlainTextResponse)
+    async def get_component_js_map() -> PlainTextResponse:
+        """Serve the source map for the TypeScript-compiled component."""
+        map_path = Path(__file__).parent / "static/js/dist/component.js.map"
+        if map_path.exists():
+            return PlainTextResponse(
+                map_path.read_text(encoding="utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+        raise HTTPException(status_code=404, detail="Source map not found")
 
     # Route: Get schema for a specific plot
     @router.get("/api/plots/{plot_name}/schema")

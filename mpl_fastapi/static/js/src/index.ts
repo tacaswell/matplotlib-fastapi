@@ -5,7 +5,9 @@
  * This file will be compiled to component.js and exposed globally.
  */
 
-// Export MatplotlibEmbeddable (will be implemented in Phase 4)
+// Export core components
+export { WebSocketManager } from './websocket-manager.js';
+export { Figure } from './figure.js';
 export { MatplotlibEmbeddable } from './embeddable.js';
 
 // Export types for TypeScript users
@@ -14,17 +16,38 @@ export type {
   PlotSchemaResponse,
   JSONSchema,
   JSONSchemaProperty,
+  ImageMode,
+  NavigationMode,
+  ServerMessage,
+  ClientMessage,
 } from './types.js';
 
-// Expose MatplotlibEmbeddable globally for script tag usage
+// Expose to global window for script tag usage
+import { WebSocketManager } from './websocket-manager.js';
+import { Figure } from './figure.js';
 import { MatplotlibEmbeddable } from './embeddable.js';
 
 declare global {
   interface Window {
     MatplotlibEmbeddable: typeof MatplotlibEmbeddable;
+    mpl: {
+      WebSocketManager: typeof WebSocketManager;
+      Figure: typeof Figure;
+      toolbar_items?: Array<[string, string, string, string]>;
+      extensions?: string[];
+      default_extension?: string;
+    };
   }
 }
 
 if (typeof window !== 'undefined') {
   window.MatplotlibEmbeddable = MatplotlibEmbeddable;
+
+  // Initialize mpl namespace if not already present
+  if (!window.mpl) {
+    window.mpl = {} as any;
+  }
+
+  window.mpl.WebSocketManager = WebSocketManager;
+  window.mpl.Figure = Figure;
 }

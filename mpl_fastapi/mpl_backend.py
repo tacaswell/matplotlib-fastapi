@@ -407,9 +407,9 @@ class FastAPIManger(FigureManagerBase):
         """Generate the complete JavaScript bundle for the browser client."""
         output = StringIO()
 
-        output.write(
-            (Path(__file__).parent / "static/js/mpl.js").read_text(encoding="utf-8")
-        )
+        # Read the TypeScript-compiled bundle from dist/
+        dist_path = Path(__file__).parent / "static/js/dist/component.js"
+        output.write(dist_path.read_text(encoding="utf-8"))
 
         toolitems = []
         for name, tooltip, image, method in cls.ToolbarCls.toolitems:
