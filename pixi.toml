@@ -15,6 +15,7 @@ jinja2 = ">=3.1.0"
 pillow = ">=10.0.0"
 numpy = ">=1.24.0"
 aiofiles = ">=23.0.0"
+nodejs = ">=20"
 
 [pypi-dependencies]
 mpl-fastapi = { path = ".", editable = true }
@@ -40,6 +41,15 @@ default = ["dev"]
 docs = ["docs"]
 
 [tasks]
+# JavaScript build tasks
+js-install = "npm install"
+js-build = "npm run build"
+js-watch = "npm run watch"
+js-clean = "rm -rf mpl_fastapi/static/js/dist node_modules"
+
+# Python build
+build = { depends-on = ["js-build"] }
+
 # Development tasks
 test = "pytest -v"
 test-cov = "pytest --cov=mpl_fastapi --cov-report=html --cov-report=term"
@@ -49,14 +59,18 @@ format-check = "ruff format --check mpl_fastapi"
 typecheck = "mypy mpl_fastapi"
 
 # Run the example server
-run = "uvicorn mpl_fastapi.main:app --reload --host 127.0.0.1 --port 8000"
+run = "uvicorn demos.sine_wave:app --reload --host 127.0.0.1 --port 8000"
+
+# Development mode with hot reload (TypeScript watch + Python server in parallel)
+# Note: Runs both processes; Ctrl+C will stop both
+dev = "npm run watch & uvicorn demos.sine_wave:app --reload --host 127.0.0.1 --port 8000"
 
 # Documentation
 docs-build = "sphinx-build -b html docs docs/_build"
 docs-clean = "rm -rf docs/_build"
 
 # Clean up
-clean = "rm -rf build dist *.egg-info .pytest_cache .coverage htmlcov .mypy_cache .ruff_cache"
+clean = "rm -rf build dist *.egg-info .pytest_cache .coverage htmlcov .mypy_cache .ruff_cache mpl_fastapi/static/js/dist node_modules"
 
 # Combined checks
-check = { depends-on = ["format-check", "lint", "typecheck", "test"] }
+check = { depends-on = ["format-check", "lint", "typecheck", "test", "js-build"] }

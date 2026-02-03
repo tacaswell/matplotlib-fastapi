@@ -84,3 +84,12 @@ target/
 .pixi/*
 !.pixi/config.toml
 _version.py
+
+# JavaScript / Node.js
+node_modules/
+package-lock.json
+mpl_fastapi/static/js/dist/
+*.tsbuildinfo
+
+# Keep directory structure but ignore build outputs
+!mpl_fastapi/static/js/dist/.gitkeep

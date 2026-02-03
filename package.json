@@ -1,0 +1,19 @@
+{
+  "name": "mpl-fastapi-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript/JavaScript components for matplotlib-fastapi",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "clean": "rm -rf mpl_fastapi/static/js/dist"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
