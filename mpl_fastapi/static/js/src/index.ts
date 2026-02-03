@@ -33,9 +33,6 @@ declare global {
     mpl: {
       WebSocketManager: typeof WebSocketManager;
       Figure: typeof Figure;
-      toolbar_items?: Array<[string, string, string, string]>;
-      extensions?: string[];
-      default_extension?: string;
     };
   }
 }
@@ -44,10 +41,12 @@ if (typeof window !== 'undefined') {
   window.MatplotlibEmbeddable = MatplotlibEmbeddable;
 
   // Initialize mpl namespace if not already present
+  // Note: toolbar_items, extensions, and default_extension are injected by Python backend
   if (!window.mpl) {
     window.mpl = {} as any;
   }
 
+  // Preserve any properties already set by Python (toolbar config)
   window.mpl.WebSocketManager = WebSocketManager;
   window.mpl.Figure = Figure;
 }

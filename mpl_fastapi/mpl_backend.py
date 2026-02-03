@@ -403,34 +403,33 @@ class FastAPIManger(FigureManagerBase):
         self.toolbar = self.ToolbarCls(canvas)
 
     @classmethod
-    def get_javascript(cls) -> str:
-        """Generate the complete JavaScript bundle for the browser client."""
-        output = StringIO()
-
-        # Read the TypeScript-compiled bundle from dist/
-        dist_path = Path(__file__).parent / "static/js/dist/component.js"
-        output.write(dist_path.read_text(encoding="utf-8"))
-
+    def get_toolbar_config(cls) -> dict[str, Any]:
+        """Get toolbar configuration as JSON-serializable dict."""
         toolitems = []
         for name, tooltip, image, method in cls.ToolbarCls.toolitems:
             if name is None:
                 toolitems.append(["", "", "", ""])
             else:
                 toolitems.append([name, tooltip, image, method])  # type: ignore[list-item]
-        output.write(f"mpl.toolbar_items = {json.dumps(toolitems)};\n\n")
 
         extensions = []
         for _filetype, ext in sorted(
             FastAPICanvas.get_supported_filetypes_grouped().items()
         ):
             extensions.append(ext[0])
-        output.write(f"mpl.extensions = {json.dumps(extensions)};\n\n")
 
-        output.write(
-            f"mpl.default_extension = {json.dumps(FastAPICanvas.get_default_filetype())};"
-        )
+        return {
+            "toolbar_items": toolitems,
+            "extensions": extensions,
+            "default_extension": FastAPICanvas.get_default_filetype(),
+        }
 
-        return output.getvalue()
+    @classmethod
+    def get_javascript(cls) -> str:
+        """Return the TypeScript-compiled JavaScript bundle."""
+        # Read the TypeScript-compiled bundle from dist/
+        dist_path = Path(__file__).parent / "static/js/dist/component.js"
+        return dist_path.read_text(encoding="utf-8")
 
 
 class FastAPIBackend(_Backend):

@@ -416,6 +416,21 @@ def create_mpl_router(
         # Send connection ID to client for download functionality
         await websocket.send_json({"type": "connection_id", "id": connection_id})
 
+        # Send toolbar configuration
+        toolbar_config = FastAPIManger.get_toolbar_config()
+        await websocket.send_json({
+            "type": "toolbar_config",
+            "items": toolbar_config["toolbar_items"]
+        })
+        await websocket.send_json({
+            "type": "extensions",
+            "extensions": toolbar_config["extensions"]
+        })
+        await websocket.send_json({
+            "type": "default_extension",
+            "extension": toolbar_config["default_extension"]
+        })
+
         # Event loop
         try:
             while True:

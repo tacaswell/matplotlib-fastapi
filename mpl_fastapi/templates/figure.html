@@ -35,12 +35,15 @@
           if (window.location.search) {
             ws_url += window.location.search;
           }
-          // Pass URL directly to mpl.Figure, it will create the WebSocketManager
+          // Create WebSocketManager and Figure, then connect
+          var ws_manager = new mpl.WebSocketManager(ws_url);
           mplFigure = new mpl.Figure(
               "{{ fig_id }}",
-              ws_url,
+              ws_manager,
               document.getElementById("figure")
           );
+          // Connect after Figure is initialized and handlers are registered
+          ws_manager.connect();
         }
       );
     </script>

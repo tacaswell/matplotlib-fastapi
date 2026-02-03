@@ -151,6 +151,30 @@ export interface ResizeMessage extends BaseMessage {
 }
 
 /**
+ * Server → Client: Toolbar configuration
+ */
+export interface ToolbarConfigMessage extends BaseMessage {
+  type: 'toolbar_config';
+  items: Array<[string, string, string, string]>;
+}
+
+/**
+ * Server → Client: Supported file extensions
+ */
+export interface ExtensionsMessage extends BaseMessage {
+  type: 'extensions';
+  extensions: string[];
+}
+
+/**
+ * Server → Client: Default file extension
+ */
+export interface DefaultExtensionMessage extends BaseMessage {
+  type: 'default_extension';
+  extension: string;
+}
+
+/**
  * Union type of all server messages
  */
 export type ServerMessage =
@@ -163,7 +187,10 @@ export type ServerMessage =
   | HistoryButtonsMessage
   | NavigateModeMessage
   | DrawMessage
-  | ResizeMessage;
+  | ResizeMessage
+  | ToolbarConfigMessage
+  | ExtensionsMessage
+  | DefaultExtensionMessage;
 
 /**
  * Client → Server: Binary support notification

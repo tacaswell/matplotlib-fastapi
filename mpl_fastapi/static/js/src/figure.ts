@@ -11,21 +11,11 @@
 import type { ImageMode } from './types.js';
 import { WebSocketManager } from './websocket-manager.js';
 
-// Toolbar configuration (will be injected by Python backend)
+// Static path configuration
 declare global {
   interface Window {
-    mpl: {
-      toolbar_items?: Array<[string, string, string, string]>;
-      extensions?: string[];
-      default_extension?: string;
-    };
     MPL_STATIC_PATH?: string;
   }
-}
-
-// Initialize global mpl namespace
-if (typeof window !== 'undefined' && !window.mpl) {
-  window.mpl = {};
 }
 
 /**
@@ -92,6 +82,12 @@ export class Figure {
   format_dropdown: HTMLSelectElement | undefined;
   buttons: Record<string, HTMLButtonElement> = {};
 
+  // Toolbar configuration (received via WebSocket)
+  private toolbar_items: Array<[string, string, string, string]> = [];
+  private extensions: string[] = [];
+  private default_extension: string = 'png';
+  private toolbar_ready: boolean = false;
+
   // State
   supports_binary: boolean = true;
   private _key: string | null = null;
@@ -104,17 +100,11 @@ export class Figure {
 
   constructor(
     figure_id: string,
-    ws_manager_or_url: WebSocketManager | string,
+    ws_manager: WebSocketManager,
     parent_element: HTMLElement
   ) {
     this.id = figure_id;
-
-    // Support both WebSocketManager and URL string
-    if (typeof ws_manager_or_url === 'string') {
-      this.ws_manager = new WebSocketManager(ws_manager_or_url);
-    } else {
-      this.ws_manager = ws_manager_or_url;
-    }
+    this.ws_manager = ws_manager;
 
     this.imageObj = new Image();
 
@@ -126,7 +116,7 @@ export class Figure {
 
     this._init_header();
     this._init_canvas();
-    this._init_toolbar();
+    // Defer toolbar init until we receive config via WebSocket
 
     // Register open handler with WebSocketManager
     this.ws_manager.onOpen(() => {
@@ -173,9 +163,6 @@ export class Figure {
     });
 
     this.ondownload = this._default_download_handler.bind(this);
-
-    // Connect the WebSocket
-    this.ws_manager.connect();
   }
 
   private _init_header(): void {
@@ -374,9 +361,8 @@ export class Figure {
     let buttonGroup = document.createElement('div');
     buttonGroup.className = 'mpl-button-group';
 
-    const toolbar_items = window.mpl?.toolbar_items || [];
-
-    for (const [name, tooltip, image, method_name] of toolbar_items) {
+    // Use instance variable instead of window.mpl
+    for (const [name, tooltip, image, method_name] of this.toolbar_items) {
       if (!name) {
         // Start a new button group
         if (buttonGroup.hasChildNodes()) {
@@ -413,12 +399,10 @@ export class Figure {
     toolbar.appendChild(fmt_picker);
     this.format_dropdown = fmt_picker;
 
-    const extensions = window.mpl?.extensions || [];
-    const default_extension = window.mpl?.default_extension || 'png';
-
-    for (const fmt of extensions) {
+    // Use instance variables instead of window.mpl
+    for (const fmt of this.extensions) {
       const option = document.createElement('option');
-      option.selected = fmt === default_extension;
+      option.selected = fmt === this.default_extension;
       option.innerHTML = fmt;
       fmt_picker.appendChild(option);
     }
@@ -571,6 +555,31 @@ export class Figure {
     fig.connection_id = msg['id'];
   }
 
+  handle_toolbar_config(fig: Figure, msg: any): void {
+    fig.toolbar_items = msg['items'];
+    fig._check_toolbar_ready();
+  }
+
+  handle_extensions(fig: Figure, msg: any): void {
+    fig.extensions = msg['extensions'];
+    fig._check_toolbar_ready();
+  }
+
+  handle_default_extension(fig: Figure, msg: any): void {
+    fig.default_extension = msg['extension'];
+    fig._check_toolbar_ready();
+  }
+
+  private _check_toolbar_ready(): void {
+    // Initialize toolbar once we have all config
+    if (!this.toolbar_ready &&
+        this.toolbar_items.length > 0 &&
+        this.extensions.length > 0) {
+      this.toolbar_ready = true;
+      this._init_toolbar();
+    }
+  }
+
   handle_history_buttons(fig: Figure, msg: any): void {
     for (const key in msg) {
       if (!(key in fig.buttons)) {
@@ -718,5 +727,8 @@ export class Figure {
 
 // Export Figure to global window.mpl namespace for backwards compatibility
 if (typeof window !== 'undefined') {
+  if (!window.mpl) {
+    window.mpl = {} as any;
+  }
   window.mpl.Figure = Figure as any;
 }
