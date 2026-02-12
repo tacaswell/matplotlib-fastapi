@@ -412,16 +412,16 @@ class FastAPIManger(FigureManagerBase):
             else:
                 toolitems.append([name, tooltip, image, method])  # type: ignore[list-item]
 
-        extensions = []
+        save_formats = []
         for _filetype, ext in sorted(
             FastAPICanvas.get_supported_filetypes_grouped().items()
         ):
-            extensions.append(ext[0])
+            save_formats.append(ext[0])
 
         return {
             "toolbar_items": toolitems,
-            "extensions": extensions,
-            "default_extension": FastAPICanvas.get_default_filetype(),
+            "save_formats": save_formats,
+            "default_save_format": FastAPICanvas.get_default_filetype(),
         }
 
     @classmethod

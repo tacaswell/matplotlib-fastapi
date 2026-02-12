@@ -423,12 +423,12 @@ def create_mpl_router(
             "items": toolbar_config["toolbar_items"]
         })
         await websocket.send_json({
-            "type": "extensions",
-            "extensions": toolbar_config["extensions"]
+            "type": "save_formats",
+            "formats": toolbar_config["save_formats"]
         })
         await websocket.send_json({
-            "type": "default_extension",
-            "extension": toolbar_config["default_extension"]
+            "type": "default_save_format",
+            "format": toolbar_config["default_save_format"]
         })
 
         # Event loop

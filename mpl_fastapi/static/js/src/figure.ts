@@ -84,8 +84,8 @@ export class Figure {
 
   // Toolbar configuration (received via WebSocket)
   private toolbar_items: Array<[string, string, string, string]> = [];
-  private extensions: string[] = [];
-  private default_extension: string = 'png';
+  private save_formats: string[] = [];
+  private default_save_format: string = 'png';
   private toolbar_ready: boolean = false;
 
   // State
@@ -400,9 +400,9 @@ export class Figure {
     this.format_dropdown = fmt_picker;
 
     // Use instance variables instead of window.mpl
-    for (const fmt of this.extensions) {
+    for (const fmt of this.save_formats) {
       const option = document.createElement('option');
-      option.selected = fmt === this.default_extension;
+      option.selected = fmt === this.default_save_format;
       option.innerHTML = fmt;
       fmt_picker.appendChild(option);
     }
@@ -560,13 +560,13 @@ export class Figure {
     fig._check_toolbar_ready();
   }
 
-  handle_extensions(fig: Figure, msg: any): void {
-    fig.extensions = msg['extensions'];
+  handle_save_formats(fig: Figure, msg: any): void {
+    fig.save_formats = msg['formats'];
     fig._check_toolbar_ready();
   }
 
-  handle_default_extension(fig: Figure, msg: any): void {
-    fig.default_extension = msg['extension'];
+  handle_default_save_format(fig: Figure, msg: any): void {
+    fig.default_save_format = msg['format'];
     fig._check_toolbar_ready();
   }
 
@@ -574,7 +574,7 @@ export class Figure {
     // Initialize toolbar once we have all config
     if (!this.toolbar_ready &&
         this.toolbar_items.length > 0 &&
-        this.extensions.length > 0) {
+        this.save_formats.length > 0) {
       this.toolbar_ready = true;
       this._init_toolbar();
     }

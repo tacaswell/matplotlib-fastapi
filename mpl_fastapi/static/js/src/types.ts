@@ -159,19 +159,19 @@ export interface ToolbarConfigMessage extends BaseMessage {
 }
 
 /**
- * Server → Client: Supported file extensions
+ * Server → Client: Supported save file formats
  */
-export interface ExtensionsMessage extends BaseMessage {
-  type: 'extensions';
-  extensions: string[];
+export interface SaveFormatsMessage extends BaseMessage {
+  type: 'save_formats';
+  formats: string[];
 }
 
 /**
- * Server → Client: Default file extension
+ * Server → Client: Default save file format
  */
-export interface DefaultExtensionMessage extends BaseMessage {
-  type: 'default_extension';
-  extension: string;
+export interface DefaultSaveFormatMessage extends BaseMessage {
+  type: 'default_save_format';
+  format: string;
 }
 
 /**
@@ -189,8 +189,8 @@ export type ServerMessage =
   | DrawMessage
   | ResizeMessage
   | ToolbarConfigMessage
-  | ExtensionsMessage
-  | DefaultExtensionMessage;
+  | SaveFormatsMessage
+  | DefaultSaveFormatMessage;
 
 /**
  * Client → Server: Binary support notification

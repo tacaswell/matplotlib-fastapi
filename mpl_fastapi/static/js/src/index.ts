@@ -41,7 +41,7 @@ if (typeof window !== 'undefined') {
   window.MatplotlibEmbeddable = MatplotlibEmbeddable;
 
   // Initialize mpl namespace if not already present
-  // Note: toolbar_items, extensions, and default_extension are injected by Python backend
+  // Note: Toolbar configuration is now sent via WebSocket messages
   if (!window.mpl) {
     window.mpl = {} as any;
   }
