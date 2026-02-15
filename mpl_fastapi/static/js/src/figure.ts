@@ -495,13 +495,11 @@ export class Figure {
     const download_url = msg['download_url'];
     const filename = msg['filename'];
     
-    // Trigger browser download
+    // Trigger browser download (no DOM append needed in modern browsers)
     const link = document.createElement('a');
     link.href = download_url;
     link.download = filename;
-    document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
     
     // Optional: Show success message
     if (fig.message) {
