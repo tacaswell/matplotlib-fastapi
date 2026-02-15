@@ -29,7 +29,7 @@
  * ```
  */
 
-import type { EmbeddableConfig, PlotSchemaResponse, JSONSchemaProperty } from './types.js';
+import type { EmbeddableConfig, PlotSchemaResponse } from './types.js';
 import { WebSocketManager } from './websocket-manager.js';
 import { Figure } from './figure.js';
 

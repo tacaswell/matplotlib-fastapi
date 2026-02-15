@@ -167,7 +167,8 @@ export class Figure {
 
   private _init_header(): void {
     const titlebar = document.createElement('div');
-    titlebar.className = 'ui-dialog-titlebar ui-widget-header ui-corner-all ui-helper-clearfix';
+    titlebar.className =
+      'ui-dialog-titlebar ui-widget-header ui-corner-all ui-helper-clearfix';
     const titletext = document.createElement('div');
     titletext.className = 'ui-dialog-title';
     titletext.setAttribute('style', 'width: 100%; text-align: center; padding: 3px;');
@@ -233,14 +234,17 @@ export class Figure {
 
     this.ratio = (window.devicePixelRatio || 1) / backingStore;
 
-    const rubberband_canvas = (this.rubberband_canvas = document.createElement('canvas'));
+    const rubberband_canvas = (this.rubberband_canvas =
+      document.createElement('canvas'));
     rubberband_canvas.setAttribute(
       'style',
       'box-sizing: content-box; position: absolute; left: 0; top: 0; z-index: 1;'
     );
 
     // Apply a ponyfill if ResizeObserver is not implemented by browser
-    this.ResizeObserver = window.ResizeObserver || (window as any)._JSXTOOLS_RESIZE_OBSERVER?.({}).ResizeObserver;
+    this.ResizeObserver =
+      window.ResizeObserver ||
+      (window as any)._JSXTOOLS_RESIZE_OBSERVER?.({}).ResizeObserver;
 
     if (!this.ResizeObserver) {
       console.warn('ResizeObserver not available');
@@ -270,8 +274,14 @@ export class Figure {
         // Keep canvas and rubberband canvas in sync
         if (entry.devicePixelContentBoxSize) {
           // Chrome 84+
-          canvas.setAttribute('width', String(entry.devicePixelContentBoxSize[0].inlineSize));
-          canvas.setAttribute('height', String(entry.devicePixelContentBoxSize[0].blockSize));
+          canvas.setAttribute(
+            'width',
+            String(entry.devicePixelContentBoxSize[0].inlineSize)
+          );
+          canvas.setAttribute(
+            'height',
+            String(entry.devicePixelContentBoxSize[0].blockSize)
+          );
         } else {
           canvas.setAttribute('width', String(width * this.ratio));
           canvas.setAttribute('height', String(height * this.ratio));
@@ -295,12 +305,27 @@ export class Figure {
       };
     };
 
-    rubberband_canvas.addEventListener('mousedown', on_mouse_event_closure('button_press'));
-    rubberband_canvas.addEventListener('mouseup', on_mouse_event_closure('button_release'));
+    rubberband_canvas.addEventListener(
+      'mousedown',
+      on_mouse_event_closure('button_press')
+    );
+    rubberband_canvas.addEventListener(
+      'mouseup',
+      on_mouse_event_closure('button_release')
+    );
     rubberband_canvas.addEventListener('dblclick', on_mouse_event_closure('dblclick'));
-    rubberband_canvas.addEventListener('mousemove', on_mouse_event_closure('motion_notify'));
-    rubberband_canvas.addEventListener('mouseenter', on_mouse_event_closure('figure_enter'));
-    rubberband_canvas.addEventListener('mouseleave', on_mouse_event_closure('figure_leave'));
+    rubberband_canvas.addEventListener(
+      'mousemove',
+      on_mouse_event_closure('motion_notify')
+    );
+    rubberband_canvas.addEventListener(
+      'mouseenter',
+      on_mouse_event_closure('figure_enter')
+    );
+    rubberband_canvas.addEventListener(
+      'mouseleave',
+      on_mouse_event_closure('figure_leave')
+    );
 
     canvas_div.addEventListener('wheel', (event: WheelEvent) => {
       (event as any).step = event.deltaY < 0 ? 1 : -1;
@@ -454,7 +479,9 @@ export class Figure {
 
   handle_save(fig: Figure, _msg: any): void {
     if (!fig.format_dropdown) return;
-    const format = fig.format_dropdown.options[fig.format_dropdown.selectedIndex].value;
+    const selectedOption = fig.format_dropdown.options[fig.format_dropdown.selectedIndex];
+    if (!selectedOption) return;
+    const format = selectedOption.value;
     fig.ondownload(fig, format);
   }
 
@@ -572,9 +599,11 @@ export class Figure {
 
   private _check_toolbar_ready(): void {
     // Initialize toolbar once we have all config
-    if (!this.toolbar_ready &&
-        this.toolbar_items.length > 0 &&
-        this.save_formats.length > 0) {
+    if (
+      !this.toolbar_ready &&
+      this.toolbar_items.length > 0 &&
+      this.save_formats.length > 0
+    ) {
       this.toolbar_ready = true;
       this._init_toolbar();
     }
@@ -585,8 +614,10 @@ export class Figure {
       if (!(key in fig.buttons)) {
         continue;
       }
-      fig.buttons[key].disabled = !msg[key];
-      fig.buttons[key].setAttribute('aria-disabled', String(!msg[key]));
+      const button = fig.buttons[key];
+      if (!button) continue;
+      button.disabled = !msg[key];
+      button.setAttribute('aria-disabled', String(!msg[key]));
     }
   }
 
@@ -623,7 +654,9 @@ export class Figure {
           (window.URL || (window as any).webkitURL).revokeObjectURL(this.imageObj.src);
         }
 
-        this.imageObj.src = (window.URL || (window as any).webkitURL).createObjectURL(img);
+        this.imageObj.src = (window.URL || (window as any).webkitURL).createObjectURL(
+          img
+        );
         this.updated_canvas_event();
         this.waiting = false;
         return;

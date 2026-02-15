@@ -1,0 +1,10 @@
+# Build outputs
+mpl_fastapi/static/js/dist/
+node_modules/
+
+# Python files (handled by ruff)
+*.py
+
+# Other
+*.md
+*.rst

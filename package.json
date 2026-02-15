@@ -7,10 +7,19 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
-    "clean": "rm -rf mpl_fastapi/static/js/dist"
+    "clean": "rm -rf mpl_fastapi/static/js/dist",
+    "lint": "eslint mpl_fastapi/static/js/src/**/*.ts",
+    "lint:fix": "eslint --fix mpl_fastapi/static/js/src/**/*.ts",
+    "format": "prettier --write mpl_fastapi/static/js/src/**/*.ts",
+    "format:check": "prettier --check mpl_fastapi/static/js/src/**/*.ts",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
     "esbuild": "^0.20.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.0",
     "typescript": "^5.3.0"
   },
   "engines": {

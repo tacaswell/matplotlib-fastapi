@@ -24,3 +24,15 @@ jobs:
 
       - name: Run mypy type checking (Python)
         run: pixi run typecheck
+
+      - name: Install JavaScript dependencies
+        run: pixi run js-install
+
+      - name: Run ESLint (TypeScript)
+        run: pixi run js-lint
+
+      - name: Run Prettier format check (TypeScript)
+        run: pixi run js-format-check
+
+      - name: Run TypeScript type checking
+        run: pixi run js-typecheck

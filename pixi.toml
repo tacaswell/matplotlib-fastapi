@@ -46,6 +46,10 @@ js-install = "npm install"
 js-build = "npm run build"
 js-watch = "npm run watch"
 js-clean = "rm -rf mpl_fastapi/static/js/dist node_modules"
+js-lint = "npm run lint"
+js-format = "npm run format"
+js-format-check = "npm run format:check"
+js-typecheck = "npm run typecheck"
 
 # Python build
 build = { depends-on = ["js-build"] }
@@ -73,4 +77,4 @@ docs-clean = "rm -rf docs/_build"
 clean = "rm -rf build dist *.egg-info .pytest_cache .coverage htmlcov .mypy_cache .ruff_cache mpl_fastapi/static/js/dist node_modules"
 
 # Combined checks
-check = { depends-on = ["format-check", "lint", "typecheck", "test", "js-build"] }
+check = { depends-on = ["format-check", "lint", "typecheck", "js-format-check", "js-lint", "js-typecheck", "test", "js-build"] }

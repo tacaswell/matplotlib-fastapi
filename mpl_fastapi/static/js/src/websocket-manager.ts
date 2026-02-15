@@ -149,7 +149,7 @@ export class WebSocketManager {
     } else {
       throw new Error(
         'Your browser does not have WebSocket support. ' +
-        'Please try Chrome, Safari or Firefox ≥ 6.'
+          'Please try Chrome, Safari or Firefox ≥ 6.'
       );
     }
   }
