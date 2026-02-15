@@ -482,36 +482,68 @@ export class Figure {
     const selectedOption = fig.format_dropdown.options[fig.format_dropdown.selectedIndex];
     if (!selectedOption) return;
     const format = selectedOption.value;
-    fig.ondownload(fig, format);
+    
+    // Send save request via WebSocket instead of direct HTTP download
+    fig.send_message('save_figure', { 
+      format: format,
+      dpi: 100,
+      transparent: false 
+    });
   }
 
-  private _default_download_handler(fig: Figure, format: string): void {
-    if (!fig.connection_id) {
-      console.error('No connection ID available for download');
-      alert('Download not available: connection not initialized');
-      return;
-    }
-
-    // Extract base path from WebSocket URL
-    let base_path = '';
-    if (fig.ws_manager && (fig.ws_manager as any).url) {
-      const ws_url = (fig.ws_manager as any).url;
-      const path_match = ws_url.match(/:\/\/[^\/]+(.+)\/ws\//);
-      if (path_match && path_match[1]) {
-        base_path = path_match[1];
-      }
-    }
-
-    const download_url = `${base_path}/download/${fig.connection_id}?format=${format}`;
-    const filename = fig.id || 'plot';
-
-    // Create temporary link and trigger download
+  handle_save_complete(fig: Figure, msg: any): void {
+    const download_url = msg['download_url'];
+    const filename = msg['filename'];
+    
+    // Trigger browser download
     const link = document.createElement('a');
     link.href = download_url;
-    link.download = `${filename}.${format}`;
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    
+    // Optional: Show success message
+    if (fig.message) {
+      fig.message.textContent = `Downloaded ${filename}`;
+      // Clear message after 3 seconds
+      setTimeout(() => {
+        if (fig.message) {
+          fig.message.textContent = '';
+        }
+      }, 3000);
+    }
+  }
+
+  handle_save_error(fig: Figure, msg: any): void {
+    const error_message = msg['message'];
+    console.error('Save error:', error_message);
+    
+    // Show error to user
+    if (fig.message) {
+      fig.message.textContent = `Save failed: ${error_message}`;
+      fig.message.style.color = 'red';
+      // Clear message after 5 seconds
+      setTimeout(() => {
+        if (fig.message) {
+          fig.message.textContent = '';
+          fig.message.style.color = '';
+        }
+      }, 5000);
+    } else {
+      alert(`Failed to save figure: ${error_message}`);
+    }
+  }
+
+  private _default_download_handler(fig: Figure, format: string): void {
+    // This method is now deprecated but kept for backward compatibility
+    // The new flow uses handle_save which sends save_figure message via WebSocket
+    console.warn('_default_download_handler is deprecated, using WebSocket save instead');
+    fig.send_message('save_figure', { 
+      format: format,
+      dpi: 100,
+      transparent: false 
+    });
   }
 
   handle_resize(fig: Figure, msg: any): void {

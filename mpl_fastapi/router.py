@@ -13,8 +13,10 @@ The router supports:
 import io
 import logging
 import uuid
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -31,9 +33,47 @@ from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Module-level cache for active figures (connection-scoped)
-# Maps connection_id -> (Figure, FastAPICanvas)
-_active_figures: dict[str, tuple[Figure, FastAPICanvas]] = {}
+# Configuration for saved file cache
+SAVE_CACHE_TTL = timedelta(hours=1)  # Files expire after 1 hour
+SAVE_CACHE_MAX_SIZE = 100  # Max files to keep in cache
+
+
+@dataclass
+class SavedFile:
+    """Represents a saved figure file.
+
+    Attributes
+    ----------
+    file_id : str
+        Unique ID for this specific save
+    connection_id : str
+        WebSocket connection that created it
+    data : bytes
+        The actual file data
+    format : str
+        File format (png, pdf, etc.)
+    filename : str
+        Suggested download filename
+    created_at : datetime
+        Timestamp for TTL
+    metadata : dict[str, Any]
+        Optional metadata (DPI, dimensions, etc.)
+    """
+
+    file_id: str
+    connection_id: str
+    data: bytes
+    format: str
+    filename: str
+    created_at: datetime
+    metadata: dict[str, Any]
+
+
+# Module-level cache for saved files (replaces _active_figures)
+# Maps file_id -> SavedFile
+_saved_files: dict[str, SavedFile] = {}
+# Maps connection_id -> set of file_ids for cleanup
+_connection_files: dict[str, set[str]] = defaultdict(set)
 
 # Type aliases for plot generator and update functions
 # Using Any for parameters to support subclasses of BaseModel
@@ -88,6 +128,43 @@ class MPLRouter:
     router: APIRouter
     static_files: StaticFiles
     static_mount_path: str
+
+
+def _clean_old_saved_files() -> None:
+    """Remove expired files and enforce max size limit."""
+    now = datetime.now()
+    expired_ids = []
+
+    # Find expired files
+    for file_id, saved_file in _saved_files.items():
+        if now - saved_file.created_at > SAVE_CACHE_TTL:
+            expired_ids.append(file_id)
+
+    # Remove expired
+    for file_id in expired_ids:
+        _remove_saved_file(file_id)
+
+    # Enforce max size (remove oldest if over limit)
+    if len(_saved_files) > SAVE_CACHE_MAX_SIZE:
+        sorted_files = sorted(_saved_files.items(), key=lambda x: x[1].created_at)
+        files_to_remove = len(_saved_files) - SAVE_CACHE_MAX_SIZE
+        for file_id, _ in sorted_files[:files_to_remove]:
+            _remove_saved_file(file_id)
+
+
+def _remove_saved_file(file_id: str) -> None:
+    """Remove a saved file from all caches."""
+    if file_id in _saved_files:
+        saved_file = _saved_files[file_id]
+        del _saved_files[file_id]
+
+        # Remove from connection index
+        if saved_file.connection_id in _connection_files:
+            _connection_files[saved_file.connection_id].discard(file_id)
+            if not _connection_files[saved_file.connection_id]:
+                del _connection_files[saved_file.connection_id]
+
+        logger.debug(f"Removed saved file: {file_id}")
 
 
 def create_mpl_router(
@@ -259,61 +336,28 @@ def create_mpl_router(
             },
         )
 
-    # Route: Download plot as file
-    @router.get("/download/{connection_id}")
-    async def download_plot(
-        connection_id: str,
-        file_format: str = "png",
-        dpi: int = 100,
-        transparent: bool = False,
-    ) -> StreamingResponse:
+    # Route: Download saved file
+    @router.get("/download/{file_id}")
+    async def download_saved_file(file_id: str) -> StreamingResponse:
         """
-        Download the current plot as a file in the specified format.
+        Download a previously saved figure file.
 
-        This endpoint requires an active WebSocket connection to work,
-        as it retrieves the figure from the connection-scoped cache.
+        Files are cached temporarily after a save request via WebSocket.
+        This endpoint does not require an active WebSocket connection.
 
         Parameters
         ----------
-        connection_id : str
-            The unique connection ID provided via WebSocket
-        file_format : str
-            Output format (png, pdf, svg, eps, etc.)
-        dpi : int
-            DPI for raster formats (default: 100)
-        transparent : bool
-            Whether to use transparent background (default: False)
+        file_id : str
+            The unique file ID provided after a save operation
         """
-        # Validate connection exists
-        if connection_id not in _active_figures:
+        # Validate file exists
+        if file_id not in _saved_files:
             raise HTTPException(
                 status_code=404,
-                detail=(
-                    "Connection not found. The WebSocket connection may have been closed. "
-                    "Please refresh the page and try again."
-                ),
+                detail="File not found. It may have expired or been deleted.",
             )
 
-        fig, _ = _active_figures[connection_id]
-
-        # Validate format
-        supported_formats = [
-            "png",
-            "pdf",
-            "svg",
-            "eps",
-            "ps",
-            "jpg",
-            "jpeg",
-            "tiff",
-            "tif",
-        ]
-        format_lower = file_format.lower()
-        if format_lower not in supported_formats:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported format '{file_format}'. Supported: {', '.join(supported_formats)}",
-            )
+        saved_file = _saved_files[file_id]
 
         # Determine MIME type
         mime_types = {
@@ -327,37 +371,16 @@ def create_mpl_router(
             "tiff": "image/tiff",
             "tif": "image/tiff",
         }
-        mime_type = mime_types.get(format_lower, "application/octet-stream")
+        mime_type = mime_types.get(saved_file.format, "application/octet-stream")
 
-        # Save figure to BytesIO
-        buf = io.BytesIO()
-        try:
-            # Set DPI for raster formats
-            save_kwargs: dict[str, Any] = {"format": format_lower}
-            if format_lower in ["png", "jpg", "jpeg", "tiff", "tif"]:
-                save_kwargs["dpi"] = dpi
-            if format_lower == "png":
-                save_kwargs["transparent"] = transparent
-
-            fig.savefig(buf, **save_kwargs)
-            buf.seek(0)
-
-            logger.info(
-                f"Generated {format_lower} download for connection {connection_id}"
-            )
-        except Exception as e:
-            logger.error(f"Error generating plot download: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to generate plot: {str(e)}",
-            ) from e
+        logger.info(f"Serving saved file {file_id} ({saved_file.format})")
 
         # Return as streaming response with download headers
         return StreamingResponse(
-            buf,
+            io.BytesIO(saved_file.data),
             media_type=mime_type,
             headers={
-                "Content-Disposition": f"attachment; filename=plot.{format_lower}"
+                "Content-Disposition": f"attachment; filename={saved_file.filename}"
             },
         )
 
@@ -414,10 +437,6 @@ def create_mpl_router(
         # Attach manager
         manager = FastAPIManger(canvas, 0)
 
-        # Store figure and canvas in cache for download endpoint
-        _active_figures[connection_id] = (fig, canvas)
-        logger.debug(f"Stored figure in cache with connection ID: {connection_id}")
-
         # Type narrowing for safety
         if not isinstance(canvas, FastAPICanvas):
             raise TypeError(f"Expected FastAPICanvas, got {type(canvas)}")
@@ -468,6 +487,106 @@ def create_mpl_router(
                     if data["type"] == "supports_binary":
                         manager.supports_binary = data["value"]
                         logger.debug(f"Set supports_binary={data['value']}")
+                    elif data["type"] == "save_figure":
+                        # Handle save request
+                        try:
+                            file_format = data.get("format", "png")
+                            dpi = data.get("dpi", 100)
+                            transparent = data.get("transparent", False)
+
+                            # Validate format
+                            supported_formats = [
+                                "png",
+                                "pdf",
+                                "svg",
+                                "eps",
+                                "ps",
+                                "jpg",
+                                "jpeg",
+                                "tiff",
+                                "tif",
+                            ]
+                            format_lower = file_format.lower()
+                            if format_lower not in supported_formats:
+                                raise ValueError(
+                                    f"Unsupported format '{file_format}'. "
+                                    f"Supported: {', '.join(supported_formats)}"
+                                )
+
+                            # Generate unique file ID
+                            file_id = str(uuid.uuid4())
+
+                            # Save figure to BytesIO (synchronous for now)
+                            # TODO: Move to thread pool in future phase
+                            buf = io.BytesIO()
+                            save_kwargs: dict[str, Any] = {"format": format_lower}
+                            if format_lower in ["png", "jpg", "jpeg", "tiff", "tif"]:
+                                save_kwargs["dpi"] = dpi
+                            if format_lower == "png":
+                                save_kwargs["transparent"] = transparent
+
+                            fig.savefig(buf, **save_kwargs)
+                            file_data = buf.getvalue()
+
+                            # Create saved file entry
+                            saved_file = SavedFile(
+                                file_id=file_id,
+                                connection_id=connection_id,
+                                data=file_data,
+                                format=format_lower,
+                                filename=f"{plot_name}.{format_lower}",
+                                created_at=datetime.now(),
+                                metadata={"dpi": dpi, "transparent": transparent},
+                            )
+
+                            # Store in caches
+                            _saved_files[file_id] = saved_file
+                            _connection_files[connection_id].add(file_id)
+
+                            # Clean old files
+                            _clean_old_saved_files()
+
+                            # Extract base path from WebSocket path
+                            # WebSocket URL pattern: /prefix/ws/{plot_name}
+                            # We want: /prefix/download/{file_id}
+                            base_path = ""
+                            ws_path = websocket.url.path
+                            if "/ws/" in ws_path:
+                                base_path = ws_path.split("/ws/")[0]
+
+                            download_url = f"{base_path}/download/{file_id}"
+
+                            # Send success response to client
+                            await websocket.send_json(
+                                {
+                                    "type": "save_complete",
+                                    "file_id": file_id,
+                                    "download_url": download_url,
+                                    "filename": saved_file.filename,
+                                    "format": format_lower,
+                                }
+                            )
+
+                            logger.info(
+                                f"Saved figure '{plot_name}' as {format_lower}, "
+                                f"file_id={file_id}"
+                            )
+
+                        except ValueError as e:
+                            logger.warning(f"Invalid save request: {e}")
+                            await websocket.send_json(
+                                {"type": "save_error", "message": str(e)}
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Error saving figure '{plot_name}': {e}", exc_info=True
+                            )
+                            await websocket.send_json(
+                                {
+                                    "type": "save_error",
+                                    "message": f"Failed to save figure: {str(e)}",
+                                }
+                            )
                     elif data["type"] == "update_params":
                         # Handle update request
                         if config.update is None:
@@ -529,10 +648,14 @@ def create_mpl_router(
             # Cleanup on disconnect
             logger.debug(f"Cleaning up resources for plot '{plot_name}'")
 
-            # Remove from active figures cache
-            if connection_id in _active_figures:
-                del _active_figures[connection_id]
-                logger.debug(f"Removed figure from cache: {connection_id}")
+            # Clean up all saved files for this connection
+            if connection_id in _connection_files:
+                file_ids = list(_connection_files[connection_id])
+                for file_id in file_ids:
+                    _remove_saved_file(file_id)
+                logger.debug(
+                    f"Removed {len(file_ids)} saved file(s) for connection {connection_id}"
+                )
 
             try:
                 manager.destroy()

@@ -175,6 +175,25 @@ export interface DefaultSaveFormatMessage extends BaseMessage {
 }
 
 /**
+ * Server → Client: Save operation completed successfully
+ */
+export interface SaveCompleteMessage extends BaseMessage {
+  type: 'save_complete';
+  file_id: string;
+  download_url: string;
+  filename: string;
+  format: string;
+}
+
+/**
+ * Server → Client: Save operation failed
+ */
+export interface SaveErrorMessage extends BaseMessage {
+  type: 'save_error';
+  message: string;
+}
+
+/**
  * Union type of all server messages
  */
 export type ServerMessage =
@@ -190,7 +209,9 @@ export type ServerMessage =
   | ResizeMessage
   | ToolbarConfigMessage
   | SaveFormatsMessage
-  | DefaultSaveFormatMessage;
+  | DefaultSaveFormatMessage
+  | SaveCompleteMessage
+  | SaveErrorMessage;
 
 /**
  * Client → Server: Binary support notification
@@ -300,6 +321,16 @@ export interface UpdateParamsMessage extends BaseMessage {
 }
 
 /**
+ * Client → Server: Save figure to file
+ */
+export interface SaveFigureMessage extends BaseMessage {
+  type: 'save_figure';
+  format: string;
+  dpi?: number;
+  transparent?: boolean;
+}
+
+/**
  * Client → Server: Acknowledge message
  */
 export interface AckMessage extends BaseMessage {
@@ -322,6 +353,7 @@ export type ClientMessage =
   | KeyReleaseMessage
   | ToolbarButtonMessage
   | UpdateParamsMessage
+  | SaveFigureMessage
   | AckMessage;
 
 // ============================================================================

@@ -9,10 +9,9 @@ The backend uses WebSocket for bidirectional communication and supports
 efficient differential image updates to minimize data transfer.
 """
 
-import json
 import logging
 from collections import deque
-from io import BytesIO, StringIO
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
 
@@ -121,8 +120,8 @@ class FastAPICanvas(FigureCanvasAgg):
 
     async def handle_send_image_mode(
         self,
-        ev: dict[str, Any],
-        websocket: WebSocket,  # noqa: ARG002
+        ev: dict[str, Any],  # noqa: ARG002
+        websocket: WebSocket,
     ) -> None:
         await websocket.send_json(
             {"type": "image_mode", "mode": self._current_image_mode}
@@ -349,11 +348,11 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
 
     def draw_rubberband(
         self,
-        event: Any,
+        event: Any,  # noqa: ARG002
         x0: float,
         y0: float,
         x1: float,
-        y1: float,  # noqa: ARG002
+        y1: float,
     ) -> None:
         """Draw a rubberband selection rectangle."""
         self.canvas.queue_event("rubberband", x0=x0, y0=y0, x1=x1, y1=y1)
