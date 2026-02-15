@@ -187,7 +187,7 @@ def create_mpl_router(
             }
 
         # Extract base path from request URL
-        base_path = request.url.path.rstrip('/')
+        base_path = request.url.path.rstrip("/")
 
         return templates.TemplateResponse(
             "plots_list.html",
@@ -234,17 +234,17 @@ def create_mpl_router(
         ws_uri = f"ws://{request.url.hostname}:{request.url.port}"
         # Extract the prefix from the request path
         # If request path is /plots/plot/name, we want /plots
-        path_parts = request.url.path.rstrip('/').split('/')
+        path_parts = request.url.path.rstrip("/").split("/")
         base_path = ""
         if len(path_parts) >= 2:
             # Get everything before /plot/name
             prefix_parts = []
             for part in path_parts[1:]:  # Skip empty string from leading /
-                if part == 'plot':
+                if part == "plot":
                     break
                 prefix_parts.append(part)
             if prefix_parts:
-                base_path = '/' + '/'.join(prefix_parts)
+                base_path = "/" + "/".join(prefix_parts)
                 ws_uri += base_path
 
         return templates.TemplateResponse(
@@ -297,7 +297,17 @@ def create_mpl_router(
         fig, _ = _active_figures[connection_id]
 
         # Validate format
-        supported_formats = ["png", "pdf", "svg", "eps", "ps", "jpg", "jpeg", "tiff", "tif"]
+        supported_formats = [
+            "png",
+            "pdf",
+            "svg",
+            "eps",
+            "ps",
+            "jpg",
+            "jpeg",
+            "tiff",
+            "tif",
+        ]
         format_lower = file_format.lower()
         if format_lower not in supported_formats:
             raise HTTPException(
@@ -332,7 +342,9 @@ def create_mpl_router(
             fig.savefig(buf, **save_kwargs)
             buf.seek(0)
 
-            logger.info(f"Generated {format_lower} download for connection {connection_id}")
+            logger.info(
+                f"Generated {format_lower} download for connection {connection_id}"
+            )
         except Exception as e:
             logger.error(f"Error generating plot download: {e}", exc_info=True)
             raise HTTPException(
@@ -374,7 +386,9 @@ def create_mpl_router(
             params = config.init.params_model(**websocket.query_params)
         except ValidationError as e:
             logger.warning(f"Invalid parameters for plot {plot_name}: {e}")
-            await websocket.send_json({"type": "error", "message": f"Invalid parameters: {e}"})
+            await websocket.send_json(
+                {"type": "error", "message": f"Invalid parameters: {e}"}
+            )
             await websocket.close(code=1008, reason=f"Invalid params: {e}")
             return
 
@@ -418,18 +432,18 @@ def create_mpl_router(
 
         # Send toolbar configuration
         toolbar_config = FastAPIManger.get_toolbar_config()
-        await websocket.send_json({
-            "type": "toolbar_config",
-            "items": toolbar_config["toolbar_items"]
-        })
-        await websocket.send_json({
-            "type": "save_formats",
-            "formats": toolbar_config["save_formats"]
-        })
-        await websocket.send_json({
-            "type": "default_save_format",
-            "format": toolbar_config["default_save_format"]
-        })
+        await websocket.send_json(
+            {"type": "toolbar_config", "items": toolbar_config["toolbar_items"]}
+        )
+        await websocket.send_json(
+            {"type": "save_formats", "formats": toolbar_config["save_formats"]}
+        )
+        await websocket.send_json(
+            {
+                "type": "default_save_format",
+                "format": toolbar_config["default_save_format"],
+            }
+        )
 
         # Event loop
         try:
@@ -446,7 +460,9 @@ def create_mpl_router(
                     return
 
                 # Log all received messages
-                logger.debug(f"Received message type='{data.get('type')}' for plot '{plot_name}'")
+                logger.debug(
+                    f"Received message type='{data.get('type')}' for plot '{plot_name}'"
+                )
 
                 try:
                     if data["type"] == "supports_binary":
@@ -490,7 +506,11 @@ def create_mpl_router(
                             canvas, f"handle_{e_type}", canvas.handle_unknown_event
                         )
                         # Skip logging for motion events to reduce noise
-                        if e_type not in ('motion_notify', 'figure_enter', 'figure_leave'):
+                        if e_type not in (
+                            "motion_notify",
+                            "figure_enter",
+                            "figure_leave",
+                        ):
                             logger.debug(f"Calling handler for event type '{e_type}'")
                         await handler(data, websocket)
 
@@ -542,7 +562,7 @@ def create_mpl_router(
         if map_path.exists():
             return PlainTextResponse(
                 map_path.read_text(encoding="utf-8"),
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
             )
         raise HTTPException(status_code=404, detail="Source map not found")
 
