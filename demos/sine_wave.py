@@ -24,7 +24,13 @@ from fastapi.responses import FileResponse
 from matplotlib.figure import Figure
 from pydantic import BaseModel, Field
 
-from mpl_fastapi import InitConfig, PlotConfig, UpdateConfig, create_mpl_router
+from mpl_fastapi import (
+    InitConfig,
+    PlotConfig,
+    UpdateConfig,
+    create_mpl_router,
+    shutdown_figure_executor,
+)
 
 # Configure logging to see debug messages
 logging.basicConfig(
@@ -267,6 +273,14 @@ app.include_router(mpl.router, prefix="/plots")
 
 # Mount static files (required for matplotlib JavaScript and CSS)
 app.mount(mpl.static_mount_path, mpl.static_files, name="mpl_static")
+
+
+# Register shutdown handler for thread pool cleanup
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on application shutdown."""
+    shutdown_figure_executor()
+
 
 # Add route to serve home page
 @app.get("/")

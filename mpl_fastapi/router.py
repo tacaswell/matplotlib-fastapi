@@ -10,11 +10,13 @@ The router supports:
 - Dynamic parameter passing via query strings
 """
 
+import asyncio
 import io
 import logging
 import uuid
 from collections import defaultdict
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,6 +34,11 @@ from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+# Thread pool for blocking figure operations
+# Using a module-level executor to share threads across all routers
+_figure_executor: ThreadPoolExecutor | None = None
+_executor_max_workers = 4  # Configurable number of worker threads
 
 # Configuration for saved file cache
 SAVE_CACHE_TTL = timedelta(hours=1)  # Files expire after 1 hour
@@ -128,6 +135,133 @@ class MPLRouter:
     router: APIRouter
     static_files: StaticFiles
     static_mount_path: str
+
+
+def _get_figure_executor() -> ThreadPoolExecutor:
+    """Get or create the thread pool executor for figure operations.
+
+    Returns
+    -------
+    ThreadPoolExecutor
+        Shared thread pool for blocking figure operations
+    """
+    global _figure_executor
+    if _figure_executor is None:
+        _figure_executor = ThreadPoolExecutor(
+            max_workers=_executor_max_workers, thread_name_prefix="mpl_worker"
+        )
+        logger.info(f"Created ThreadPoolExecutor with {_executor_max_workers} workers")
+    return _figure_executor
+
+
+def _sync_save_figure(
+    fig: Figure, file_format: str, dpi: int, transparent: bool
+) -> bytes:
+    """Synchronous figure save operation for thread pool execution.
+
+    This function runs in a background thread to avoid blocking the event loop.
+
+    Parameters
+    ----------
+    fig : Figure
+        The matplotlib Figure to save
+    file_format : str
+        Output format (png, pdf, svg, etc.)
+    dpi : int
+        DPI for raster formats
+    transparent : bool
+        Whether to use transparent background
+
+    Returns
+    -------
+    bytes
+        The saved figure data
+
+    Raises
+    ------
+    ValueError
+        If the format is unsupported
+    Exception
+        If savefig fails
+    """
+    buf = io.BytesIO()
+    save_kwargs: dict[str, Any] = {"format": file_format}
+    if file_format in ["png", "jpg", "jpeg", "tiff", "tif"]:
+        save_kwargs["dpi"] = dpi
+    if file_format == "png":
+        save_kwargs["transparent"] = transparent
+
+    fig.savefig(buf, **save_kwargs)
+    return buf.getvalue()
+
+
+def _sync_draw_figure(canvas: FastAPICanvas) -> bytes | None:
+    """Synchronous figure draw operation for thread pool execution.
+
+    This function runs in a background thread to avoid blocking the event loop.
+    Performs the matplotlib draw operation and generates the diff image.
+
+    Parameters
+    ----------
+    canvas : FastAPICanvas
+        The canvas to draw
+
+    Returns
+    -------
+    bytes | None
+        PNG image data (diff or full) or None if no update needed
+    """
+    from io import BytesIO
+
+    import numpy as np
+    from PIL import Image
+
+    # Perform the blocking draw operation
+    canvas.draw()
+
+    # Generate diff image (this is also potentially slow)
+    renderer = canvas.get_renderer()
+
+    # Buffer as uint32 for pixel comparison
+    buff = np.frombuffer(renderer.buffer_rgba(), dtype=np.uint32).reshape(
+        (int(renderer.height), int(renderer.width))
+    )
+
+    # Check for transparency
+    pixels = buff.view(dtype=np.uint8).reshape(buff.shape + (4,))
+
+    if canvas._force_full or np.any(pixels[:, :, 3] != 255):
+        # Full image mode
+        canvas._current_image_mode = "full"
+        output = buff
+    else:
+        # Diff mode
+        canvas._current_image_mode = "diff"
+        diff = buff != canvas._last_buff
+        output = np.where(diff, buff, 0)
+
+    # Store current buffer for next diff
+    np.copyto(canvas._last_buff, buff)
+    canvas._force_full = False
+
+    # Encode as PNG
+    data = output.view(dtype=np.uint8).reshape((*output.shape, 4))
+    png_buf = BytesIO()
+    Image.fromarray(data).save(png_buf, format="png")
+    return png_buf.getvalue()
+
+
+def shutdown_figure_executor() -> None:
+    """Shutdown the thread pool executor gracefully.
+
+    This should be called when the application is shutting down.
+    Can be registered as a FastAPI shutdown event handler.
+    """
+    global _figure_executor
+    if _figure_executor is not None:
+        logger.info("Shutting down ThreadPoolExecutor")
+        _figure_executor.shutdown(wait=True)
+        _figure_executor = None
 
 
 def _clean_old_saved_files() -> None:
@@ -417,15 +551,19 @@ def create_mpl_router(
 
         logger.info(f"WebSocket connected for plot '{plot_name}' with params: {params}")
 
-        # Create figure and call generator to populate it
-        # Note: generator is synchronous and may block for complex plots
-        # For production use with heavy computation, consider:
-        # - Using asyncio.to_thread() for CPU-bound operations
-        # - Pre-generating figures with a background worker
-        # - Adding timeouts for generator execution
+        # Create figure and call generator to populate it in background thread
         fig = Figure()
         try:
-            state = config.init.function(fig, params)
+            logger.debug(f"Initializing figure '{plot_name}' in background thread")
+            loop = asyncio.get_event_loop()
+            executor = _get_figure_executor()
+
+            state = await loop.run_in_executor(
+                executor,
+                config.init.function,
+                fig,
+                params,
+            )
         except Exception as e:
             logger.error(f"Error generating plot '{plot_name}': {e}", exc_info=True)
             await websocket.close(code=1011, reason=f"Plot generation failed: {e}")
@@ -516,17 +654,22 @@ def create_mpl_router(
                             # Generate unique file ID
                             file_id = str(uuid.uuid4())
 
-                            # Save figure to BytesIO (synchronous for now)
-                            # TODO: Move to thread pool in future phase
-                            buf = io.BytesIO()
-                            save_kwargs: dict[str, Any] = {"format": format_lower}
-                            if format_lower in ["png", "jpg", "jpeg", "tiff", "tif"]:
-                                save_kwargs["dpi"] = dpi
-                            if format_lower == "png":
-                                save_kwargs["transparent"] = transparent
+                            # Save figure in thread pool to avoid blocking event loop
+                            logger.debug(
+                                f"Saving figure '{plot_name}' to {format_lower} "
+                                f"in background thread"
+                            )
+                            loop = asyncio.get_event_loop()
+                            executor = _get_figure_executor()
 
-                            fig.savefig(buf, **save_kwargs)
-                            file_data = buf.getvalue()
+                            file_data = await loop.run_in_executor(
+                                executor,
+                                _sync_save_figure,
+                                fig,
+                                format_lower,
+                                dpi,
+                                transparent,
+                            )
 
                             # Create saved file entry
                             saved_file = SavedFile(
@@ -604,8 +747,19 @@ def create_mpl_router(
                                     f"Updating plot '{plot_name}' with params: {update_params}"
                                 )
 
-                                # Call update function and get new state
-                                state = config.update.function(state, update_params)
+                                # Call update function in background thread
+                                logger.debug(
+                                    f"Updating figure '{plot_name}' in background thread"
+                                )
+                                loop = asyncio.get_event_loop()
+                                executor = _get_figure_executor()
+
+                                state = await loop.run_in_executor(
+                                    executor,
+                                    config.update.function,
+                                    state,
+                                    update_params,
+                                )
 
                                 # Trigger redraw
                                 canvas.draw_idle()
@@ -621,9 +775,6 @@ def create_mpl_router(
                                 )
                     else:
                         e_type = data["type"]
-                        handler = getattr(
-                            canvas, f"handle_{e_type}", canvas.handle_unknown_event
-                        )
                         # Skip logging for motion events to reduce noise
                         if e_type not in (
                             "motion_notify",
@@ -631,7 +782,35 @@ def create_mpl_router(
                             "figure_leave",
                         ):
                             logger.debug(f"Calling handler for event type '{e_type}'")
-                        await handler(data, websocket)
+
+                        # Special case for draw to use thread pool
+                        if e_type == "draw":
+                            # Run draw in background thread
+                            logger.debug("Running draw() in background thread")
+                            loop = asyncio.get_event_loop()
+
+                            diff_image = await loop.run_in_executor(
+                                executor,
+                                _sync_draw_figure,
+                                canvas,
+                            )
+
+                            # Send image mode if it changed
+                            await websocket.send_json(
+                                {
+                                    "type": "image_mode",
+                                    "mode": canvas._current_image_mode,
+                                }
+                            )
+
+                            # Send the image data
+                            if diff_image is not None:
+                                await websocket.send_bytes(diff_image)
+                        else:
+                            handler = getattr(
+                                canvas, f"handle_{e_type}", canvas.handle_unknown_event
+                            )
+                            await handler(data, websocket)
 
                     # Drain the message queue and send responses
                     queue_size = len(canvas._msg_queue)

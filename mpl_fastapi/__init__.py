@@ -13,11 +13,13 @@ from .router import (
     UpdateConfig,
     UpdateFunction,
     create_mpl_router,
+    shutdown_figure_executor,
 )
 
 __all__ = [
     "__version__",
     "create_mpl_router",
+    "shutdown_figure_executor",
     "InitConfig",
     "MPLRouter",
     "PlotConfig",

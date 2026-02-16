@@ -11,9 +11,8 @@ efficient differential image updates to minimize data transfer.
 
 import logging
 from collections import deque
-from io import BytesIO
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -26,7 +25,6 @@ from matplotlib.backend_bases import (
     _Backend,
 )
 from matplotlib.backends.backend_agg import FigureCanvasAgg, RendererAgg
-from PIL import Image
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -66,7 +64,6 @@ class FastAPICanvas(FigureCanvasAgg):
     _force_full: bool
     _current_image_mode: str
     _msg_queue: deque[dict[str, Any]]
-    _png_is_old: bool
     _last_buff: npt.NDArray[np.uint32]
     _renderer: RendererAgg
     supports_binary: bool = True
@@ -133,68 +130,6 @@ class FastAPICanvas(FigureCanvasAgg):
         )
         self._force_full = True
         await websocket.send_json({"type": "draw"})
-
-    async def handle_draw(self, ev: dict[str, Any], websocket: WebSocket) -> None:  # noqa: ARG002
-        self._png_is_old = True
-        try:
-            super().draw()
-        finally:
-            diff = await self.get_diff_image(websocket)
-            if diff is not None:
-                await websocket.send_bytes(diff)
-
-    async def set_image_mode(
-        self, mode: Literal["full", "diff"], websocket: WebSocket
-    ) -> None:
-        """
-        Set the image mode for any subsequent images which will be sent
-        to the clients. The modes may currently be either 'full' or 'diff'.
-
-        Note: diff images may not contain transparency, therefore upon
-        draw this mode may be changed if the resulting image has any
-        transparent component.
-        """
-        # _api.check_in_list(["full", "diff"], mode=mode)
-        if self._current_image_mode != mode:
-            self._current_image_mode = mode
-            await websocket.send_json(
-                {"type": "image_mode", "mode": self._current_image_mode}
-            )
-
-    async def get_diff_image(self, websocket: WebSocket) -> bytes | None:
-        """Generate differential or full image for transmission."""
-        if self._png_is_old:
-            renderer = self.get_renderer()
-
-            # The buffer is created as type uint32 so that entire
-            # pixels can be compared in one numpy call, rather than
-            # needing to compare each plane separately.
-            buff = np.frombuffer(renderer.buffer_rgba(), dtype=np.uint32).reshape(
-                (int(renderer.height), int(renderer.width))
-            )
-
-            # If any pixels have transparency, we need to force a full
-            # draw as we cannot overlay new on top of old.
-            pixels = buff.view(dtype=np.uint8).reshape(buff.shape + (4,))
-
-            if self._force_full or np.any(pixels[:, :, 3] != 255):
-                await self.set_image_mode("full", websocket)
-                output = buff
-            else:
-                await self.set_image_mode("diff", websocket)
-                diff = buff != self._last_buff
-                output = np.where(diff, buff, 0)
-
-            # Store the current buffer so we can compute the next diff.
-            np.copyto(self._last_buff, buff)
-            self._force_full = False
-            self._png_is_old = False
-
-            data = output.view(dtype=np.uint8).reshape((*output.shape, 4))
-            with BytesIO() as png:
-                Image.fromarray(data).save(png, format="png")
-                return png.getvalue()
-        return None
 
     def get_renderer(self, cleared: bool | None = None) -> RendererAgg:
         """Get renderer with caching for differential updates."""
