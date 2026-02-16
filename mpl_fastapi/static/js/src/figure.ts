@@ -479,28 +479,29 @@ export class Figure {
 
   handle_save(fig: Figure, _msg: any): void {
     if (!fig.format_dropdown) return;
-    const selectedOption = fig.format_dropdown.options[fig.format_dropdown.selectedIndex];
+    const selectedOption =
+      fig.format_dropdown.options[fig.format_dropdown.selectedIndex];
     if (!selectedOption) return;
     const format = selectedOption.value;
-    
+
     // Send save request via WebSocket instead of direct HTTP download
-    fig.send_message('save_figure', { 
+    fig.send_message('save_figure', {
       format: format,
       dpi: 100,
-      transparent: false 
+      transparent: false,
     });
   }
 
   handle_save_complete(fig: Figure, msg: any): void {
     const download_url = msg['download_url'];
     const filename = msg['filename'];
-    
+
     // Trigger browser download (no DOM append needed in modern browsers)
     const link = document.createElement('a');
     link.href = download_url;
     link.download = filename;
     link.click();
-    
+
     // Optional: Show success message
     if (fig.message) {
       fig.message.textContent = `Downloaded ${filename}`;
@@ -516,7 +517,7 @@ export class Figure {
   handle_save_error(fig: Figure, msg: any): void {
     const error_message = msg['message'];
     console.error('Save error:', error_message);
-    
+
     // Show error to user
     if (fig.message) {
       fig.message.textContent = `Save failed: ${error_message}`;
@@ -536,11 +537,13 @@ export class Figure {
   private _default_download_handler(fig: Figure, format: string): void {
     // This method is now deprecated but kept for backward compatibility
     // The new flow uses handle_save which sends save_figure message via WebSocket
-    console.warn('_default_download_handler is deprecated, using WebSocket save instead');
-    fig.send_message('save_figure', { 
+    console.warn(
+      '_default_download_handler is deprecated, using WebSocket save instead'
+    );
+    fig.send_message('save_figure', {
       format: format,
       dpi: 100,
-      transparent: false 
+      transparent: false,
     });
   }
 
