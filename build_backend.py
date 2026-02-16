@@ -5,6 +5,7 @@ before building wheels or sdists. It ensures that JavaScript assets are built
 and included in the distribution.
 """
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -36,17 +37,11 @@ def _build_javascript() -> None:
 
     root = Path(__file__).parent
 
-    # Check if Node.js is available
-    try:
-        result = subprocess.run(
-            ["node", "--version"],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        node_version = result.stdout.strip()
-        print(f"✓ Found Node.js {node_version}")
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    # Find node and npm executables (handles Windows .cmd files)
+    node_cmd = shutil.which("node")
+    npm_cmd = shutil.which("npm")
+
+    if not node_cmd:
         print("\n" + "!" * 70, file=sys.stderr)
         print("ERROR: Node.js is required to build this package.", file=sys.stderr)
         print("!" * 70, file=sys.stderr)
@@ -56,11 +51,31 @@ def _build_javascript() -> None:
         print("\n", file=sys.stderr)
         sys.exit(1)
 
+    if not npm_cmd:
+        print("\n" + "!" * 70, file=sys.stderr)
+        print("ERROR: npm is required to build this package.", file=sys.stderr)
+        print("!" * 70, file=sys.stderr)
+        sys.exit(1)
+
+    # Check Node.js version
+    try:
+        result = subprocess.run(
+            [node_cmd, "--version"],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        node_version = result.stdout.strip()
+        print(f"✓ Found Node.js {node_version}")
+    except subprocess.CalledProcessError:
+        print("\nERROR: Failed to check Node.js version", file=sys.stderr)
+        sys.exit(1)
+
     # Install npm dependencies
     print("\n📦 Installing npm dependencies...")
     try:
         subprocess.run(
-            ["npm", "install", "--quiet"],
+            [npm_cmd, "install", "--quiet"],
             cwd=root,
             check=True,
             capture_output=True
@@ -75,7 +90,7 @@ def _build_javascript() -> None:
     print("\n🔨 Compiling TypeScript...")
     try:
         subprocess.run(
-            ["npm", "run", "build"],
+            [npm_cmd, "run", "build"],
             cwd=root,
             check=True
         )
