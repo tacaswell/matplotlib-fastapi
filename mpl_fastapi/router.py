@@ -554,14 +554,13 @@ def create_mpl_router(
             return
 
         logger.info(f"WebSocket connected for plot '{plot_name}' with params: {params}")
+        loop = asyncio.get_event_loop()
+        executor = _get_figure_executor()
 
         # Create figure and call generator to populate it in background thread
         fig = Figure()
         try:
             logger.debug(f"Initializing figure '{plot_name}' in background thread")
-            loop = asyncio.get_event_loop()
-            executor = _get_figure_executor()
-
             state = await loop.run_in_executor(
                 executor,
                 config.init.function,
@@ -675,8 +674,6 @@ def create_mpl_router(
                                 f"Saving figure '{plot_name}' to {format_lower} "
                                 f"in background thread"
                             )
-                            loop = asyncio.get_event_loop()
-                            executor = _get_figure_executor()
 
                             file_data = await loop.run_in_executor(
                                 executor,
@@ -753,42 +750,64 @@ def create_mpl_router(
                                 f"Update requested for plot '{plot_name}' "
                                 "but no update function configured"
                             )
-                        else:
-                            try:
-                                # Validate update parameters
-                                update_params = config.update.params_model(
-                                    **data["params"]
-                                )
-                                logger.info(
-                                    f"Updating plot '{plot_name}' with params: {update_params}"
-                                )
+                            continue
+                        try:
+                            # Validate update parameters
+                            update_params = config.update.params_model(
+                                **data["params"]
+                            )
 
-                                # Call update function in background thread
-                                logger.debug(
-                                    f"Updating figure '{plot_name}' in background thread"
-                                )
-                                loop = asyncio.get_event_loop()
-                                executor = _get_figure_executor()
+                        except ValidationError as e:
+                            logger.warning(
+                                f"Invalid update parameters for plot {plot_name}: {e}"
+                            )
+                            continue
+                        try:
+                            logger.info(
+                                f"Updating plot '{plot_name}' with params: {update_params}"
+                            )
 
-                                state = await loop.run_in_executor(
-                                    executor,
-                                    config.update.function,
-                                    state,
-                                    update_params,
-                                )
+                            # Call update function in background thread
+                            logger.debug(
+                                f"Updating figure '{plot_name}' in background thread"
+                            )
 
-                                # Trigger redraw
-                                canvas.draw_idle()
+                            state = await loop.run_in_executor(
+                                executor,
+                                config.update.function,
+                                state,
+                                update_params,
+                            )
 
-                            except ValidationError as e:
-                                logger.warning(
-                                    f"Invalid update parameters for plot {plot_name}: {e}"
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Error updating plot '{plot_name}': {e}",
-                                    exc_info=True,
-                                )
+                            # Trigger redraw
+                            canvas.draw_idle()
+
+                        except Exception as e:
+                            logger.error(
+                                f"Error updating plot '{plot_name}': {e}",
+                                exc_info=True,
+                            )
+                    elif data["type"] == "draw":
+                        # Run draw in background thread
+                        logger.debug("Running draw() in background thread")
+
+                        diff_image = await loop.run_in_executor(
+                            executor,
+                            _sync_draw_figure,
+                            canvas,
+                        )
+
+                        # Send image mode if it changed
+                        await websocket.send_json(
+                            {
+                                "type": "image_mode",
+                                "mode": canvas._current_image_mode,
+                            }
+                        )
+
+                        # Send the image data
+                        if diff_image is not None:
+                            await websocket.send_bytes(diff_image)
                     else:
                         e_type = data["type"]
                         # Skip logging for motion events to reduce noise
@@ -799,34 +818,10 @@ def create_mpl_router(
                         ):
                             logger.debug(f"Calling handler for event type '{e_type}'")
 
-                        # Special case for draw to use thread pool
-                        if e_type == "draw":
-                            # Run draw in background thread
-                            logger.debug("Running draw() in background thread")
-                            loop = asyncio.get_event_loop()
-
-                            diff_image = await loop.run_in_executor(
-                                executor,
-                                _sync_draw_figure,
-                                canvas,
-                            )
-
-                            # Send image mode if it changed
-                            await websocket.send_json(
-                                {
-                                    "type": "image_mode",
-                                    "mode": canvas._current_image_mode,
-                                }
-                            )
-
-                            # Send the image data
-                            if diff_image is not None:
-                                await websocket.send_bytes(diff_image)
-                        else:
-                            handler = getattr(
-                                canvas, f"handle_{e_type}", canvas.handle_unknown_event
-                            )
-                            await handler(data, websocket)
+                        handler = getattr(
+                            canvas, f"handle_{e_type}", canvas.handle_unknown_event
+                        )
+                        await handler(data, websocket)
 
                     # Drain the message queue and send responses
                     queue_size = len(canvas._msg_queue)
