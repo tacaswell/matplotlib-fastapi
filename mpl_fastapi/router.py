@@ -606,6 +606,7 @@ def create_mpl_router(
         )
 
         # Event loop
+        first_message = True
         try:
             while True:
                 try:
@@ -753,9 +754,7 @@ def create_mpl_router(
                             continue
                         try:
                             # Validate update parameters
-                            update_params = config.update.params_model(
-                                **data["params"]
-                            )
+                            update_params = config.update.params_model(**data["params"])
 
                         except ValidationError as e:
                             logger.warning(
@@ -808,6 +807,10 @@ def create_mpl_router(
                         # Send the image data
                         if diff_image is not None:
                             await websocket.send_bytes(diff_image)
+
+                        # Draw is special - don't drain queue or check first_message after
+                        # because we've already sent the complete response
+                        continue
                     else:
                         e_type = data["type"]
                         # Skip logging for motion events to reduce noise
@@ -828,6 +831,15 @@ def create_mpl_router(
                     if queue_size > 0:
                         logger.debug(f"Draining queue with {queue_size} messages")
                     await canvas.drain_queue(websocket)
+
+                    # After first message, send initial history_buttons state
+                    # This ensures toolbar is initialized on client before we send button state
+                    if first_message:
+                        first_message = False
+                        await websocket.send_json(
+                            {"type": "history_buttons", "Back": False, "Forward": False}
+                        )
+                        logger.debug("Sent initial history_buttons state")
                 except Exception as e:
                     logger.error(
                         f"Error handling event '{data.get('type', 'unknown')}': {e}",

@@ -1,0 +1,190 @@
+"""Tests for JSON API endpoints."""
+
+from fastapi.testclient import TestClient
+
+
+class TestPlotsListAPI:
+    """Tests for the /plots endpoint (JSON API)."""
+
+    def test_list_plots_returns_200(self, client: TestClient) -> None:
+        """Test that listing plots returns 200 OK."""
+        response = client.get("/plots/plots")
+        assert response.status_code == 200
+
+    def test_list_plots_returns_json(self, client: TestClient) -> None:
+        """Test that the response is valid JSON."""
+        response = client.get("/plots/plots")
+        assert response.headers["content-type"].startswith("application/json")
+        data = response.json()
+        assert isinstance(data, dict)
+
+    def test_list_plots_has_expected_structure(self, client: TestClient) -> None:
+        """Test that the response has the expected structure."""
+        response = client.get("/plots/plots")
+        data = response.json()
+
+        # Should have a 'plots' key
+        assert "plots" in data
+        assert isinstance(data["plots"], dict)
+
+    def test_list_plots_contains_test_plots(self, client: TestClient) -> None:
+        """Test that our test plots are listed."""
+        response = client.get("/plots/plots")
+        data = response.json()
+
+        plots = data["plots"]
+        assert "simple" in plots
+        assert "updatable" in plots
+
+    def test_plot_info_structure(self, client: TestClient) -> None:
+        """Test that each plot has the expected information."""
+        response = client.get("/plots/plots")
+        data = response.json()
+
+        plot_info = data["plots"]["simple"]
+
+        # Should have description
+        assert "description" in plot_info
+        assert isinstance(plot_info["description"], str)
+        assert plot_info["description"] == "Simple test plot for basic functionality"
+
+        # Should have parameters (JSON schema)
+        assert "parameters" in plot_info
+        assert isinstance(plot_info["parameters"], dict)
+        assert "properties" in plot_info["parameters"]
+
+        # Should have update_schema (None for simple plot)
+        assert "update_schema" in plot_info
+        assert plot_info["update_schema"] is None
+
+    def test_updatable_plot_has_update_schema(self, client: TestClient) -> None:
+        """Test that updatable plots include update schema."""
+        response = client.get("/plots/plots")
+        data = response.json()
+
+        plot_info = data["plots"]["updatable"]
+
+        # Should have update_schema
+        assert plot_info["update_schema"] is not None
+        assert isinstance(plot_info["update_schema"], dict)
+        assert "properties" in plot_info["update_schema"]
+
+
+class TestPlotSchemaAPI:
+    """Tests for the /api/plots/{plot_name}/schema endpoint."""
+
+    def test_get_schema_returns_200(self, client: TestClient) -> None:
+        """Test that getting schema returns 200 OK."""
+        response = client.get("/plots/api/plots/simple/schema")
+        assert response.status_code == 200
+
+    def test_get_schema_returns_json(self, client: TestClient) -> None:
+        """Test that the response is valid JSON."""
+        response = client.get("/plots/api/plots/simple/schema")
+        assert response.headers["content-type"].startswith("application/json")
+
+    def test_get_schema_structure(self, client: TestClient) -> None:
+        """Test that schema has expected structure."""
+        response = client.get("/plots/api/plots/simple/schema")
+        data = response.json()
+
+        assert "plot_name" in data
+        assert data["plot_name"] == "simple"
+
+        assert "description" in data
+        assert isinstance(data["description"], str)
+
+        assert "init_schema" in data
+        assert isinstance(data["init_schema"], dict)
+
+        assert "update_schema" in data
+        # Simple plot has no update
+        assert data["update_schema"] is None
+
+    def test_get_schema_init_schema_content(self, client: TestClient) -> None:
+        """Test that init_schema contains expected parameter definitions."""
+        response = client.get("/plots/api/plots/simple/schema")
+        data = response.json()
+
+        init_schema = data["init_schema"]
+
+        # Should have properties
+        assert "properties" in init_schema
+        properties = init_schema["properties"]
+
+        # Should have 'value' parameter
+        assert "value" in properties
+        value_prop = properties["value"]
+
+        # Check constraints
+        assert value_prop["type"] == "number"
+        assert value_prop["default"] == 1.0
+        assert value_prop["minimum"] == 0.1
+        assert value_prop["maximum"] == 10.0
+
+    def test_get_schema_update_schema_content(self, client: TestClient) -> None:
+        """Test that update_schema is present for updatable plots."""
+        response = client.get("/plots/api/plots/updatable/schema")
+        data = response.json()
+
+        update_schema = data["update_schema"]
+        assert update_schema is not None
+
+        # Should have properties
+        assert "properties" in update_schema
+        properties = update_schema["properties"]
+
+        # Should have 'phase' parameter
+        assert "phase" in properties
+        phase_prop = properties["phase"]
+
+        # Check constraints
+        assert phase_prop["type"] == "number"
+        assert phase_prop["default"] == 0.0
+        assert phase_prop["minimum"] == 0.0
+        assert phase_prop["maximum"] == 6.28
+
+    def test_get_schema_invalid_plot_returns_404(self, client: TestClient) -> None:
+        """Test that requesting schema for non-existent plot returns 404."""
+        response = client.get("/plots/api/plots/nonexistent/schema")
+        assert response.status_code == 404
+
+    def test_get_schema_invalid_plot_error_message(self, client: TestClient) -> None:
+        """Test that 404 response includes helpful error message."""
+        response = client.get("/plots/api/plots/nonexistent/schema")
+        data = response.json()
+
+        assert "detail" in data
+        assert "nonexistent" in data["detail"]
+        assert "Available plots:" in data["detail"]
+
+
+class TestParameterValidation:
+    """Tests for parameter schema validation."""
+
+    def test_init_schema_required_fields(self, client: TestClient) -> None:
+        """Test that schema correctly identifies required fields."""
+        response = client.get("/plots/api/plots/simple/schema")
+        data = response.json()
+
+        init_schema = data["init_schema"]
+
+        # 'value' has a default, so it's not required
+        # Check the schema structure
+        if "required" in init_schema:
+            assert "value" not in init_schema["required"]
+
+    def test_schemas_match_between_endpoints(self, client: TestClient) -> None:
+        """Test that schemas are consistent across endpoints."""
+        # Get from /plots endpoint
+        list_response = client.get("/plots/plots")
+        list_data = list_response.json()
+        list_schema = list_data["plots"]["simple"]["parameters"]
+
+        # Get from /api/plots/{name}/schema endpoint
+        schema_response = client.get("/plots/api/plots/simple/schema")
+        schema_data = schema_response.json()
+        api_schema = schema_data["init_schema"]
+
+        # Schemas should be identical
+        assert list_schema == api_schema

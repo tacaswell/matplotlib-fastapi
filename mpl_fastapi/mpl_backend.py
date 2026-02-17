@@ -272,7 +272,12 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
     def __init__(self, canvas: FastAPICanvas) -> None:
         self.message = ""
         self._cursor = None  # Remove with deprecation.
+
+        # Call parent __init__ but suppress set_history_buttons
+        # We'll call it explicitly later to make initialization deterministic
+        self._defer_history_buttons = True
         super().__init__(canvas)
+        self._defer_history_buttons = False
 
     def set_message(self, message: str) -> None:
         """Display a message in the browser toolbar."""
@@ -312,6 +317,10 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
 
     def set_history_buttons(self) -> None:
         """Update the enabled state of back/forward buttons."""
+        # During __init__, defer this to make initialization deterministic
+        if getattr(self, "_defer_history_buttons", False):
+            return
+
         can_backward = self._nav_stack._pos > 0
         can_forward = self._nav_stack._pos < len(self._nav_stack._elements) - 1
         self.canvas.queue_event(
