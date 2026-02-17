@@ -46,8 +46,12 @@ export class MatplotlibEmbeddable {
   private connected: boolean = false;
   private updateSchema: PlotSchemaResponse['update_schema'] | null = null;
   private submitButton: HTMLButtonElement | null = null;
+  private readonly instanceId: string;
 
   constructor(config: EmbeddableConfig) {
+    // Generate unique instance ID to avoid ID collisions when multiple plots on same page
+    this.instanceId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+
     // Validate required options
     if (!config.container) {
       throw new Error('container option is required');
@@ -269,7 +273,7 @@ export class MatplotlibEmbeddable {
     formContainer.appendChild(title);
 
     const form = document.createElement('form');
-    form.id = `update-form-${this.config.plotName}`;
+    form.id = `update-form-${this.instanceId}`;
     form.onsubmit = (e) => {
       e.preventDefault();
       this._handleUpdateFormSubmit();
@@ -300,7 +304,7 @@ export class MatplotlibEmbeddable {
         const input = document.createElement('input');
         input.type = 'number';
         input.name = paramName;
-        input.id = `${paramName}-${this.config.plotName}`;
+        input.id = `${paramName}-${this.instanceId}`;
         input.step = 'any';
         input.style.width = '100%';
         input.style.padding = '4px';
@@ -366,7 +370,8 @@ export class MatplotlibEmbeddable {
    * Handle update form submission
    */
   private _handleUpdateFormSubmit(): void {
-    const form = document.getElementById(`update-form-${this.config.plotName}`);
+    const formId = `update-form-${this.instanceId}`;
+    const form = document.getElementById(formId);
     if (!form) {
       console.error('Update form not found');
       return;
