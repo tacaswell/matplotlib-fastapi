@@ -20,26 +20,34 @@ from starlette.websockets import WebSocketDisconnect
 
 
 def drain_initial_messages(websocket) -> None:
-    """Drain all initial server messages.
+    """Drain server's first message and complete handshake.
 
-    Server sends exactly 6 messages on connection (deterministic):
-    1. protocol_version
-    2. image_mode
-    3. connection_id
-    4. toolbar_config
-    5. save_formats
-    6. default_save_format
+    Protocol flow:
+    1. Server sends: protocol_version
+    2. Client sends: protocol_version (MUST be first client message)
+    3. Server sends: image_mode, connection_id, toolbar_config, save_formats,
+       default_save_format, history_buttons (6 messages)
 
-    Note: history_buttons is sent AFTER the first client message,
-    not during initial connection, to ensure toolbar is initialized.
+    This helper receives protocol_version, sends client protocol_version,
+    then drains the remaining 6 configuration messages.
     """
+    # 1. Receive server's protocol_version
+    msg = websocket.receive_json()
+    assert msg["type"] == "protocol_version", (
+        f"Expected protocol_version, got {msg['type']}"
+    )
+
+    # 2. Send client's protocol_version (REQUIRED first message)
+    websocket.send_json({"type": "protocol_version", "version": 0})
+
+    # 3. Drain 6 configuration messages from server
     expected_types = {
-        "protocol_version",
         "image_mode",
         "connection_id",
         "toolbar_config",
         "save_formats",
         "default_save_format",
+        "history_buttons",
     }
     seen_types = set()
 
@@ -58,19 +66,12 @@ def drain_initial_messages(websocket) -> None:
 
 
 def send_client_init_and_drain_history_buttons(websocket) -> None:
-    """Send first client message and drain the history_buttons response.
+    """DEPRECATED: Use drain_initial_messages() instead.
 
-    After server sends 6 initial messages, client must send protocol_version
-    as its first message. The server validates it and immediately sends
-    history_buttons in response (inline, not queued). This helper sends
-    that message and drains the history_buttons response.
+    This function is kept for backward compatibility but does nothing
+    since drain_initial_messages() now handles the full handshake.
     """
-    websocket.send_json({"type": "protocol_version", "version": 0})
-    msg = websocket.receive_json()
-    if msg["type"] != "history_buttons":
-        raise AssertionError(
-            f"Expected history_buttons after protocol_version, got {msg['type']}"
-        )
+    pass
 
 
 def drain_until_message_type(
@@ -161,35 +162,32 @@ class TestWebSocketConnection:
         assert exc_info.value.code == 1008
 
     def test_websocket_initial_message_sequence(self, client: TestClient) -> None:
-        """Test that initial messages are sent in correct order."""
+        """Test that initial message sequence follows protocol."""
         with client.websocket_connect("/plots/ws/simple?value=1.0") as websocket:
+            # 1. Receive server protocol_version
+            msg = websocket.receive_json()
+            assert msg["type"] == "protocol_version"
+            assert msg["version"] == 0
+
+            # 2. Send client protocol_version (REQUIRED first message)
+            websocket.send_json({"type": "protocol_version", "version": 0})
+
+            # 3. Collect 6 configuration messages from server
             messages = []
-            # Collect exactly 6 initial messages (deterministic)
             for _ in range(6):
                 msg = websocket.receive_json()
                 messages.append(msg)
 
             message_types = [msg["type"] for msg in messages]
 
-            # Should receive exactly these 6 messages
-            assert message_types[0] == "protocol_version"
+            # Should receive exactly these 6 messages (order may vary)
             assert "image_mode" in message_types
             assert "connection_id" in message_types
             assert "toolbar_config" in message_types
             assert "save_formats" in message_types
             assert "default_save_format" in message_types
-
-            # Verify exactly 6 messages (no history_buttons yet)
+            assert "history_buttons" in message_types
             assert len(messages) == 6
-
-            # Send first client message (protocol_version)
-            websocket.send_json({"type": "protocol_version", "version": 0})
-
-            # Now we should receive history_buttons
-            msg = websocket.receive_json()
-            assert msg["type"] == "history_buttons"
-            assert not msg["Back"]
-            assert not msg["Forward"]
 
 
 class TestProtocolVersion:
@@ -210,13 +208,10 @@ class TestProtocolVersion:
             # Send back incompatible version
             websocket.send_json({"type": "protocol_version", "version": 999})
 
-            # Drain any messages sent before the version check
-            # (image_mode, connection_id, toolbar_config, etc.)
-            while True:
-                msg = websocket.receive_json()
-                if msg["type"] == "error":
-                    assert "Incompatible protocol version" in msg["message"]
-                    break
+            # Should receive error message immediately
+            msg = websocket.receive_json()
+            assert msg["type"] == "error"
+            assert "Incompatible protocol version" in msg["message"]
 
             # Try to receive more - should disconnect
             websocket.receive_json()
@@ -233,16 +228,64 @@ class TestProtocolVersion:
             # Send back matching version
             websocket.send_json({"type": "protocol_version", "version": 0})
 
-            # Should continue to receive other messages
+            # Should continue to receive configuration messages
             msg = websocket.receive_json()
-            # Should get next message type (image_mode, connection_id, etc.)
             assert msg["type"] in [
                 "image_mode",
                 "connection_id",
                 "toolbar_config",
                 "save_formats",
                 "default_save_format",
+                "history_buttons",
             ]
+
+    def test_protocol_version_missing_closes_connection(
+        self, client: TestClient
+    ) -> None:
+        """Test that missing protocol version (required field) closes the connection."""
+        with (
+            pytest.raises(WebSocketDisconnect) as exc_info,
+            client.websocket_connect("/plots/ws/simple?value=1.0") as websocket,
+        ):
+            # Receive server's protocol_version
+            msg = websocket.receive_json()
+            assert msg["type"] == "protocol_version"
+
+            # Send back protocol_version message without version field
+            websocket.send_json({"type": "protocol_version"})
+
+            # Should receive error message immediately
+            msg = websocket.receive_json()
+            assert msg["type"] == "error"
+            assert "required" in msg["message"].lower()
+
+            # Try to receive more - should disconnect
+            websocket.receive_json()
+
+        assert exc_info.value.code == 1008
+
+    def test_wrong_first_message_closes_connection(self, client: TestClient) -> None:
+        """Test that sending non-protocol_version as first message closes connection."""
+        with (
+            pytest.raises(WebSocketDisconnect) as exc_info,
+            client.websocket_connect("/plots/ws/simple?value=1.0") as websocket,
+        ):
+            # Receive server's protocol_version
+            msg = websocket.receive_json()
+            assert msg["type"] == "protocol_version"
+
+            # Send wrong message type as first client message
+            websocket.send_json({"type": "refresh"})
+
+            # Should receive error message
+            msg = websocket.receive_json()
+            assert msg["type"] == "error"
+            assert "first" in msg["message"].lower()
+
+            # Try to receive more - should disconnect
+            websocket.receive_json()
+
+        assert exc_info.value.code == 1008
 
 
 class TestImageRendering:
@@ -251,12 +294,8 @@ class TestImageRendering:
     def test_websocket_sends_image_after_draw(self, client: TestClient) -> None:
         """Test that WebSocket sends image data after a draw request."""
         with client.websocket_connect("/plots/ws/simple?value=2.0") as websocket:
-            # Drain all initial server messages (6 messages)
+            # Drain all initial server messages and complete handshake
             drain_initial_messages(websocket)
-
-            # Send protocol_version as FIRST client message
-            # Server will respond with: history_buttons
-            send_client_init_and_drain_history_buttons(websocket)
 
             # Now send refresh to trigger draw
             # Server will respond with: figure_label, draw
@@ -305,15 +344,8 @@ class TestResizing:
     def test_resize_sends_acknowledgment(self, client: TestClient) -> None:
         """Test that resize requests receive proper acknowledgment."""
         with client.websocket_connect("/plots/ws/simple?value=1.0") as websocket:
-            # Drain all initial server messages
+            # Drain all initial server messages and complete handshake
             drain_initial_messages(websocket)
-
-            # Send protocol version (FIRST client message - triggers history_buttons)
-            websocket.send_json({"type": "protocol_version", "version": 0})
-
-            # Receive history_buttons after first message
-            msg = websocket.receive_json()
-            assert msg["type"] == "history_buttons"
 
             # Resize the figure
             websocket.send_json({"type": "resize", "width": 800, "height": 600})
@@ -326,15 +358,8 @@ class TestResizing:
     def test_multiple_resizes_work(self, client: TestClient) -> None:
         """Test that multiple resizes can be performed."""
         with client.websocket_connect("/plots/ws/simple?value=1.0") as websocket:
-            # Drain all initial server messages
+            # Drain all initial server messages and complete handshake
             drain_initial_messages(websocket)
-
-            # Send protocol version (FIRST client message - triggers history_buttons)
-            websocket.send_json({"type": "protocol_version", "version": 0})
-
-            # Receive history_buttons after first message
-            msg = websocket.receive_json()
-            assert msg["type"] == "history_buttons"
 
             sizes_to_test = [(640, 480), (800, 600), (400, 300)]
 
@@ -354,15 +379,8 @@ class TestDPI:
     def test_changing_dpi_triggers_redraw(self, client: TestClient) -> None:
         """Test that changing device pixel ratio triggers a full redraw."""
         with client.websocket_connect("/plots/ws/simple?value=1.0") as websocket:
-            # Drain all initial server messages
+            # Drain all initial server messages and complete handshake
             drain_initial_messages(websocket)
-
-            # Send protocol version (FIRST client message - triggers history_buttons)
-            websocket.send_json({"type": "protocol_version", "version": 0})
-
-            # Receive history_buttons after first message
-            msg = websocket.receive_json()
-            assert msg["type"] == "history_buttons"
 
             # Send supports_binary
             websocket.send_json({"type": "supports_binary", "value": True})
@@ -394,15 +412,8 @@ class TestUpdateParams:
     def test_update_params_triggers_redraw(self, client: TestClient) -> None:
         """Test that updating parameters triggers a redraw."""
         with client.websocket_connect("/plots/ws/updatable?value=1.0") as websocket:
-            # Drain all initial server messages
+            # Drain all initial server messages and complete handshake
             drain_initial_messages(websocket)
-
-            # Send protocol version (FIRST client message - triggers history_buttons)
-            websocket.send_json({"type": "protocol_version", "version": 0})
-
-            # Receive history_buttons after first message
-            msg = websocket.receive_json()
-            assert msg["type"] == "history_buttons"
 
             # Send supports_binary
             websocket.send_json({"type": "supports_binary", "value": True})

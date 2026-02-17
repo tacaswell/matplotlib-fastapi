@@ -134,7 +134,7 @@ export class Figure {
         }
       }
 
-      // Send protocol version as first message from client
+      // Send protocol version as first message from client (REQUIRED)
       this.send_message('protocol_version', { version: 0 });
 
       // Send initialization messages
@@ -608,6 +608,14 @@ export class Figure {
 
   handle_protocol_version(fig: Figure, msg: any): void {
     const server_version = msg['version'];
+    // Protocol version is REQUIRED
+    if (server_version == null) {
+      console.error('Protocol version missing from server message');
+      if (fig.ws_manager) {
+        fig.ws_manager.close();
+      }
+      throw new Error('Protocol version is required');
+    }
     if (server_version !== 0) {
       console.error(
         `Protocol version mismatch: client expects 0, server sent ${server_version}`

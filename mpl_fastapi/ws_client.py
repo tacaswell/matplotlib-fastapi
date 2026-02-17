@@ -333,23 +333,46 @@ class MatplotlibWebSocketClient:
             logger.info(f"Disconnected from {self.plot_name}")
 
     def _receive_initial_messages(self) -> None:
-        """Receive initial messages from server.
+        """Receive initial message from server and complete handshake.
 
-        Server sends exactly 6 messages:
-        1. protocol_version
-        2. image_mode
-        3. connection_id
-        4. toolbar_config
-        5. save_formats
-        6. default_save_format
+        Protocol flow:
+        1. Server sends: protocol_version (first message)
+        2. Client sends: protocol_version (MUST be first client message)
+        3. Server validates and sends: image_mode, connection_id, toolbar_config,
+           save_formats, default_save_format, history_buttons (6 messages)
+
+        This method receives protocol_version, validates it, sends client protocol_version,
+        then receives the remaining 6 configuration messages.
         """
+        # 1. Receive server's protocol_version (first message)
+        msg = self.adapter.receive_json()
+        if msg["type"] != "protocol_version":
+            raise RuntimeError(
+                f"Expected protocol_version as first message, got {msg['type']}"
+            )
+
+        # Protocol version is REQUIRED
+        if "version" not in msg:
+            raise ValueError("Protocol version missing from server message")
+        self._server_protocol_version = msg["version"]
+        if self._server_protocol_version != 0:
+            raise ValueError(
+                f"Incompatible protocol version: {self._server_protocol_version}"
+            )
+        logger.debug(f"Server protocol version: {self._server_protocol_version}")
+
+        # 2. Send client protocol_version (MUST be first client message)
+        self.adapter.send_json({"type": "protocol_version", "version": 0})
+        logger.debug("Sent client protocol version: 0")
+
+        # 3. Receive 6 configuration messages from server
         expected_types = {
-            "protocol_version",
             "image_mode",
             "connection_id",
             "toolbar_config",
             "save_formats",
             "default_save_format",
+            "history_buttons",
         }
         seen_types: set[str] = set()
 
@@ -359,17 +382,7 @@ class MatplotlibWebSocketClient:
             seen_types.add(msg_type)
 
             # Process each message type
-            if msg_type == "protocol_version":
-                self._server_protocol_version = msg["version"]
-                if self._server_protocol_version != 0:
-                    raise ValueError(
-                        f"Incompatible protocol version: {self._server_protocol_version}"
-                    )
-                logger.debug(
-                    f"Server protocol version: {self._server_protocol_version}"
-                )
-
-            elif msg_type == "image_mode":
+            if msg_type == "image_mode":
                 self.image_mode = msg["mode"]
                 logger.debug(f"Image mode: {self.image_mode}")
 
@@ -389,6 +402,9 @@ class MatplotlibWebSocketClient:
                 self.default_save_format = msg["format"]
                 logger.debug(f"Default save format: {self.default_save_format}")
 
+            elif msg_type == "history_buttons":
+                logger.debug("Received initial history_buttons")
+
             # Check if we've received all expected messages
             if expected_types.issubset(seen_types):
                 break
@@ -401,37 +417,29 @@ class MatplotlibWebSocketClient:
             )
 
     def _send_client_init(self) -> None:
-        """Send client initialization messages.
+        """Send client initialization messages (after protocol handshake).
 
         Client sends:
-        1. protocol_version (triggers history_buttons response)
-        2. supports_binary
-        3. send_image_mode
-        4. set_device_pixel_ratio (if not 1.0)
-        5. refresh (triggers initial draw)
-        """
-        # 1. Send protocol version and receive history_buttons
-        self.adapter.send_json({"type": "protocol_version", "version": 0})
-        history_msg = self.adapter.receive_json()
-        if history_msg["type"] != "history_buttons":
-            raise RuntimeError(
-                f"Expected history_buttons after protocol_version, got {history_msg['type']}"
-            )
-        logger.debug("Received initial history_buttons")
+        1. supports_binary
+        2. send_image_mode
+        3. set_device_pixel_ratio (if not 1.0)
+        4. refresh (triggers initial draw)
 
-        # 2. Send supports_binary
+        Note: protocol_version is now sent in _receive_initial_messages as first message.
+        """
+        # 1. Send supports_binary
         self.adapter.send_json(
             {"type": "supports_binary", "value": self.supports_binary}
         )
 
-        # 3. Request image mode
+        # 2. Request image mode
         self.adapter.send_json({"type": "send_image_mode"})
         mode_msg = self.adapter.receive_json()
         if mode_msg["type"] == "image_mode":
             self.image_mode = mode_msg["mode"]
             logger.debug(f"Confirmed image mode: {self.image_mode}")
 
-        # 4. Set device pixel ratio (if not default)
+        # 3. Set device pixel ratio (if not default)
         if self.device_pixel_ratio != 1.0:
             self.adapter.send_json(
                 {

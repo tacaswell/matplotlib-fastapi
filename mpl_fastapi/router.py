@@ -584,14 +584,73 @@ def create_mpl_router(
         if not isinstance(manager, FastAPIManger):
             raise TypeError(f"Expected FastAPIManger, got {type(manager)}")
 
-        # Initial sync
-        await websocket.send_json({"type": "image_mode", "mode": "full"})
-
-        # Send connection ID to client for download functionality
-        await websocket.send_json({"type": "connection_id", "id": connection_id})
-
-        # Send toolbar configuration
+        # Get toolbar configuration (will be sent after protocol handshake)
         toolbar_config = FastAPIManger.get_toolbar_config()
+
+        # Wait for client protocol version as FIRST message (REQUIRED)
+        try:
+            data = await websocket.receive_json()
+        except WebSocketDisconnect:
+            logger.info(
+                f"WebSocket disconnected before protocol version for plot '{plot_name}'"
+            )
+            return
+        except Exception as e:
+            logger.error(f"Error receiving protocol version: {e}", exc_info=True)
+            return
+
+        # Validate this is the protocol_version message
+        if data.get("type") != "protocol_version":
+            logger.error(
+                f"Expected protocol_version as first message, got '{data.get('type')}'"
+            )
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": "Protocol version must be the first client message",
+                }
+            )
+            await websocket.close(
+                code=1008,
+                reason="Protocol version must be first message",
+            )
+            return
+
+        # Validate client protocol version (REQUIRED)
+        client_version = data.get("version")
+        if client_version is None:
+            logger.error("Protocol version missing from client message")
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": "Protocol version is required",
+                }
+            )
+            await websocket.close(
+                code=1008,
+                reason="Protocol version missing",
+            )
+            return
+        if client_version != 0:
+            logger.error(
+                f"Incompatible protocol version: server=0, client={client_version}"
+            )
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": f"Incompatible protocol version. Server expects 0, got {client_version}",
+                }
+            )
+            await websocket.close(
+                code=1008,
+                reason=f"Protocol version mismatch: expected 0, got {client_version}",
+            )
+            return
+        logger.debug(f"Client protocol version validated: {client_version}")
+
+        # After protocol version is validated, send all initial configuration messages
+        await websocket.send_json({"type": "image_mode", "mode": "full"})
+        await websocket.send_json({"type": "connection_id", "id": connection_id})
         await websocket.send_json(
             {"type": "toolbar_config", "items": toolbar_config["toolbar_items"]}
         )
@@ -604,6 +663,12 @@ def create_mpl_router(
                 "format": toolbar_config["default_save_format"],
             }
         )
+        # Send initial history_buttons after other config
+        # Note: toolbar defers set_history_buttons during __init__ to prevent race conditions
+        await websocket.send_json(
+            {"type": "history_buttons", "Back": False, "Forward": False}
+        )
+        logger.debug("Sent all initial configuration messages")
 
         # Event loop
         try:
@@ -626,36 +691,6 @@ def create_mpl_router(
                     )
 
                 try:
-                    if data["type"] == "protocol_version":
-                        # Validate client protocol version
-                        client_version = data.get("version")
-                        if client_version != 0:
-                            logger.error(
-                                f"Incompatible protocol version: server=0, client={client_version}"
-                            )
-                            await websocket.send_json(
-                                {
-                                    "type": "error",
-                                    "message": f"Incompatible protocol version. Server expects 0, got {client_version}",
-                                }
-                            )
-                            await websocket.close(
-                                code=1008,
-                                reason=f"Protocol version mismatch: expected 0, got {client_version}",
-                            )
-                            return
-                        logger.debug(
-                            f"Client protocol version validated: {client_version}"
-                        )
-                        # After protocol version is validated, send initial history_buttons
-                        # This ensures toolbar is initialized on client before we send button state
-                        # Note: toolbar defers set_history_buttons during __init__ to prevent race conditions
-                        await websocket.send_json(
-                            {"type": "history_buttons", "Back": False, "Forward": False}
-                        )
-                        logger.debug("Sent initial history_buttons state")
-                        # Skip drain_queue for this message - it's handled inline
-                        continue
                     if data["type"] == "supports_binary":
                         manager.supports_binary = data["value"]
                         logger.debug(f"Set supports_binary={data['value']}")
