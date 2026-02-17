@@ -658,17 +658,7 @@ def create_mpl_router(
                             transparent = data.get("transparent", False)
 
                             # Validate format
-                            supported_formats = [
-                                "png",
-                                "pdf",
-                                "svg",
-                                "eps",
-                                "ps",
-                                "jpg",
-                                "jpeg",
-                                "tiff",
-                                "tif",
-                            ]
+                            supported_formats = toolbar_config["save_formats"]
                             format_lower = file_format.lower()
                             if format_lower not in supported_formats:
                                 raise ValueError(
