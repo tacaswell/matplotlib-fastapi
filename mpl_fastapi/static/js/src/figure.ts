@@ -134,6 +134,9 @@ export class Figure {
         }
       }
 
+      // Send protocol version as first message from client
+      this.send_message('protocol_version', { version: 0 });
+
       // Send initialization messages
       this.send_message('supports_binary', { value: this.supports_binary });
       this.send_message('send_image_mode', {});
@@ -601,6 +604,22 @@ export class Figure {
     if (fig.message) {
       fig.message.textContent = msg['message'];
     }
+  }
+
+  handle_protocol_version(fig: Figure, msg: any): void {
+    const server_version = msg['version'];
+    if (server_version !== 0) {
+      console.error(
+        `Protocol version mismatch: client expects 0, server sent ${server_version}`
+      );
+      if (fig.ws_manager) {
+        fig.ws_manager.close();
+      }
+      throw new Error(
+        `Incompatible protocol version. Client expects 0, got ${server_version}`
+      );
+    }
+    console.log(`Server protocol version validated: ${server_version}`);
   }
 
   handle_draw(fig: Figure, _msg: any): void {

@@ -532,6 +532,10 @@ def create_mpl_router(
 
         await websocket.accept()
 
+        # Send protocol version immediately after accepting connection
+        await websocket.send_json({"type": "protocol_version", "version": 0})
+        logger.debug("Sent protocol version: 0")
+
         # Generate unique connection ID for this WebSocket session
         connection_id = str(uuid.uuid4())
         logger.debug(f"Generated connection ID: {connection_id}")
@@ -622,7 +626,28 @@ def create_mpl_router(
                 )
 
                 try:
-                    if data["type"] == "supports_binary":
+                    if data["type"] == "protocol_version":
+                        # Validate client protocol version
+                        client_version = data.get("version")
+                        if client_version != 0:
+                            logger.error(
+                                f"Incompatible protocol version: server=0, client={client_version}"
+                            )
+                            await websocket.send_json(
+                                {
+                                    "type": "error",
+                                    "message": f"Incompatible protocol version. Server expects 0, got {client_version}",
+                                }
+                            )
+                            await websocket.close(
+                                code=1008,
+                                reason=f"Protocol version mismatch: expected 0, got {client_version}",
+                            )
+                            return
+                        logger.debug(
+                            f"Client protocol version validated: {client_version}"
+                        )
+                    elif data["type"] == "supports_binary":
                         manager.supports_binary = data["value"]
                         logger.debug(f"Set supports_binary={data['value']}")
                     elif data["type"] == "save_figure":
