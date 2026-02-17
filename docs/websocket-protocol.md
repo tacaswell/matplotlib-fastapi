@@ -47,10 +47,10 @@ sequenceDiagram
     
     Note over Client: Client initialization on ws.onopen
     Client->>Router: {"type": "protocol_version", "version": 0}
-    Router->>Router: Validate client version (no response unless error)
-    Router->>Router: Drain queue (empty)
-    Note over Router: After first client message, send history_buttons
+    Router->>Router: Validate client version
+    Note over Router: After protocol_version validated, send history_buttons
     Router->>Client: {"type": "history_buttons", "Back": false, "Forward": false}
+    Note over Router: Protocol_version handler completes (no drain_queue needed)
     Router->>Router: await websocket.receive_json()
     
     Client->>Router: {"type": "supports_binary", "value": true}
@@ -101,7 +101,7 @@ sequenceDiagram
    - `save_formats` (available save formats)
    - `default_save_format` (default format)
 
-2. **Initialization is deterministic**: The toolbar's `set_history_buttons()` is deferred during `__init__` to prevent race conditions. After the client sends its first message (confirming the toolbar is initialized), the server sends the initial `history_buttons` state.
+2. **Initialization is deterministic**: The toolbar's `set_history_buttons()` is deferred during `__init__` to prevent race conditions. After the client sends `protocol_version` (validating compatibility), the server immediately sends the initial `history_buttons` state within the same handler, ensuring proper initialization order.
 
 3. **Toolbar messages after initialization**: After the initial connection, toolbar events (navigation, mode changes, etc.) will queue messages that are sent when `canvas.drain_queue()` is called.
 
@@ -112,7 +112,7 @@ sequenceDiagram
    - `set_device_pixel_ratio` - sets device pixel ratio (if not 1.0)
    - `refresh` - requests initial draw
 
-5. **Queue draining**: After handling each client message, the router calls `canvas.drain_queue()` which sends all queued messages. Toolbar actions (pan, zoom, navigate) will queue messages that are sent at this point.
+5. **Queue draining**: After handling each client message (except `protocol_version` and `draw` which handle responses inline), the router calls `canvas.drain_queue()` which sends all queued messages. Toolbar actions (pan, zoom, navigate) will queue messages that are sent at this point.
 
 ---
 
@@ -582,16 +582,35 @@ Common error scenarios:
 
 ## Message Queue Behavior
 
-**Important:** The message queue is drained after EVERY client message is processed, not just for specific event types.
+**Important:** The message queue is drained after MOST client messages are processed, with two exceptions:
+
+1. **`protocol_version`**: Handles its response inline (sends `history_buttons` directly), then continues to next message
+2. **`draw`**: Sends complete response inline (image_mode + binary PNG), then continues to next message
 
 ```python
-# In router.py, after handling any message:
-await handler(data, websocket)
-await canvas.drain_queue(websocket)  # Always called
+# In router.py:
+
+# protocol_version handler:
+if data["type"] == "protocol_version":
+    # ... validate version ...
+    await websocket.send_json({"type": "history_buttons", ...})
+    continue  # Skip drain_queue
+
+# draw handler:
+elif data["type"] == "draw":
+    # ... render image ...
+    await websocket.send_json({"type": "image_mode", ...})
+    await websocket.send_bytes(image_data)
+    continue  # Skip drain_queue
+
+# All other handlers:
+else:
+    await handler(data, websocket)
+    await canvas.drain_queue(websocket)  # Always called for other messages
 ```
 
 This means:
-1. Toolbar can queue messages at any time
-2. Those messages will be sent after the next client message is processed
+1. Toolbar can queue messages at any time during event handlers
+2. Those messages will be sent after the next client message is processed (except protocol_version/draw)
 3. Tests must account for variable message sequences
-4. Client should be prepared to receive queued messages after any request
+4. Client should be prepared to receive queued messages after most requests

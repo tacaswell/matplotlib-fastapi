@@ -61,14 +61,15 @@ def send_client_init_and_drain_history_buttons(websocket) -> None:
     """Send first client message and drain the history_buttons response.
 
     After server sends 6 initial messages, client must send protocol_version
-    to trigger the history_buttons message. This helper sends that message
-    and drains the history_buttons response.
+    as its first message. The server validates it and immediately sends
+    history_buttons in response (inline, not queued). This helper sends
+    that message and drains the history_buttons response.
     """
     websocket.send_json({"type": "protocol_version", "version": 0})
     msg = websocket.receive_json()
     if msg["type"] != "history_buttons":
         raise AssertionError(
-            f"Expected history_buttons after first client message, got {msg['type']}"
+            f"Expected history_buttons after protocol_version, got {msg['type']}"
         )
 
 
@@ -81,7 +82,7 @@ def drain_until_message_type(
     Raises AssertionError if not found within max_messages.
 
     Note: Silently skips history_buttons messages that may appear after
-    any client message (sent by server after first client message).
+    toolbar navigation actions (they are queued and sent after event handling).
     """
     for _ in range(max_messages):
         msg = websocket.receive_json()
@@ -253,20 +254,22 @@ class TestImageRendering:
             # Drain all initial server messages (6 messages)
             drain_initial_messages(websocket)
 
-            # Send refresh to trigger draw (this is the FIRST client message)
-            # Server will respond with: figure_label, draw, history_buttons
+            # Send protocol_version as FIRST client message
+            # Server will respond with: history_buttons
+            send_client_init_and_drain_history_buttons(websocket)
+
+            # Now send refresh to trigger draw
+            # Server will respond with: figure_label, draw
             websocket.send_json({"type": "refresh"})
 
             # Receive all responses to refresh
             msg1 = websocket.receive_json()
             msg2 = websocket.receive_json()
-            msg3 = websocket.receive_json()
 
             # Identify which is which
-            messages = {msg1["type"], msg2["type"], msg3["type"]}
+            messages = {msg1["type"], msg2["type"]}
             assert "figure_label" in messages
             assert "draw" in messages
-            assert "history_buttons" in messages
 
             # Now send draw request
             websocket.send_json({"type": "draw"})

@@ -606,7 +606,6 @@ def create_mpl_router(
         )
 
         # Event loop
-        first_message = True
         try:
             while True:
                 try:
@@ -648,7 +647,16 @@ def create_mpl_router(
                         logger.debug(
                             f"Client protocol version validated: {client_version}"
                         )
-                    elif data["type"] == "supports_binary":
+                        # After protocol version is validated, send initial history_buttons
+                        # This ensures toolbar is initialized on client before we send button state
+                        # Note: toolbar defers set_history_buttons during __init__ to prevent race conditions
+                        await websocket.send_json(
+                            {"type": "history_buttons", "Back": False, "Forward": False}
+                        )
+                        logger.debug("Sent initial history_buttons state")
+                        # Skip drain_queue for this message - it's handled inline
+                        continue
+                    if data["type"] == "supports_binary":
                         manager.supports_binary = data["value"]
                         logger.debug(f"Set supports_binary={data['value']}")
                     elif data["type"] == "save_figure":
@@ -831,15 +839,6 @@ def create_mpl_router(
                     if queue_size > 0:
                         logger.debug(f"Draining queue with {queue_size} messages")
                     await canvas.drain_queue(websocket)
-
-                    # After first message, send initial history_buttons state
-                    # This ensures toolbar is initialized on client before we send button state
-                    if first_message:
-                        first_message = False
-                        await websocket.send_json(
-                            {"type": "history_buttons", "Back": False, "Forward": False}
-                        )
-                        logger.debug("Sent initial history_buttons state")
                 except Exception as e:
                     logger.error(
                         f"Error handling event '{data.get('type', 'unknown')}': {e}",
