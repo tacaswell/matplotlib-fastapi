@@ -621,9 +621,10 @@ def create_mpl_router(
                     return
 
                 # Log all received messages
-                logger.debug(
-                    f"Received message type='{data.get('type')}' for plot '{plot_name}'"
-                )
+                if e_type := data.get("type") not in ("motion_notify",):
+                    logger.debug(
+                        f"Received message type='{e_type}' for plot '{plot_name}'"
+                    )
 
                 try:
                     if data["type"] == "protocol_version":

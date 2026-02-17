@@ -276,7 +276,7 @@ class NavigationToolbar2FastAPI(NavigationToolbar2):
 
     def set_message(self, message: str) -> None:
         """Display a message in the browser toolbar."""
-        logger.debug(f"set_message called: '{message}'")
+        # logger.debug(f"set_message called: '{message}'")
         if message != self.message:
             self.canvas.queue_event("message", message=message)
         self.message = message
