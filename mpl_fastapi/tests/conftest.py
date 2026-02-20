@@ -66,17 +66,18 @@ def update_simple_plot(
     dict
         Updated state dictionary
     """
+
     x = state["x"]
     line = state["line"]
     plot_params = state["params"]
 
     # Update the line data with phase shift
-    y = plot_params.value * np.sin(x + params.phase)
-    line.set_ydata(y)
+    y = plot_params.value * np.sin(x + params.phase)  # type: ignore[attr-defined, operator]
+    line.set_ydata(y)  # type: ignore[attr-defined]
 
     # Update title
     ax = state["ax"]
-    ax.set_title(f"Simple Test Plot (phase={params.phase:.2f})")
+    ax.set_title(f"Simple Test Plot (phase={params.phase:.2f})")  # type: ignore[attr-defined]
 
     return state
 

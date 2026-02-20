@@ -7,6 +7,7 @@ the full matplotlib-fastapi WebSocket protocol using the TestClient adapter.
 import io
 
 import pytest
+from fastapi.testclient import TestClient
 from PIL import Image
 
 from mpl_fastapi.ws_client import (
@@ -18,26 +19,26 @@ from mpl_fastapi.ws_client import (
 class TestMatplotlibWebSocketClient:
     """Tests for the Python WebSocket client."""
 
-    def test_basic_connection_and_initialization(self, client):
+    def test_basic_connection_and_initialization(self, client: TestClient) -> None:
         """Test basic connection and initialization flow."""
         adapter = create_fastapi_test_client_adapter(client)
-        client = MatplotlibWebSocketClient(
+        ws_client = MatplotlibWebSocketClient(
             adapter=adapter,
             base_url="/plots",
             plot_name="simple",
         )
 
-        with client.connect():
+        with ws_client.connect():
             # Verify server-provided configuration was received
-            assert client.connection_id is not None
-            assert client.image_mode in ("full", "diff")
-            assert len(client.toolbar_items) > 0
-            assert len(client.save_formats) > 0
-            assert client.default_save_format is not None
-            assert client._server_protocol_version == 0
-            assert client._initialized is True
+            assert ws_client.connection_id is not None
+            assert ws_client.image_mode in ("full", "diff")
+            assert len(ws_client.toolbar_items) > 0
+            assert len(ws_client.save_formats) > 0
+            assert ws_client.default_save_format is not None
+            assert ws_client._server_protocol_version == 0
+            assert ws_client._initialized is True
 
-    def test_connection_with_init_params(self, client):
+    def test_connection_with_init_params(self, client: TestClient) -> None:
         """Test connection with initialization parameters."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -51,7 +52,7 @@ class TestMatplotlibWebSocketClient:
             assert ws_client.connection_id is not None
             assert ws_client._initialized is True
 
-    def test_draw_request_and_image_retrieval(self, client):
+    def test_draw_request_and_image_retrieval(self, client: TestClient) -> None:
         """Test requesting a draw and receiving image data."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -74,7 +75,7 @@ class TestMatplotlibWebSocketClient:
             assert img.size[0] > 0
             assert img.size[1] > 0
 
-    def test_refresh_request(self, client):
+    def test_refresh_request(self, client: TestClient) -> None:
         """Test refresh request."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -101,7 +102,7 @@ class TestMatplotlibWebSocketClient:
             image_data = ws_client.wait_for_image()
             assert isinstance(image_data, bytes)
 
-    def test_resize_request(self, client):
+    def test_resize_request(self, client: TestClient) -> None:
         """Test resize request."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -121,7 +122,7 @@ class TestMatplotlibWebSocketClient:
             assert msg["size"] == [800, 600]
             assert msg["forward"] is True
 
-    def test_toolbar_button_actions(self, client):
+    def test_toolbar_button_actions(self, client: TestClient) -> None:
         """Test toolbar button actions."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -141,7 +142,7 @@ class TestMatplotlibWebSocketClient:
             # Could be navigate_mode, message, or history_buttons
             assert msg["type"] in ("navigate_mode", "message", "history_buttons")
 
-    def test_update_params(self, client):
+    def test_update_params(self, client: TestClient) -> None:
         """Test parameter update."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -164,7 +165,7 @@ class TestMatplotlibWebSocketClient:
             image_data = ws_client.wait_for_image()
             assert isinstance(image_data, bytes)
 
-    def test_mouse_events(self, client):
+    def test_mouse_events(self, client: TestClient) -> None:
         """Test mouse event sending."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -180,7 +181,7 @@ class TestMatplotlibWebSocketClient:
             ws_client.send_mouse_event("button_release", x=150, y=150, button=1)
             # Events processed successfully (no response expected for these)
 
-    def test_keyboard_events(self, client):
+    def test_keyboard_events(self, client: TestClient) -> None:
         """Test keyboard event sending."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -195,7 +196,7 @@ class TestMatplotlibWebSocketClient:
             ws_client.send_keyboard_event("key_release", key="a")
             # Events processed successfully (no response expected for these)
 
-    def test_save_figure(self, client):
+    def test_save_figure(self, client: TestClient) -> None:
         """Test save figure request."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -214,7 +215,7 @@ class TestMatplotlibWebSocketClient:
             assert save_info["filename"] == "simple.png"
             assert save_info["format"] == "png"
 
-    def test_device_pixel_ratio(self, client):
+    def test_device_pixel_ratio(self, client: TestClient) -> None:
         """Test device pixel ratio setting."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -230,7 +231,7 @@ class TestMatplotlibWebSocketClient:
             assert ws_client.connection_id is not None
             assert ws_client._initialized is True
 
-    def test_wait_for_message_type(self, client):
+    def test_wait_for_message_type(self, client: TestClient) -> None:
         """Test waiting for specific message type."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -250,7 +251,7 @@ class TestMatplotlibWebSocketClient:
             # After finding the message, we're done
             # (there's also a draw message but we don't need to drain it for this test)
 
-    def test_context_manager_cleanup(self, client):
+    def test_context_manager_cleanup(self, client: TestClient) -> None:
         """Test that context manager properly cleans up."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -272,7 +273,7 @@ class TestMatplotlibWebSocketClient:
         assert not ws_client._initialized
         assert not adapter.is_connected()
 
-    def test_error_when_not_connected(self, client):
+    def test_error_when_not_connected(self, client: TestClient) -> None:
         """Test that methods raise error when not connected."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -291,7 +292,7 @@ class TestMatplotlibWebSocketClient:
         with pytest.raises(RuntimeError, match="Client not initialized"):
             ws_client.receive_message()
 
-    def test_invalid_plot_name(self, client):
+    def test_invalid_plot_name(self, client: TestClient) -> None:
         """Test connection to invalid plot name."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -304,7 +305,7 @@ class TestMatplotlibWebSocketClient:
         with pytest.raises(Exception), ws_client.connect():  # noqa: B017, PT011
             pass
 
-    def test_multiple_sequential_connections(self, client):
+    def test_multiple_sequential_connections(self, client: TestClient) -> None:
         """Test multiple sequential connections to same plot."""
         adapter1 = create_fastapi_test_client_adapter(client)
         ws_client1 = MatplotlibWebSocketClient(
@@ -335,7 +336,7 @@ class TestMatplotlibWebSocketClient:
 class TestWebSocketAdapters:
     """Tests for WebSocket adapter implementations."""
 
-    def test_test_client_adapter_basic(self, client):
+    def test_test_client_adapter_basic(self, client: TestClient) -> None:
         """Test TestClientAdapter basic operations."""
         adapter = create_fastapi_test_client_adapter(client)
 
@@ -354,7 +355,9 @@ class TestWebSocketAdapters:
         adapter.disconnect()
         assert not adapter.is_connected()
 
-    def test_test_client_adapter_error_when_not_connected(self, client):
+    def test_test_client_adapter_error_when_not_connected(
+        self, client: TestClient
+    ) -> None:
         """Test that adapter raises error when operations attempted without connection."""
         adapter = create_fastapi_test_client_adapter(client)
 

@@ -12,6 +12,7 @@ operations, so tests must know the exact message sequence to expect.
 """
 
 import io
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,7 +20,7 @@ from PIL import Image
 from starlette.websockets import WebSocketDisconnect
 
 
-def drain_initial_messages(websocket) -> None:
+def drain_initial_messages(websocket: Any) -> None:
     """Drain server's first message and complete handshake.
 
     Protocol flow:
@@ -65,7 +66,7 @@ def drain_initial_messages(websocket) -> None:
         )
 
 
-def send_client_init_and_drain_history_buttons(websocket) -> None:
+def send_client_init_and_drain_history_buttons(websocket: Any) -> None:
     """DEPRECATED: Use drain_initial_messages() instead.
 
     This function is kept for backward compatibility but does nothing
@@ -75,8 +76,8 @@ def send_client_init_and_drain_history_buttons(websocket) -> None:
 
 
 def drain_until_message_type(
-    websocket, target_type: str, max_messages: int = 20
-) -> dict:
+    websocket: Any, target_type: str, max_messages: int = 20
+) -> dict[Any, Any]:
     """Drain messages until we find one of the target type.
 
     Returns the target message when found.
@@ -86,7 +87,7 @@ def drain_until_message_type(
     toolbar navigation actions (they are queued and sent after event handling).
     """
     for _ in range(max_messages):
-        msg = websocket.receive_json()
+        msg: dict[Any, Any] = websocket.receive_json()
         # Skip history_buttons - it's sent after first client message
         if msg["type"] == "history_buttons":
             continue

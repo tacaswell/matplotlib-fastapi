@@ -154,7 +154,7 @@ class ContextManagerWebSocketAdapter:
         """Receive JSON message."""
         if self._websocket is None:
             raise RuntimeError("Not connected")
-        msg = self._websocket.receive_json()
+        msg: dict[str, Any] = self._websocket.receive_json()
         logger.debug(f"{self.adapter_name} received JSON: {msg}")
         return msg
 
@@ -162,7 +162,7 @@ class ContextManagerWebSocketAdapter:
         """Receive binary message."""
         if self._websocket is None:
             raise RuntimeError("Not connected")
-        data = self._websocket.receive_bytes()
+        data: bytes = self._websocket.receive_bytes()
         logger.debug(f"{self.adapter_name} received {len(data)} bytes")
         return data
 
