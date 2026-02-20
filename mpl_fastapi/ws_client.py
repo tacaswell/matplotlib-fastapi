@@ -36,11 +36,15 @@ Example usage with TestClient:
 
 from __future__ import annotations
 
+import io
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, Protocol
 from urllib.parse import urlencode
+
+import numpy as np
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +285,9 @@ class MatplotlibWebSocketClient:
         self.default_save_format: str | None = None
         self.image_mode: str | None = None
 
+        # Image state for diff compositing
+        self._current_image: Image.Image | None = None
+
         # Protocol state
         self._server_protocol_version: int | None = None
         self._initialized = False
@@ -329,6 +336,7 @@ class MatplotlibWebSocketClient:
         finally:
             # Cleanup on exit
             self._initialized = False
+            self._current_image = None
             self.adapter.disconnect()
             logger.info(f"Disconnected from {self.plot_name}")
 
@@ -381,28 +389,11 @@ class MatplotlibWebSocketClient:
             msg_type = msg["type"]
             seen_types.add(msg_type)
 
-            # Process each message type
-            if msg_type == "image_mode":
-                self.image_mode = msg["mode"]
-                logger.debug(f"Image mode: {self.image_mode}")
+            # Process message through centralized handler
+            self._process_message(msg)
 
-            elif msg_type == "connection_id":
-                self.connection_id = msg["id"]
-                logger.debug(f"Connection ID: {self.connection_id}")
-
-            elif msg_type == "toolbar_config":
-                self.toolbar_items = msg["items"]
-                logger.debug(f"Toolbar items: {len(self.toolbar_items)}")
-
-            elif msg_type == "save_formats":
-                self.save_formats = msg["formats"]
-                logger.debug(f"Save formats: {self.save_formats}")
-
-            elif msg_type == "default_save_format":
-                self.default_save_format = msg["format"]
-                logger.debug(f"Default save format: {self.default_save_format}")
-
-            elif msg_type == "history_buttons":
+            # Log history_buttons since it's not tracked in persistent state
+            if msg_type == "history_buttons":
                 logger.debug("Received initial history_buttons")
 
             # Check if we've received all expected messages
@@ -435,9 +426,9 @@ class MatplotlibWebSocketClient:
         # 2. Request image mode
         self.adapter.send_json({"type": "send_image_mode"})
         mode_msg = self.adapter.receive_json()
-        if mode_msg["type"] == "image_mode":
-            self.image_mode = mode_msg["mode"]
-            logger.debug(f"Confirmed image mode: {self.image_mode}")
+        self._process_message(mode_msg)
+        if mode_msg["type"] != "image_mode":
+            logger.warning(f"Expected image_mode, got {mode_msg['type']}")
 
         # 3. Set device pixel ratio (if not default)
         if self.device_pixel_ratio != 1.0:
@@ -450,6 +441,7 @@ class MatplotlibWebSocketClient:
             # May receive draw message if DPI changed
             # Peek at next message to see if it's a draw
             next_msg = self.adapter.receive_json()
+            self._process_message(next_msg)
             if next_msg["type"] == "draw":
                 logger.debug("DPI change triggered draw request")
                 # Draw message received, the refresh will also trigger a draw
@@ -465,10 +457,12 @@ class MatplotlibWebSocketClient:
 
         # Receive figure_label and draw messages
         label_msg = self.adapter.receive_json()
+        self._process_message(label_msg)
         if label_msg["type"] == "figure_label":
             logger.debug(f"Figure label: {label_msg.get('label', '')}")
 
         draw_msg = self.adapter.receive_json()
+        self._process_message(draw_msg)
         if draw_msg["type"] == "draw":
             logger.debug("Received initial draw request from refresh")
 
@@ -482,13 +476,16 @@ class MatplotlibWebSocketClient:
 
         # Receive image_mode and image data
         mode_msg = self.adapter.receive_json()
-        if mode_msg["type"] == "image_mode":
-            self.image_mode = mode_msg["mode"]
-            logger.debug(f"Initial image mode: {self.image_mode}")
+        self._process_message(mode_msg)
+        if mode_msg["type"] != "image_mode":
+            logger.warning(f"Expected image_mode during init, got {mode_msg['type']}")
 
-        # Drain the initial image data
+        # Drain the initial image data and process it
         initial_image = self.adapter.receive_bytes()
-        logger.debug(f"Drained initial image: {len(initial_image)} bytes")
+        logger.debug(f"Received initial image: {len(initial_image)} bytes")
+        # Process through _process_image to initialize state
+        self._process_image(initial_image, composite_diffs=True)
+        logger.debug("Initialized image state")
 
     # Message sending methods
 
@@ -645,8 +642,94 @@ class MatplotlibWebSocketClient:
 
     # Message receiving methods
 
+    def _process_message(self, msg: dict[str, Any]) -> None:
+        """Process a JSON message and update internal state.
+
+        This method should be called for every JSON message received to ensure
+        state is kept consistent. It updates image_mode and other client state.
+
+        Parameters
+        ----------
+        msg : dict[str, Any]
+            JSON message from server
+        """
+        msg_type = msg["type"]
+
+        # Update state based on message type
+        if msg_type == "image_mode":
+            self.image_mode = msg["mode"]
+            logger.debug(f"Updated image mode: {self.image_mode}")
+        elif msg_type == "connection_id":
+            self.connection_id = msg["id"]
+            logger.debug(f"Updated connection ID: {self.connection_id}")
+        elif msg_type == "toolbar_config":
+            self.toolbar_items = msg["items"]
+            logger.debug(f"Updated toolbar items: {len(self.toolbar_items)}")
+        elif msg_type == "save_formats":
+            self.save_formats = msg["formats"]
+            logger.debug(f"Updated save formats: {self.save_formats}")
+        elif msg_type == "default_save_format":
+            self.default_save_format = msg["format"]
+            logger.debug(f"Updated default save format: {self.default_save_format}")
+        # Other message types don't update persistent state
+
+    def _process_image(self, image_data: bytes, *, composite_diffs: bool = True) -> bytes:
+        """Process image data and update internal state.
+
+        Handles diff compositing if enabled. Should be called for every image
+        received to maintain correct state.
+
+        Parameters
+        ----------
+        image_data : bytes
+            PNG image data from server
+        composite_diffs : bool, optional
+            If True, composite diff images on top of the last full image
+
+        Returns
+        -------
+        bytes
+            PNG image data (composited if diff mode and composite_diffs=True)
+        """
+        if not composite_diffs or self.image_mode == "full":
+            # Store full image for future diff compositing
+            self._current_image = Image.open(io.BytesIO(image_data)).convert("RGBA")
+            logger.debug(f"Stored full image: {self._current_image.size}")
+            return image_data
+        elif self.image_mode == "diff":
+            if self._current_image is None:
+                # No base image, treat diff as full
+                logger.warning("Received diff image without base image, treating as full")
+                self._current_image = Image.open(io.BytesIO(image_data)).convert("RGBA")
+                return image_data
+
+            # Composite diff on top of current image
+            diff_image = Image.open(io.BytesIO(image_data)).convert("RGBA")
+
+            # Ensure same size
+            if diff_image.size != self._current_image.size:
+                raise RuntimeError(
+                    f"Diff image size {diff_image.size} doesn't match "
+                    f"base image size {self._current_image.size}"
+                )
+
+            # Composite diff onto current image (diff has transparency for unchanged pixels)
+            self._current_image.paste(diff_image, (0, 0), diff_image)
+
+            # Convert back to PNG bytes
+            output = io.BytesIO()
+            self._current_image.save(output, format="PNG")
+            composited_data = output.getvalue()
+            logger.debug(f"Composited diff: {len(composited_data)} bytes")
+            return composited_data
+        else:
+            raise RuntimeError(f"Unknown image mode: {self.image_mode}")
+
     def receive_message(self) -> dict[str, Any] | bytes:
-        """Receive next message from server.
+        """Receive next message from server and update state.
+
+        This method processes JSON messages through _process_message() to
+        ensure state is always updated correctly.
 
         Returns
         -------
@@ -658,44 +741,60 @@ class MatplotlibWebSocketClient:
 
         # Try to receive JSON first
         try:
-            return self.adapter.receive_json()
+            msg = self.adapter.receive_json()
+            self._process_message(msg)
+            return msg
         except Exception:
             # If that fails, try binary
             return self.adapter.receive_bytes()
 
-    def wait_for_image(self) -> bytes:
+    def wait_for_image(self, *, composite_diffs: bool = True) -> bytes:
         """Wait for and return image data from server.
 
         This method expects the server to send:
-        1. image_mode message
+        1. image_mode message ("full" or "diff")
         2. binary PNG data
+
+        When `composite_diffs=True` (default), diff images are composited
+        on top of the previous full image to produce a complete image.
+        This matches the browser behavior.
+
+        Parameters
+        ----------
+        composite_diffs : bool, optional
+            If True (default), composite diff images on top of the last full image.
+            If False, return the raw image bytes from server.
 
         Returns
         -------
         bytes
-            PNG image data
+            PNG image data (composited if diff mode and composite_diffs=True)
         """
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
 
-        # Receive image_mode message
+        # Receive image_mode message - this updates self.image_mode via _process_message
         mode_msg = self.adapter.receive_json()
-        if mode_msg["type"] == "image_mode":
-            self.image_mode = mode_msg["mode"]
-            logger.debug(f"Image mode: {self.image_mode}")
-        else:
+        self._process_message(mode_msg)
+
+        if mode_msg["type"] != "image_mode":
             raise RuntimeError(f"Expected image_mode, got {mode_msg['type']}")
 
         # Receive binary image data
         image_data = self.adapter.receive_bytes()
-        logger.debug(f"Received image: {len(image_data)} bytes")
-        return image_data
+        logger.debug(f"Received image: {len(image_data)} bytes ({self.image_mode} mode)")
+
+        # Process image (handles compositing)
+        return self._process_image(image_data, composite_diffs=composite_diffs)
 
     def drain_messages(self, max_messages: int = 20) -> list[dict[str, Any]]:
         """Drain all queued JSON messages from server.
 
         This is useful after toolbar actions or other events that may
         queue multiple messages.
+
+        All messages are processed through _process_message() to ensure
+        state is kept up to date.
 
         **Warning:** With TestClient adapter, this may block indefinitely if
         there are no messages to receive. Use with caution in tests, or use
@@ -718,6 +817,7 @@ class MatplotlibWebSocketClient:
         for _ in range(max_messages):
             try:
                 msg = self.adapter.receive_json()
+                self._process_message(msg)
                 messages.append(msg)
                 logger.debug(f"Drained message: {msg['type']}")
             except Exception:
@@ -731,7 +831,10 @@ class MatplotlibWebSocketClient:
         max_messages: int = 20,
         skip_types: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Wait for specific message type, skipping others.
+        """Wait for specific message type, processing all messages.
+
+        Unlike the old implementation that dropped messages, this processes
+        all messages through _process_message() to keep state updated.
 
         Parameters
         ----------
@@ -740,7 +843,7 @@ class MatplotlibWebSocketClient:
         max_messages : int, optional
             Maximum messages to check (safety limit)
         skip_types : set[str], optional
-            Message types to silently skip (e.g., history_buttons)
+            Message types to not return (but still process for state updates)
 
         Returns
         -------
@@ -759,8 +862,10 @@ class MatplotlibWebSocketClient:
 
         for _ in range(max_messages):
             msg = self.adapter.receive_json()
+            self._process_message(msg)
+
             if msg["type"] in skip_types:
-                logger.debug(f"Skipping message: {msg['type']}")
+                logger.debug(f"Skipping message (but state updated): {msg['type']}")
                 continue
             if msg["type"] == target_type:
                 return msg
