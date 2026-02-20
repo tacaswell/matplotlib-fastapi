@@ -313,7 +313,7 @@ class MatplotlibWebSocketClient:
         -------
         >>> with client.connect():
         ...     client.send_refresh()
-        ...     image = client.wait_for_image()
+        ...     image = client.send_draw()
         """
         try:
             # Establish connection
@@ -324,11 +324,9 @@ class MatplotlibWebSocketClient:
             # Receive and process initial server messages
             self._receive_initial_messages()
 
-            # Send client initialization messages
+            # Send client initialization messages (sets _initialized = True)
             self._send_client_init()
 
-            # Mark as initialized
-            self._initialized = True
             logger.info(f"Client initialized for {self.plot_name}")
 
             yield self
@@ -352,7 +350,8 @@ class MatplotlibWebSocketClient:
         This method receives protocol_version, validates it, sends client protocol_version,
         then receives the remaining 6 configuration messages.
         """
-        # 1. Receive server's protocol_version (first message)
+        # 1. Receive server's protocol_version (first message) - don't use _receive_json 
+        # because we're not initialized yet
         msg = self.adapter.receive_json()
         if msg["type"] != "protocol_version":
             raise RuntimeError(
@@ -415,18 +414,21 @@ class MatplotlibWebSocketClient:
         2. send_image_mode
         3. set_device_pixel_ratio (if not 1.0)
         4. refresh (triggers initial draw)
+        5. draw (get first image)
 
-        Note: protocol_version is now sent in _receive_initial_messages as first message.
+        All responses are automatically received and processed.
         """
-        # 1. Send supports_binary
+        # Mark as initialized so we can use the send methods
+        self._initialized = True
+
+        # 1. Send supports_binary (no response expected)
         self.adapter.send_json(
             {"type": "supports_binary", "value": self.supports_binary}
         )
 
-        # 2. Request image mode
+        # 2. Request image mode (wait for response)
         self.adapter.send_json({"type": "send_image_mode"})
-        mode_msg = self.adapter.receive_json()
-        self._process_message(mode_msg)
+        mode_msg = self._receive_json()
         if mode_msg["type"] != "image_mode":
             logger.warning(f"Expected image_mode, got {mode_msg['type']}")
 
@@ -439,72 +441,94 @@ class MatplotlibWebSocketClient:
                 }
             )
             # May receive draw message if DPI changed
-            # Peek at next message to see if it's a draw
-            next_msg = self.adapter.receive_json()
-            self._process_message(next_msg)
+            next_msg = self._receive_json()
             if next_msg["type"] == "draw":
                 logger.debug("DPI change triggered draw request")
-                # Draw message received, the refresh will also trigger a draw
             else:
-                # Not a draw message, must be something else
-                # This shouldn't happen in normal flow, but handle it
                 logger.warning(
                     f"Unexpected message after set_device_pixel_ratio: {next_msg['type']}"
                 )
 
-        # 5. Send refresh to trigger initial draw
-        self.adapter.send_json({"type": "refresh"})
+        # 4. Send refresh to trigger initial draw
+        self.send_refresh()  # Waits for figure_label and draw messages
 
-        # Receive figure_label and draw messages
-        label_msg = self.adapter.receive_json()
-        self._process_message(label_msg)
-        if label_msg["type"] == "figure_label":
-            logger.debug(f"Figure label: {label_msg.get('label', '')}")
+        # 5. Request and receive the first image
+        image_data = self.send_draw()  # Waits for image_mode and image data
+        logger.debug(f"Initialized with first image: {len(image_data)} bytes")
 
-        draw_msg = self.adapter.receive_json()
-        self._process_message(draw_msg)
-        if draw_msg["type"] == "draw":
-            logger.debug("Received initial draw request from refresh")
+    # Core message receive/send methods
 
-        # If DPI draw was received, we already got one draw message
-        # The refresh also triggers a draw, but both point to the same image
-        # We only need to request the draw once
+    def _receive_json(self) -> dict[str, Any]:
+        """Receive JSON message and update state.
 
-        # Now send draw request to get the actual image and drain it
-        # This completes the initialization handshake
-        self.adapter.send_json({"type": "draw"})
+        Returns
+        -------
+        dict[str, Any]
+            JSON message with state automatically updated
+        """
+        msg = self.adapter.receive_json()
+        self._process_message(msg)  # Always update state
+        return msg
 
-        # Receive image_mode and image data
-        mode_msg = self.adapter.receive_json()
-        self._process_message(mode_msg)
-        if mode_msg["type"] != "image_mode":
-            logger.warning(f"Expected image_mode during init, got {mode_msg['type']}")
+    def _receive_bytes(self) -> bytes:
+        """Receive binary message.
 
-        # Drain the initial image data and process it
-        initial_image = self.adapter.receive_bytes()
-        logger.debug(f"Received initial image: {len(initial_image)} bytes")
-        # Process through _process_image to initialize state
-        self._process_image(initial_image, composite_diffs=True)
-        logger.debug("Initialized image state")
+        Returns
+        -------
+        bytes
+            Binary message data
+        """
+        return self.adapter.receive_bytes()
 
-    # Message sending methods
+    # Message sending methods (now wait for expected responses)
 
-    def send_draw(self) -> None:
-        """Request figure redraw from server."""
+    def send_draw(self) -> bytes:
+        """Request figure redraw and return image data.
+
+        Automatically waits for the image_mode message and image data.
+
+        Returns
+        -------
+        bytes
+            PNG image data (composited if diff mode)
+        """
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
         self.adapter.send_json({"type": "draw"})
         logger.debug("Sent draw request")
 
+        # Wait for image_mode message
+        mode_msg = self._receive_json()
+        if mode_msg["type"] != "image_mode":
+            raise RuntimeError(f"Expected image_mode after draw, got {mode_msg['type']}")
+
+        # Receive and process image data
+        image_data = self._receive_bytes()
+        logger.debug(f"Received image: {len(image_data)} bytes ({self.image_mode} mode)")
+        return self._process_image(image_data, composite_diffs=True)
+
     def send_refresh(self) -> None:
-        """Request figure refresh (full redraw)."""
+        """Request figure refresh (full redraw).
+
+        Automatically waits for figure_label and draw messages.
+        """
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
         self.adapter.send_json({"type": "refresh"})
         logger.debug("Sent refresh request")
 
-    def send_resize(self, width: int, height: int) -> None:
-        """Request figure resize.
+        # Wait for figure_label message
+        label_msg = self._receive_json()
+        if label_msg["type"] != "figure_label":
+            logger.warning(f"Expected figure_label after refresh, got {label_msg['type']}")
+
+        # Wait for draw message
+        draw_msg = self._receive_json()
+        if draw_msg["type"] != "draw":
+            logger.warning(f"Expected draw after refresh, got {draw_msg['type']}")
+
+    def send_resize(self, width: int, height: int) -> dict[str, Any]:
+        """Request figure resize and wait for acknowledgment.
 
         Parameters
         ----------
@@ -512,14 +536,29 @@ class MatplotlibWebSocketClient:
             New width in pixels
         height : int
             New height in pixels
+
+        Returns
+        -------
+        dict[str, Any]
+            Resize response with actual size and forward flag
         """
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
         self.adapter.send_json({"type": "resize", "width": width, "height": height})
         logger.debug(f"Sent resize request: {width}x{height}")
 
+        # Wait for resize acknowledgment
+        resize_msg = self._receive_json()
+        if resize_msg["type"] != "resize":
+            raise RuntimeError(f"Expected resize response, got {resize_msg['type']}")
+        return resize_msg
+
     def send_toolbar_button(self, button_name: str) -> None:
         """Trigger toolbar button action.
+
+        Toolbar actions may queue multiple messages (navigate_mode, message,
+        history_buttons, draw, etc.). These are sent after the command completes.
+        Use wait_for_message_type() if you need to receive specific messages.
 
         Parameters
         ----------
@@ -532,7 +571,7 @@ class MatplotlibWebSocketClient:
         logger.debug(f"Sent toolbar button: {button_name}")
 
     def send_update_params(self, params: dict[str, Any]) -> None:
-        """Update plot parameters.
+        """Update plot parameters and wait for draw message.
 
         Parameters
         ----------
@@ -544,6 +583,13 @@ class MatplotlibWebSocketClient:
         self.adapter.send_json({"type": "update_params", "params": params})
         logger.debug(f"Sent update params: {params}")
 
+        # Wait for draw message (update always triggers redraw)
+        draw_msg = self._receive_json()
+        if draw_msg["type"] == "error":
+            raise RuntimeError(f"Update failed: {draw_msg.get('message', 'Unknown error')}")
+        if draw_msg["type"] != "draw":
+            logger.warning(f"Expected draw after update_params, got {draw_msg['type']}")
+
     def send_mouse_event(
         self,
         event_type: str,
@@ -553,6 +599,9 @@ class MatplotlibWebSocketClient:
         step: int | None = None,
     ) -> None:
         """Send mouse event to server.
+
+        Mouse events may trigger callbacks that queue messages. Use
+        wait_for_message_type() if you need to wait for specific responses.
 
         Parameters
         ----------
@@ -584,6 +633,9 @@ class MatplotlibWebSocketClient:
     def send_keyboard_event(self, event_type: str, key: str) -> None:
         """Send keyboard event to server.
 
+        Keyboard events may trigger callbacks that queue messages. Use
+        wait_for_message_type() if you need to wait for specific responses.
+
         Parameters
         ----------
         event_type : str
@@ -604,6 +656,8 @@ class MatplotlibWebSocketClient:
     ) -> dict[str, Any]:
         """Request figure save and return save info.
 
+        Automatically waits for save_complete or save_error response.
+
         Parameters
         ----------
         format : str, optional
@@ -617,6 +671,11 @@ class MatplotlibWebSocketClient:
         -------
         dict[str, Any]
             Save completion info with file_id and download_url
+
+        Raises
+        ------
+        RuntimeError
+            If save fails or unexpected response received
         """
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
@@ -631,16 +690,16 @@ class MatplotlibWebSocketClient:
         )
         logger.debug(f"Sent save request: {format} @ {dpi} DPI")
 
-        # Wait for save_complete response
-        response = self.adapter.receive_json()
+        # Wait for save_complete or save_error response
+        response = self._receive_json()
         if response["type"] == "save_complete":
             logger.info(f"Save complete: {response['filename']}")
             return response
-        if response["type"] == "save_error":
-            raise RuntimeError(f"Save failed: {response['message']}")
+        if response["type"] == "error":
+            raise RuntimeError(f"Save failed: {response.get('message', 'Unknown error')}")
         raise RuntimeError(f"Unexpected response to save_figure: {response['type']}")
 
-    # Message receiving methods
+    # Image processing
 
     def _process_message(self, msg: dict[str, Any]) -> None:
         """Process a JSON message and update internal state.
@@ -725,116 +784,17 @@ class MatplotlibWebSocketClient:
         else:
             raise RuntimeError(f"Unknown image mode: {self.image_mode}")
 
-    def receive_message(self) -> dict[str, Any] | bytes:
-        """Receive next message from server and update state.
-
-        This method processes JSON messages through _process_message() to
-        ensure state is always updated correctly.
-
-        Returns
-        -------
-        dict[str, Any] | bytes
-            JSON message or binary image data
-        """
-        if not self._initialized:
-            raise RuntimeError("Client not initialized. Use connect() context manager.")
-
-        # Try to receive JSON first
-        try:
-            msg = self.adapter.receive_json()
-            self._process_message(msg)
-            return msg
-        except Exception:
-            # If that fails, try binary
-            return self.adapter.receive_bytes()
-
-    def wait_for_image(self, *, composite_diffs: bool = True) -> bytes:
-        """Wait for and return image data from server.
-
-        This method expects the server to send:
-        1. image_mode message ("full" or "diff")
-        2. binary PNG data
-
-        When `composite_diffs=True` (default), diff images are composited
-        on top of the previous full image to produce a complete image.
-        This matches the browser behavior.
-
-        Parameters
-        ----------
-        composite_diffs : bool, optional
-            If True (default), composite diff images on top of the last full image.
-            If False, return the raw image bytes from server.
-
-        Returns
-        -------
-        bytes
-            PNG image data (composited if diff mode and composite_diffs=True)
-        """
-        if not self._initialized:
-            raise RuntimeError("Client not initialized. Use connect() context manager.")
-
-        # Receive image_mode message - this updates self.image_mode via _process_message
-        mode_msg = self.adapter.receive_json()
-        self._process_message(mode_msg)
-
-        if mode_msg["type"] != "image_mode":
-            raise RuntimeError(f"Expected image_mode, got {mode_msg['type']}")
-
-        # Receive binary image data
-        image_data = self.adapter.receive_bytes()
-        logger.debug(f"Received image: {len(image_data)} bytes ({self.image_mode} mode)")
-
-        # Process image (handles compositing)
-        return self._process_image(image_data, composite_diffs=composite_diffs)
-
-    def drain_messages(self, max_messages: int = 20) -> list[dict[str, Any]]:
-        """Drain all queued JSON messages from server.
-
-        This is useful after toolbar actions or other events that may
-        queue multiple messages.
-
-        All messages are processed through _process_message() to ensure
-        state is kept up to date.
-
-        **Warning:** With TestClient adapter, this may block indefinitely if
-        there are no messages to receive. Use with caution in tests, or use
-        `wait_for_message_type()` instead to receive specific messages.
-
-        Parameters
-        ----------
-        max_messages : int, optional
-            Maximum messages to drain (safety limit)
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            List of received messages
-        """
-        if not self._initialized:
-            raise RuntimeError("Client not initialized. Use connect() context manager.")
-
-        messages = []
-        for _ in range(max_messages):
-            try:
-                msg = self.adapter.receive_json()
-                self._process_message(msg)
-                messages.append(msg)
-                logger.debug(f"Drained message: {msg['type']}")
-            except Exception:
-                # No more messages available
-                break
-        return messages
+    # Utility methods for advanced use cases
 
     def wait_for_message_type(
         self,
         target_type: str,
         max_messages: int = 20,
-        skip_types: set[str] | None = None,
     ) -> dict[str, Any]:
         """Wait for specific message type, processing all messages.
 
-        Unlike the old implementation that dropped messages, this processes
-        all messages through _process_message() to keep state updated.
+        All messages are automatically processed through _process_message()
+        to keep state updated.
 
         Parameters
         ----------
@@ -842,8 +802,6 @@ class MatplotlibWebSocketClient:
             Message type to wait for
         max_messages : int, optional
             Maximum messages to check (safety limit)
-        skip_types : set[str], optional
-            Message types to not return (but still process for state updates)
 
         Returns
         -------
@@ -858,15 +816,8 @@ class MatplotlibWebSocketClient:
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
 
-        skip_types = skip_types or set()
-
         for _ in range(max_messages):
-            msg = self.adapter.receive_json()
-            self._process_message(msg)
-
-            if msg["type"] in skip_types:
-                logger.debug(f"Skipping message (but state updated): {msg['type']}")
-                continue
+            msg = self._receive_json()
             if msg["type"] == target_type:
                 return msg
 
