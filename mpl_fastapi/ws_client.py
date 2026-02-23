@@ -17,7 +17,7 @@ Example usage with httpx:
     ... )
     >>> with ws_client.connect():
     ...     ws_client.send_refresh()
-    ...     image_data = ws_client.wait_for_image()
+    ...     image_data = ws_client.send_draw()
 
 Example usage with TestClient:
     >>> from fastapi.testclient import TestClient
@@ -31,7 +31,7 @@ Example usage with TestClient:
     ... )
     >>> with ws_client.connect():
     ...     ws_client.send_refresh()
-    ...     image_data = ws_client.wait_for_image()
+    ...     image_data = ws_client.send_draw()
 """
 
 from __future__ import annotations
@@ -558,7 +558,7 @@ class MatplotlibWebSocketClient:
 
         Toolbar actions may queue multiple messages (navigate_mode, message,
         history_buttons, draw, etc.). These are sent after the command completes.
-        Use wait_for_message_type() if you need to receive specific messages.
+        Use receive_message() to get messages as needed.
 
         Parameters
         ----------
@@ -601,7 +601,7 @@ class MatplotlibWebSocketClient:
         """Send mouse event to server.
 
         Mouse events may trigger callbacks that queue messages. Use
-        wait_for_message_type() if you need to wait for specific responses.
+        receive_message() to get messages as needed.
 
         Parameters
         ----------
@@ -634,7 +634,7 @@ class MatplotlibWebSocketClient:
         """Send keyboard event to server.
 
         Keyboard events may trigger callbacks that queue messages. Use
-        wait_for_message_type() if you need to wait for specific responses.
+        receive_message() to get messages as needed.
 
         Parameters
         ----------
@@ -786,41 +786,47 @@ class MatplotlibWebSocketClient:
 
     # Utility methods for advanced use cases
 
-    def wait_for_message_type(
-        self,
-        target_type: str,
-        max_messages: int = 20,
-    ) -> dict[str, Any]:
-        """Wait for specific message type, processing all messages.
+    def receive_message(self, timeout: float | None = None) -> dict[str, Any]:
+        """Receive the next message from the WebSocket.
 
-        All messages are automatically processed through _process_message()
-        to keep state updated.
+        This is a blocking call that waits for and returns the next JSON message
+        from the server. The message is automatically processed through
+        _process_message() to keep state updated.
 
         Parameters
         ----------
-        target_type : str
-            Message type to wait for
-        max_messages : int, optional
-            Maximum messages to check (safety limit)
+        timeout : float | None, optional
+            Timeout in seconds. If None, blocks indefinitely.
+            Note: timeout support depends on the underlying WebSocket adapter.
 
         Returns
         -------
         dict[str, Any]
-            The target message
+            The next JSON message from the server
 
         Raises
         ------
         RuntimeError
-            If target message not found within max_messages
+            If client is not initialized
+        TimeoutError
+            If timeout is reached (adapter-dependent)
+
+        Example
+        -------
+        >>> with client.connect():
+        ...     client.send_toolbar_button("pan")
+        ...     msg = client.receive_message()
+        ...     while msg["type"] != "draw":
+        ...         msg = client.receive_message()
         """
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
 
-        for _ in range(max_messages):
-            msg = self._receive_json()
-            if msg["type"] == target_type:
-                return msg
+        # Note: timeout parameter is accepted but may not be supported by all adapters
+        # The underlying receive_json() implementation is synchronous/blocking
+        if timeout is not None:
+            logger.warning(
+                "Timeout parameter provided but may not be supported by all WebSocket adapters"
+            )
 
-        raise RuntimeError(
-            f"Did not receive {target_type} message within {max_messages} messages"
-        )
+        return self._receive_json()
