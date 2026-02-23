@@ -135,10 +135,10 @@ export interface NavigateModeMessage extends BaseMessage {
 }
 
 /**
- * Server → Client: Request redraw
+ * Server → Client: Notify that figure has changed (debounce-able)
  */
-export interface DrawMessage extends BaseMessage {
-  type: 'draw';
+export interface InvalidateMessage extends BaseMessage {
+  type: 'invalidate';
 }
 
 /**
@@ -205,7 +205,7 @@ export type ServerMessage =
   | RubberbandMessage
   | HistoryButtonsMessage
   | NavigateModeMessage
-  | DrawMessage
+  | InvalidateMessage
   | ResizeMessage
   | ToolbarConfigMessage
   | SaveFormatsMessage
@@ -237,10 +237,17 @@ export interface SetDevicePixelRatioMessage extends BaseMessage {
 }
 
 /**
- * Client → Server: Request refresh/initial render
+ * Client → Server: Request refresh/initial render with metadata
  */
 export interface RefreshMessage extends BaseMessage {
   type: 'refresh';
+}
+
+/**
+ * Client → Server: Request immediate render (returns PNG)
+ */
+export interface RenderMessage extends BaseMessage {
+  type: 'render';
 }
 
 /**
@@ -345,6 +352,7 @@ export type ClientMessage =
   | SendImageModeMessage
   | SetDevicePixelRatioMessage
   | RefreshMessage
+  | RenderMessage
   | ButtonPressMessage
   | MotionNotifyMessage
   | ButtonReleaseMessage

@@ -113,7 +113,7 @@ class FastAPICanvas(FigureCanvasAgg):
         device_pixel_ratio = ev["device_pixel_ratio"]
         if self._set_device_pixel_ratio(device_pixel_ratio):  # type: ignore[attr-defined]
             self._force_full = True
-            await websocket.send_json({"type": "draw"})
+            await websocket.send_json({"type": "invalidate"})
 
     async def handle_send_image_mode(
         self,
@@ -123,13 +123,6 @@ class FastAPICanvas(FigureCanvasAgg):
         await websocket.send_json(
             {"type": "image_mode", "mode": self._current_image_mode}
         )
-
-    async def handle_refresh(self, ev: dict[str, Any], websocket: WebSocket) -> None:  # noqa: ARG002
-        await websocket.send_json(
-            {"type": "figure_label", "label": self.figure.get_label()}
-        )
-        self._force_full = True
-        await websocket.send_json({"type": "draw"})
 
     def get_renderer(self, cleared: bool | None = None) -> RendererAgg:
         """Get renderer with caching for differential updates."""
@@ -215,8 +208,8 @@ class FastAPICanvas(FigureCanvasAgg):
         logger.info(f"Toolbar button pressed: {event['name']}")
         # Call the toolbar method
         getattr(self.toolbar, event["name"])()
-        # Queue a draw event for the client to request
-        self.queue_event("draw")
+        # Queue an invalidate event for the client to request render
+        self.queue_event("invalidate")
 
     def queue_event(self, event_type: str, **kwargs: Any) -> None:
         """Queue a message to be sent to the client."""
@@ -224,8 +217,8 @@ class FastAPICanvas(FigureCanvasAgg):
         self._msg_queue.append({"type": event_type, **kwargs})
 
     def draw_idle(self) -> None:
-        """Queue a draw event to be sent to the client."""
-        self.queue_event("draw")
+        """Queue an invalidate event to notify client figure has changed."""
+        self.queue_event("invalidate")
 
     async def drain_queue(self, websocket: WebSocket) -> None:
         """Send all queued messages to the client."""

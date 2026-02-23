@@ -7,7 +7,7 @@ This document describes the matplotlib-fastapi WebSocket protocol for interactiv
 1. [Initial Connection Flow](#initial-connection-flow)
 2. [Client-Initiated Messages](#client-initiated-messages)
 3. [Server-Initiated Messages](#server-initiated-messages)
-4. [Idle Draw Cycle](#idle-draw-cycle)
+4. [Render Cycle](#render-cycle)
 
 ---
 
@@ -66,23 +66,18 @@ sequenceDiagram
     Client->>Router: {"type": "set_device_pixel_ratio", "device_pixel_ratio": ratio}
     Router->>Backend: handle_set_device_pixel_ratio(ev, websocket)
     alt DPI changed
-        Backend->>Client: {"type": "draw"}
+        Backend->>Client: {"type": "invalidate"}
     end
     Router->>Router: Drain queue (empty)
     Router->>Router: await websocket.receive_json()
     
     Client->>Router: {"type": "refresh"}
-    Router->>Backend: handle_refresh(ev, websocket)
-    Backend->>Client: {"type": "figure_label", "label": ""}
-    Backend->>Client: {"type": "draw"}
-    Router->>Router: Drain queue (empty)
-    Router->>Router: await websocket.receive_json()
-    
-    Client->>Router: {"type": "draw"}
+    Router->>Router: Force full render
     Router->>Executor: _sync_draw_figure(canvas)
     Executor->>Backend: canvas.draw()
     Executor-->>Router: Return PNG bytes
-    Router->>Client: {"type": "image_mode", "mode": "full|diff"}
+    Router->>Client: {"type": "figure_label", "label": ""}
+    Router->>Client: {"type": "image_mode", "mode": "full"}
     Router->>Client: <binary PNG data>
     Router->>Router: Drain queue (empty)
     Router->>Router: await websocket.receive_json()
@@ -255,7 +250,7 @@ sequenceDiagram
 
 **Response:** Direct send (only if ratio changed)
 ```json
-{"type": "draw"}
+{"type": "invalidate"}
 ```
 
 ---
@@ -266,20 +261,19 @@ sequenceDiagram
 sequenceDiagram
     participant Client as Browser
     participant Router as FastAPI Router
+    participant Executor as ThreadPoolExecutor
     participant Backend as FastAPICanvas
 
     Client->>Router: {"type": "refresh"}
-    Router->>Backend: handle_refresh(ev, websocket)
-    Backend->>Client: {"type": "figure_label", "label": ""}
-    Backend->>Backend: Set _force_full = True
-    Backend->>Client: {"type": "draw"}
-    Backend-->>Router: (handler returns)
+    Router->>Router: Force full render
+    Router->>Executor: _sync_draw_figure(canvas)
+    Executor->>Backend: canvas.draw()
+    Executor-->>Router: Return PNG bytes
+    Router->>Client: {"type": "figure_label", "label": "Figure Title"}
+    Router->>Client: {"type": "image_mode", "mode": "full"}
+    Router->>Client: <binary PNG data>
     Router->>Router: Drain queue (empty)
     Router->>Router: await next message
-    
-    Note over Client: Client receives draw command
-    Client->>Router: {"type": "draw"}
-    Note over Router,Backend: Triggers draw flow (see Idle Draw Cycle)
 ```
 
 **Request:**
@@ -287,10 +281,11 @@ sequenceDiagram
 {"type": "refresh"}
 ```
 
-**Response:** Direct sends from handler
+**Response:** Direct sends (metadata + image)
 ```json
 {"type": "figure_label", "label": "Figure Title"}
-{"type": "draw"}
+{"type": "image_mode", "mode": "full"}
+<binary PNG data>
 ```
 
 ---
@@ -311,15 +306,15 @@ sequenceDiagram
     Toolbar->>Backend: queue_event("message", message="Pan mode")
     Toolbar->>Backend: queue_event("history_buttons", Back=true, Forward=false)
     alt Method triggered redraw
-        Backend->>Backend: draw_idle() -> queue_event("draw")
+        Backend->>Backend: draw_idle() -> queue_event("invalidate")
     end
     Backend-->>Router: (handler returns)
     Router->>Router: Drain queue
     Router->>Client: {"type": "navigate_mode", "mode": "PAN"}
     Router->>Client: {"type": "message", "message": "Pan mode"}
     Router->>Client: {"type": "history_buttons", "Back": true, "Forward": false}
-    opt If draw queued
-        Router->>Client: {"type": "draw"}
+    opt If invalidate queued
+        Router->>Client: {"type": "invalidate"}
     end
     Router->>Router: await next message
 ```
@@ -356,14 +351,10 @@ sequenceDiagram
         UpdateFn->>UpdateFn: Modify figure/state
         Executor-->>Router: Return updated state
         Router->>Backend: draw_idle()
-        Backend->>Backend: queue_event("draw")
+        Backend->>Backend: queue_event("invalidate")
         Router->>Router: Drain queue
-        Router->>Client: {"type": "draw"}
+        Router->>Client: {"type": "invalidate"}
         Router->>Router: await next message
-        
-        Note over Client: Client receives draw command
-        Client->>Router: {"type": "draw"}
-        Note over Router,Backend: Triggers draw flow (see Idle Draw Cycle)
     end
 ```
 
@@ -372,9 +363,9 @@ sequenceDiagram
 {"type": "update_params", "params": {"value": 2.5, "color": "red"}}
 ```
 
-**Response:** Queued draw message
+**Response:** Queued invalidate message
 ```json
-{"type": "draw"}
+{"type": "invalidate"}
 ```
 
 ---
@@ -430,7 +421,7 @@ The server can send messages at any time, typically in response to canvas events
 
 | Type | Trigger | Content |
 |------|---------|---------|
-| `draw` | Canvas needs redraw | `{"type": "draw"}` |
+| `invalidate` | Canvas needs redraw | `{"type": "invalidate"}` |
 | `image_mode` | Before sending image | `{"type": "image_mode", "mode": "full"\|"diff"}` |
 | `figure_label` | Figure title changed | `{"type": "figure_label", "label": "Title"}` |
 | `message` | Toolbar displays message | `{"type": "message", "message": "Text"}` |
@@ -441,9 +432,9 @@ The server can send messages at any time, typically in response to canvas events
 
 ---
 
-## Idle Draw Cycle
+## Render Cycle
 
-The idle draw cycle is how matplotlib figures are rendered and sent to the browser.
+The render cycle is how matplotlib figures are rendered and sent to the browser when requested by the client.
 
 ```mermaid
 sequenceDiagram
@@ -454,18 +445,18 @@ sequenceDiagram
     participant Renderer as RendererAgg
 
     Note over Client,Backend: Something triggered canvas.draw_idle()
-    Backend->>Backend: queue_event("draw")
+    Backend->>Backend: queue_event("invalidate")
     Note over Backend: Message queued, not sent yet
     
     Note over Router: After current event handler completes
     Router->>Router: Drain queue
-    Router->>Client: {"type": "draw"}
+    Router->>Client: {"type": "invalidate"}
     Router->>Router: await next message
     
-    Note over Client: Client receives draw command
-    Client->>Router: {"type": "draw"}
+    Note over Client: Client receives invalidate notification
+    Client->>Router: {"type": "render"}
     
-    Note over Router: Handle draw message
+    Note over Router: Handle render request
     Router->>Executor: _sync_draw_figure(canvas)
     Note over Executor: Run in background thread
     Executor->>Backend: get_renderer()
@@ -483,7 +474,7 @@ sequenceDiagram
     alt First draw or _force_full
         Backend->>Backend: mode = "full"
         Backend->>Backend: Clear _force_full flag
-    else Subsequent draw
+    else Subsequent render
         Backend->>Backend: Compare buffers
         alt > 50% pixels changed
             Backend->>Backend: mode = "full"
@@ -513,11 +504,11 @@ sequenceDiagram
 
 ### Key Points
 
-1. **Asynchronous queueing**: `draw_idle()` doesn't immediately send a message, it queues one. The queue is drained after the current event handler completes.
+1. **Asynchronous notification**: `draw_idle()` queues an `invalidate` message. The client can debounce these and request renders at its own pace.
 
-2. **Thread pool execution**: The actual drawing happens in a background thread to avoid blocking the event loop.
+2. **Thread pool execution**: The actual rendering happens in a background thread to avoid blocking the event loop.
 
-3. **Differential rendering**: After the first draw, the backend compares the current buffer with the previous one. If < 50% of pixels changed, it sends only the diff.
+3. **Differential rendering**: After the first render, the backend compares the current buffer with the previous one. If < 50% of pixels changed, it sends only the diff.
 
 4. **Full vs Diff mode**:
    - **Full**: Entire PNG image
@@ -593,9 +584,10 @@ Common error scenarios:
 
 ## Message Queue Behavior
 
-**Important:** The message queue is drained after MOST client messages are processed, with one exception:
+**Important:** The message queue is drained after MOST client messages are processed, with two exceptions:
 
-1. **`draw`**: Sends complete response inline (image_mode + binary PNG), then continues to next message
+1. **`render`**: Sends complete response inline (image_mode + binary PNG), then continues to next message
+2. **`refresh`**: Sends complete response inline (figure_label + image_mode + binary PNG), then continues to next message
 
 **Protocol handshake is outside the event loop:** The protocol_version exchange happens before entering the main event loop, so it doesn't use the queue mechanism.
 
@@ -611,8 +603,8 @@ Common error scenarios:
 while True:
     data = await websocket.receive_json()
     
-    # draw handler:
-    if data["type"] == "draw":
+    # render and refresh handlers:
+    if data["type"] in ("render", "refresh"):
         # ... render image ...
         await websocket.send_json({"type": "image_mode", ...})
         await websocket.send_bytes(image_data)
@@ -627,7 +619,7 @@ while True:
 This means:
 1. Protocol handshake completes before entering event loop
 2. Toolbar can queue messages at any time during event handlers
-3. Those messages will be sent after the next client message is processed (except draw)
+3. Those messages will be sent after the next client message is processed (except render/refresh)
 4. Tests must account for variable message sequences
-4. Client should be prepared to receive queued messages after most requests
-4. Client should be prepared to receive queued messages after most requests
+5. Client should be prepared to receive queued messages after most requests
+6. Client can debounce `invalidate` notifications and request renders at its own pace

@@ -251,6 +251,53 @@ def _sync_draw_figure(canvas: FastAPICanvas) -> bytes | None:
     return png_buf.getvalue()
 
 
+async def _send_render_response(
+    websocket: WebSocket,
+    canvas: FastAPICanvas,
+    executor: ThreadPoolExecutor,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Shared helper to render figure and send image response.
+
+    This function handles the common pattern of:
+    1. Running draw in background thread
+    2. Sending image_mode message
+    3. Sending PNG bytes
+
+    Used by both 'render' and 'refresh' message handlers.
+
+    Parameters
+    ----------
+    websocket : WebSocket
+        Active WebSocket connection
+    canvas : FastAPICanvas
+        Canvas to render
+    executor : ThreadPoolExecutor
+        Thread pool for blocking operations
+    loop : asyncio.AbstractEventLoop
+        Event loop for running in executor
+    """
+    logger.debug("Running draw() in background thread")
+
+    diff_image = await loop.run_in_executor(
+        executor,
+        _sync_draw_figure,
+        canvas,
+    )
+
+    # Send image mode
+    await websocket.send_json(
+        {
+            "type": "image_mode",
+            "mode": canvas._current_image_mode,
+        }
+    )
+
+    # Send the image data
+    if diff_image is not None:
+        await websocket.send_bytes(diff_image)
+
+
 def shutdown_figure_executor() -> None:
     """Shutdown the thread pool executor gracefully.
 
@@ -829,29 +876,25 @@ def create_mpl_router(
                                 f"Error updating plot '{plot_name}': {e}",
                                 exc_info=True,
                             )
-                    elif data["type"] == "draw":
-                        # Run draw in background thread
-                        logger.debug("Running draw() in background thread")
+                    elif data["type"] == "render":
+                        # Client requests immediate render with PNG response
+                        await _send_render_response(websocket, canvas, executor, loop)
 
-                        diff_image = await loop.run_in_executor(
-                            executor,
-                            _sync_draw_figure,
-                            canvas,
-                        )
-
-                        # Send image mode if it changed
+                        # Render is special - don't drain queue after
+                        # because we've already sent the complete response
+                        continue
+                    elif data["type"] == "refresh":
+                        # Client requests metadata + immediate render
+                        # Send figure label first
                         await websocket.send_json(
-                            {
-                                "type": "image_mode",
-                                "mode": canvas._current_image_mode,
-                            }
+                            {"type": "figure_label", "label": canvas.figure.get_label()}
                         )
 
-                        # Send the image data
-                        if diff_image is not None:
-                            await websocket.send_bytes(diff_image)
+                        # Force full render and send image
+                        canvas._force_full = True
+                        await _send_render_response(websocket, canvas, executor, loop)
 
-                        # Draw is special - don't drain queue or check first_message after
+                        # Refresh is special - don't drain queue after
                         # because we've already sent the complete response
                         continue
                     else:

@@ -94,6 +94,7 @@ export class Figure {
   private ResizeObserver: any;
   private resizeObserverInstance: any;
   private _resize_canvas?: (width: number, height: number, forward: boolean) => void;
+  private _server_size: [number, number] | null = null;
 
   // Download handler
   ondownload: (fig: Figure, format: string) => void;
@@ -294,8 +295,20 @@ export class Figure {
         rubberband_canvas.setAttribute('width', String(width));
         rubberband_canvas.setAttribute('height', String(height));
 
-        // Update size in Python (ignore initial 0/0 size)
-        if (this.ws && this.ws.readyState === 1 && width !== 0 && height !== 0) {
+        // Only send resize to server if this is NOT the size server just told us
+        // This prevents feedback loops from server-initiated resizes (forward=true)
+        const isServerSize =
+          this._server_size &&
+          Math.abs(this._server_size[0] - width) < 1 &&
+          Math.abs(this._server_size[1] - height) < 1;
+
+        if (
+          this.ws &&
+          this.ws.readyState === 1 &&
+          width !== 0 &&
+          height !== 0 &&
+          !isServerSize
+        ) {
           this.request_resize(width, height);
         }
       }
@@ -347,6 +360,8 @@ export class Figure {
 
     this._resize_canvas = (width: number, height: number, forward: boolean) => {
       if (forward && canvas_div) {
+        // Store the size the server told us to use
+        this._server_size = [width, height];
         canvas_div.style.width = width + 'px';
         canvas_div.style.height = height + 'px';
       }
@@ -442,6 +457,7 @@ export class Figure {
   }
 
   request_resize(x_pixels: number, y_pixels: number): void {
+    this._server_size = null; // Clear so we accept the server's response
     this.send_message('resize', { width: x_pixels, height: y_pixels });
   }
 
@@ -451,10 +467,10 @@ export class Figure {
     this.ws_manager.send(JSON.stringify(properties));
   }
 
-  send_draw_message(): void {
+  send_render_request(): void {
     if (!this.waiting) {
       this.waiting = true;
-      this.ws_manager.send(JSON.stringify({ type: 'draw', figure_id: this.id }));
+      this.ws_manager.send(JSON.stringify({ type: 'render', figure_id: this.id }));
     }
   }
 
@@ -556,7 +572,7 @@ export class Figure {
 
     if (size[0] !== fig.canvas.width || size[1] !== fig.canvas.height) {
       fig._resize_canvas(size[0], size[1], msg['forward']);
-      fig.send_message('refresh', {});
+      fig.send_render_request();
     }
   }
 
@@ -630,8 +646,8 @@ export class Figure {
     console.log(`Server protocol version validated: ${server_version}`);
   }
 
-  handle_draw(fig: Figure, _msg: any): void {
-    fig.send_draw_message();
+  handle_invalidate(fig: Figure, _msg: any): void {
+    fig.send_render_request();
   }
 
   handle_image_mode(fig: Figure, msg: any): void {
