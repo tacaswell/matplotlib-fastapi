@@ -40,13 +40,22 @@ sequenceDiagram
     Client->>Router: {"type": "protocol_version", "version": 0}
     Router->>Router: Validate client version
     
-    Note over Router: After validation, send all configuration messages
+    Note over Router: Wait for device_pixel_ratio (REQUIRED second message)
+    Client->>Router: {"type": "set_device_pixel_ratio", "device_pixel_ratio": ratio}
+    Router->>Router: Set device_pixel_ratio on canvas
+    
+    Note over Router: After DPI is set, send all configuration messages
     Router->>Client: {"type": "image_mode", "mode": "full"}
     Router->>Client: {"type": "connection_id", "id": "<uuid>"}
     Router->>Client: {"type": "toolbar_config", "items": [...]}
     Router->>Client: {"type": "save_formats", "formats": [...]}
     Router->>Client: {"type": "default_save_format", "format": "png"}
     Router->>Client: {"type": "history_buttons", "Back": false, "Forward": false}
+    Router->>Client: {"type": "figure_size", "size": [w, h], "dpi": 100}
+    
+    Note over Client: Client receives figure_size and completes initialization
+    Client->>Client: Set canvas_div size from figure_size
+    Client->>Client: Mark _initialized = true
     
     Note over Router: Enter event loop for normal communication
     Router->>Router: await websocket.receive_json()
@@ -63,14 +72,6 @@ sequenceDiagram
     Router->>Router: Drain queue (empty)
     Router->>Router: await websocket.receive_json()
     
-    Client->>Router: {"type": "set_device_pixel_ratio", "device_pixel_ratio": ratio}
-    Router->>Backend: handle_set_device_pixel_ratio(ev, websocket)
-    alt DPI changed
-        Backend->>Client: {"type": "invalidate"}
-    end
-    Router->>Router: Drain queue (empty)
-    Router->>Router: await websocket.receive_json()
-    
     Client->>Router: {"type": "refresh"}
     Router->>Router: Force full render
     Router->>Executor: _sync_draw_figure(canvas)
@@ -82,6 +83,7 @@ sequenceDiagram
     Router->>Router: Drain queue (empty)
     Router->>Router: await websocket.receive_json()
     
+    Note over Client: ResizeObserver events are ignored until after first render
     Note over Client,Router: Connection ready for interaction
 ```
 
@@ -90,27 +92,33 @@ sequenceDiagram
 1. **Protocol handshake is required**: 
    - Server sends `protocol_version` (version 0) immediately after accepting connection
    - Client MUST send `protocol_version` as its first message
-   - Server validates version compatibility before sending any other messages
+   - Client MUST send `set_device_pixel_ratio` as its second message
+   - Server validates version, sets device pixel ratio, then sends configuration messages
    - If incompatible, server sends error and closes connection (code 1008)
 
-2. **Server sends 6 configuration messages** after protocol validation:
+2. **Server sends 7 configuration messages** after protocol validation:
    - `image_mode` (full or diff)
    - `connection_id` (UUID for downloads)
    - `toolbar_config` (button definitions)
    - `save_formats` (available save formats)
    - `default_save_format` (default format)
    - `history_buttons` (initial toolbar state)
+   - `figure_size` (initial figure dimensions and DPI)
 
 3. **Initialization is deterministic**: The toolbar's `set_history_buttons()` is deferred during `__init__` to prevent race conditions. After protocol validation, the server sends all configuration including history_buttons.
 
-4. **Client sends remaining initialization messages** after handshake:
+4. **Client receives `figure_size` and completes initialization**:
+   - Sets canvas container size to match server's figure size
+   - Marks `_initialized = true` to enable resize event handling
+   - This prevents ResizeObserver from triggering redundant resize events during initialization
+
+5. **Client sends remaining initialization messages** after receiving configuration:
    - `supports_binary` - declares binary WebSocket support
    - `send_image_mode` - requests current image mode
-   - `set_device_pixel_ratio` - sets device pixel ratio (if not 1.0)
-   - `refresh` - requests initial draw
-   - `draw` - triggers first image render
+   - `refresh` - requests initial draw (canvas is already sized correctly)
+   - Note: `device_pixel_ratio` was already sent before receiving configuration
 
-5. **Queue draining**: After handling each client message (except `draw` which handles responses inline), the router calls `canvas.drain_queue()` which sends all queued messages. Toolbar actions (pan, zoom, navigate) will queue messages that are sent at this point.
+6. **Queue draining**: After handling each client message (except `render` and `refresh` which handle responses inline), the router calls `canvas.drain_queue()` which sends all queued messages. Toolbar actions (pan, zoom, navigate) will queue messages that are sent at this point.
 
 ---
 
@@ -424,6 +432,7 @@ The server can send messages at any time, typically in response to canvas events
 | `invalidate` | Canvas needs redraw | `{"type": "invalidate"}` |
 | `image_mode` | Before sending image | `{"type": "image_mode", "mode": "full"\|"diff"}` |
 | `figure_label` | Figure title changed | `{"type": "figure_label", "label": "Title"}` |
+| `figure_size` | Initial configuration | `{"type": "figure_size", "size": [w, h], "dpi": 100}` |
 | `message` | Toolbar displays message | `{"type": "message", "message": "Text"}` |
 | `navigate_mode` | Pan/zoom mode changed | `{"type": "navigate_mode", "mode": "PAN"\|"ZOOM"\|"NONE"}` |
 | `history_buttons` | Nav stack changed | `{"type": "history_buttons", "Back": bool, "Forward": bool}` |

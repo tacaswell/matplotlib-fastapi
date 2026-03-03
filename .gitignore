@@ -59,6 +59,7 @@ docs/source/generated/
 
 # pytest
 .pytest_cache/
+test_results/
 
 # PyBuilder
 target/

@@ -695,7 +695,39 @@ def create_mpl_router(
             return
         logger.debug(f"Client protocol version validated: {client_version}")
 
-        # After protocol version is validated, send all initial configuration messages
+        # Wait for device_pixel_ratio as SECOND client message (before sending config)
+        # This allows us to calculate correct figure size
+        try:
+            data = await websocket.receive_json()
+        except WebSocketDisconnect:
+            logger.info(
+                f"WebSocket disconnected before device_pixel_ratio for plot '{plot_name}'"
+            )
+            return
+        except Exception as e:
+            logger.error(f"Error receiving device_pixel_ratio: {e}", exc_info=True)
+            return
+
+        # Handle device_pixel_ratio message
+        if data.get("type") == "set_device_pixel_ratio":
+            client_device_pixel_ratio = data.get("device_pixel_ratio", 1.0)
+            if client_device_pixel_ratio != 1:
+                # Set device pixel ratio before calculating figure size
+                if canvas._set_device_pixel_ratio(client_device_pixel_ratio):  # type: ignore[attr-defined]
+                    canvas._force_full = True
+                logger.debug(f"Set device pixel ratio: {client_device_pixel_ratio}")
+        else:
+            # If not set_device_pixel_ratio, log warning but continue with default
+            logger.warning(
+                f"Expected set_device_pixel_ratio as second message, got '{data.get('type')}'. Using default ratio."
+            )
+
+        # After protocol version is validated and DPI set, send all initial configuration messages
+        # Get initial figure size to send to client (using correct device_pixel_ratio)
+        width_inches, height_inches = fig.get_size_inches()
+        width_px = round(width_inches * fig.dpi / canvas.device_pixel_ratio)
+        height_px = round(height_inches * fig.dpi / canvas.device_pixel_ratio)
+        
         await websocket.send_json({"type": "image_mode", "mode": "full"})
         await websocket.send_json({"type": "connection_id", "id": connection_id})
         await websocket.send_json(
@@ -714,6 +746,14 @@ def create_mpl_router(
         # Note: toolbar defers set_history_buttons during __init__ to prevent race conditions
         await websocket.send_json(
             {"type": "history_buttons", "Back": False, "Forward": False}
+        )
+        # Send initial figure size to allow client to size canvas correctly before first draw
+        await websocket.send_json(
+            {
+                "type": "figure_size",
+                "size": [width_px, height_px],
+                "dpi": fig.dpi,
+            }
         )
         logger.debug("Sent all initial configuration messages")
 

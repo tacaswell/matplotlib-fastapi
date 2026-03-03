@@ -95,6 +95,8 @@ export class Figure {
   private resizeObserverInstance: any;
   private _resize_canvas?: (width: number, height: number, forward: boolean) => void;
   private _server_size: [number, number] | null = null;
+  private _initialized: boolean = false;
+  private _initial_size: [number, number] | null = null;
 
   // Download handler
   ondownload: (fig: Figure, format: string) => void;
@@ -138,15 +140,14 @@ export class Figure {
       // Send protocol version as first message from client (REQUIRED)
       this.send_message('protocol_version', { version: 0 });
 
-      // Send initialization messages
-      this.send_message('supports_binary', { value: this.supports_binary });
-      this.send_message('send_image_mode', {});
-      if (this.ratio !== 1) {
-        this.send_message('set_device_pixel_ratio', {
-          device_pixel_ratio: this.ratio,
-        });
-      }
-      this.send_message('refresh', {});
+      // Send device_pixel_ratio as second message (before server sends config)
+      // This allows server to calculate correct figure size
+      this.send_message('set_device_pixel_ratio', {
+        device_pixel_ratio: this.ratio,
+      });
+
+      // Defer remaining initialization messages until after receiving all
+      // configuration messages (including figure_size) to avoid redundant draws
     });
 
     // Register message handler with WebSocketManager
@@ -295,14 +296,17 @@ export class Figure {
         rubberband_canvas.setAttribute('width', String(width));
         rubberband_canvas.setAttribute('height', String(height));
 
-        // Only send resize to server if this is NOT the size server just told us
-        // This prevents feedback loops from server-initiated resizes (forward=true)
+        // Only send resize to server if:
+        // 1. We've completed initialization (received figure_size and done first render)
+        // 2. This is NOT the size server just told us (prevents feedback loops)
+        // 3. WebSocket is ready
         const isServerSize =
           this._server_size &&
           Math.abs(this._server_size[0] - width) < 1 &&
           Math.abs(this._server_size[1] - height) < 1;
 
         if (
+          this._initialized &&
           this.ws &&
           this.ws.readyState === 1 &&
           width !== 0 &&
@@ -656,6 +660,32 @@ export class Figure {
 
   handle_connection_id(fig: Figure, msg: any): void {
     fig.connection_id = msg['id'];
+  }
+
+  handle_figure_size(fig: Figure, msg: any): void {
+    // Store initial size to be applied before first render
+    const size: [number, number] = msg['size'];
+    fig._initial_size = size;
+    fig._server_size = size;
+
+    // Now that we have all configuration including size, send initialization messages
+    // This ensures canvas is sized correctly before the first draw
+    // Note: device_pixel_ratio was already sent with protocol_version
+    fig.send_message('supports_binary', { value: fig.supports_binary });
+    fig.send_message('send_image_mode', {});
+    
+    // Set initial size on canvas before requesting first render
+    if (fig.canvas_div && fig._initial_size) {
+      const [width, height] = fig._initial_size;
+      fig.canvas_div.style.width = `${width}px`;
+      fig.canvas_div.style.height = `${height}px`;
+    }
+    
+    // Mark as initialized before first refresh to prevent ResizeObserver feedback
+    fig._initialized = true;
+    
+    // Request initial render now that canvas is properly sized
+    fig.send_message('refresh', {});
   }
 
   handle_toolbar_config(fig: Figure, msg: any): void {
