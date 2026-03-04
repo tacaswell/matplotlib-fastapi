@@ -295,3 +295,47 @@ async def embeddable_demo():
     """Serve the embeddable component demo page."""
     demo_path = Path(__file__).parent / "embeddable_demo.html"
     return FileResponse(demo_path, media_type="text/html")
+
+
+# Serve React example if the build exists
+react_build_path = Path(__file__).parent / "react-example" / "dist"
+if react_build_path.exists():
+    from starlette.staticfiles import StaticFiles
+
+    # Mount the React build directory
+    app.mount(
+        "/react-app",
+        StaticFiles(directory=react_build_path, html=True),
+        name="react_app",
+    )
+else:
+    # Fallback route if React isn't built yet
+    @app.get("/react-app")
+    @app.get("/react-app/{path:path}")
+    async def react_not_built(path: str = ""):
+        """Return instructions if React app hasn't been built."""
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            content="""
+            <html>
+            <head><title>React Example Not Built</title></head>
+            <body style="font-family: sans-serif; padding: 40px;">
+                <h1>React Example Not Built</h1>
+                <p>The React example hasn't been built yet. To build it:</p>
+                <pre style="background: #f4f4f4; padding: 15px; border-radius: 4px;">
+# First, build the npm package (from repo root):
+npm run build:npm
+
+# Then build the React app:
+cd demos/react-example
+npm install
+npm run build
+
+# Restart the server and refresh this page
+                </pre>
+            </body>
+            </html>
+            """,
+            status_code=200,
+        )
+

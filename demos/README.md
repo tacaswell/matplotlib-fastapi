@@ -30,6 +30,7 @@ Then visit:
 - http://localhost:8000/plots/plot/cosine - Cosine wave with damping
 - http://localhost:8000/plots/plot/lissajous - Lissajous curves
 - **http://localhost:8000/embeddable** - Embeddable component demos
+- **http://localhost:8000/react-app/** - React integration example
 
 ### Embeddable Component Demo
 
@@ -44,6 +45,84 @@ The `embeddable_demo.html` file demonstrates the new **MatplotlibEmbeddable** Ja
 - React integration patterns
 
 Visit http://localhost:8000/embeddable to see interactive examples.
+
+### React Integration Example
+
+The `react-example/` directory contains a complete React application demonstrating
+how to use the `mpl-fastapi` npm package:
+
+```bash
+# First, build the npm package (from repo root)
+npm run build:npm
+
+# Install and build React app
+cd demos/react-example
+npm install
+npm run build
+
+# Run FastAPI server (from repo root)
+uvicorn demos.sine_wave:app --reload
+```
+
+Visit http://localhost:8000/react-app/ - everything is served through FastAPI, no separate dev server needed!
+
+## Testing the npm Package Locally
+
+The TypeScript client can be published to npm as `mpl-fastapi`. For testing locally before publishing:
+
+### Option 1: npm link (recommended for development)
+
+```bash
+# Build the npm package
+npm run build:npm
+
+# Create a global symlink
+npm link
+
+# In your test project
+cd /path/to/your/project
+npm link mpl-fastapi
+```
+
+Then import in your project:
+```javascript
+import { MatplotlibEmbeddable } from 'mpl-fastapi';
+```
+
+### Option 2: file: dependency
+
+In your test project's `package.json`:
+```json
+{
+  "dependencies": {
+    "mpl-fastapi": "file:/path/to/matplotlib-fastapi"
+  }
+}
+```
+
+### Option 3: ES Module import from dist
+
+After building (`npm run build:npm`), you can import directly in modern browsers:
+```html
+<script type="module">
+  import { MatplotlibEmbeddable } from '/path/to/dist/mpl-fastapi.js';
+</script>
+```
+
+### Option 4: Use importmap for cleaner imports
+
+```html
+<script type="importmap">
+{
+  "imports": {
+    "mpl-fastapi": "/path/to/dist/mpl-fastapi.js"
+  }
+}
+</script>
+<script type="module">
+  import { MatplotlibEmbeddable } from 'mpl-fastapi';
+</script>
+```
 
 ## How It Works
 
