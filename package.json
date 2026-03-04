@@ -1,18 +1,64 @@
 {
-  "name": "mpl-fastapi-js",
+  "name": "mpl-fastapi",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "TypeScript/JavaScript components for matplotlib-fastapi",
+  "description": "TypeScript/JavaScript client for matplotlib-fastapi interactive plots",
+  "author": "Thomas A Caswell",
+  "license": "BSD-3-Clause",
+  "homepage": "https://github.com/tacaswell/matplotlib-fastapi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tacaswell/matplotlib-fastapi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tacaswell/matplotlib-fastapi/issues"
+  },
+  "keywords": [
+    "matplotlib",
+    "fastapi",
+    "websocket",
+    "plotting",
+    "visualization",
+    "interactive"
+  ],
+  "main": "./dist/mpl-fastapi.cjs",
+  "module": "./dist/mpl-fastapi.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/mpl-fastapi.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/mpl-fastapi.cjs"
+      }
+    },
+    "./browser": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/component.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": [
+    "./dist/component.js"
+  ],
   "scripts": {
     "build": "node esbuild.config.mjs",
+    "build:npm": "node esbuild.config.mjs --npm",
     "watch": "node esbuild.config.mjs --watch",
-    "clean": "rm -rf mpl_fastapi/static/js/dist",
+    "clean": "rm -rf dist mpl_fastapi/static/js/dist",
     "lint": "eslint mpl_fastapi/static/js/src/**/*.ts",
     "lint:fix": "eslint --fix mpl_fastapi/static/js/src/**/*.ts",
     "format": "prettier --write mpl_fastapi/static/js/src/**/*.ts",
     "format:check": "prettier --check mpl_fastapi/static/js/src/**/*.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build:npm"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^7.0.0",
