@@ -1128,7 +1128,7 @@ def create_mpl_router(
         js = FastAPIManger.get_javascript()
         return PlainTextResponse(js, headers={"Content-Type": "application/javascript"})
 
-    # Route: Serve embeddable component bundle
+    # Route: Serve embeddable component bundle (IIFE)
     @router.get("/component.js", response_class=PlainTextResponse)
     async def get_component_js() -> PlainTextResponse:
         """Serve the embeddable matplotlib component JavaScript (TypeScript-compiled)."""
@@ -1136,7 +1136,19 @@ def create_mpl_router(
         js = FastAPIManger.get_javascript()
         return PlainTextResponse(js, headers={"Content-Type": "application/javascript"})
 
-    # Route: Serve source map for debugging
+    # Route: Serve embeddable component bundle (ESM)
+    @router.get("/component.esm.js", response_class=PlainTextResponse)
+    async def get_component_esm_js() -> PlainTextResponse:
+        """Serve the ESM version of the embeddable matplotlib component."""
+        esm_path = Path(__file__).parent / "static/js/dist/component.esm.js"
+        if esm_path.exists():
+            return PlainTextResponse(
+                esm_path.read_text(encoding="utf-8"),
+                headers={"Content-Type": "application/javascript"},
+            )
+        raise HTTPException(status_code=404, detail="ESM bundle not found")
+
+    # Route: Serve source map for debugging (IIFE)
     @router.get("/component.js.map", response_class=PlainTextResponse)
     async def get_component_js_map() -> PlainTextResponse:
         """Serve the source map for the TypeScript-compiled component."""
@@ -1147,6 +1159,18 @@ def create_mpl_router(
                 headers={"Content-Type": "application/json"},
             )
         raise HTTPException(status_code=404, detail="Source map not found")
+
+    # Route: Serve source map for debugging (ESM)
+    @router.get("/component.esm.js.map", response_class=PlainTextResponse)
+    async def get_component_esm_js_map() -> PlainTextResponse:
+        """Serve the source map for the ESM component."""
+        map_path = Path(__file__).parent / "static/js/dist/component.esm.js.map"
+        if map_path.exists():
+            return PlainTextResponse(
+                map_path.read_text(encoding="utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
+        raise HTTPException(status_code=404, detail="ESM source map not found")
 
     # Route: Get schema for a specific plot
     @router.get("/api/plots/{plot_name}/schema")

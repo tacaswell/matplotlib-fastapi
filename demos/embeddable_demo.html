@@ -249,6 +249,25 @@ plot.update(params)             // Update plot parameters
 plot.isConnected()              // Check connection status
 plot.getUpdateParams()          // Get current update parameters
 plot.getInitParams()            // Get initial parameters</code></pre>
+
+        <h3>Installation &amp; Import Options</h3>
+        <p><strong>Option 1: npm package</strong> (for bundlers like Vite, webpack, etc.)</p>
+        <pre><code>npm install mpl-fastapi
+
+// In your JavaScript/TypeScript:
+import { MatplotlibEmbeddable } from 'mpl-fastapi';</code></pre>
+
+        <p><strong>Option 2: Script tag</strong> (served by FastAPI)</p>
+        <pre><code>&lt;script src="/plots/component.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  const plot = new MatplotlibEmbeddable({ ... });
+&lt;/script&gt;</code></pre>
+
+        <p><strong>Option 3: ES Module import</strong> (modern browsers)</p>
+        <pre><code>&lt;script type="module"&gt;
+  import { MatplotlibEmbeddable } from '/plots/component.esm.js';
+  const plot = new MatplotlibEmbeddable({ ... });
+&lt;/script&gt;</code></pre>
     </div>
 
     <!-- Load the component -->

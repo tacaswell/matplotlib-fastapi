@@ -32,6 +32,14 @@ const iifeBuildOptions = {
   minify: !isWatch,
 };
 
+// Build for FastAPI static serving (ESM bundle for <script type="module">)
+const fastapiEsmBuildOptions = {
+  ...commonOptions,
+  outfile: 'mpl_fastapi/static/js/dist/component.esm.js',
+  format: 'esm',
+  minify: !isWatch,
+};
+
 // Build for npm package (ESM)
 const esmBuildOptions = {
   ...commonOptions,
@@ -81,6 +89,9 @@ if (isWatch) {
   console.log('✅ npm package build complete!');
 } else {
   console.log('🔨 Building TypeScript for FastAPI static...');
-  await esbuild.build(iifeBuildOptions);
+  await Promise.all([
+    esbuild.build(iifeBuildOptions),
+    esbuild.build(fastapiEsmBuildOptions),
+  ]);
   console.log('✅ Build complete!');
 }
