@@ -1,189 +1,232 @@
-# WebSocket Protocol Documentation
+# WebSocket Protocol Documentation (v0)
 
-This document describes the matplotlib-fastapi WebSocket protocol for interactive plotting.
+This document describes the matplotlib-fastapi WebSocket protocol version 0 for interactive plotting.
 
 ## Table of Contents
 
-1. [Initial Connection Flow](#initial-connection-flow)
-2. [Client-Initiated Messages](#client-initiated-messages)
-3. [Server-Initiated Messages](#server-initiated-messages)
-4. [Render Cycle](#render-cycle)
+1. [Protocol Overview](#protocol-overview)
+2. [Initial Connection Flow](#initial-connection-flow)
+3. [Binary Image Format](#binary-image-format)
+4. [Client-Initiated Messages](#client-initiated-messages)
+5. [Server-Initiated Messages](#server-initiated-messages)
+6. [Render Cycle](#render-cycle)
+
+---
+
+## Protocol Overview
+
+### Versioning
+
+The WebSocket endpoint includes the protocol version in the URL path:
+- **v0**: `/ws/v0/{plot_name}` (current)
+- Legacy endpoint `/ws/{plot_name}` redirects to v0
+
+### Key Design Principles
+
+1. **Client initiates**: Client sends `init` message first
+2. **Consolidated config**: Server responds with single `config` message
+3. **Self-describing binary**: Images include 8-byte header with metadata
+4. **Sequence tracking**: Image sequence numbers enable diff validation
 
 ---
 
 ## Initial Connection Flow
 
-The initial connection establishes the WebSocket, validates the protocol, and sends configuration to the client.
+The v0 protocol consolidates the handshake into just 2 messages:
 
 ```mermaid
 sequenceDiagram
     participant Client as Browser (TypeScript)
     participant Router as FastAPI Router
     participant Backend as FastAPICanvas
-    participant Toolbar as NavigationToolbar2FastAPI
     participant Executor as ThreadPoolExecutor
 
     Note over Client,Router: Connection Establishment
-    Client->>Router: WebSocket connect to /ws/{plot_name}?{params}
+    Client->>Router: WebSocket connect to /ws/v0/{plot_name}?{params}
     Router->>Router: Validate plot exists
     Router->>Router: Accept WebSocket connection
     
-    Note over Router: Server sends protocol version first
-    Router->>Client: {"type": "protocol_version", "version": 0}
+    Note over Client,Router: Client sends init (REQUIRED first message)
+    Client->>Router: {"type": "init", "protocol_version": 0, "device_pixel_ratio": 2.0, "supports_binary": true}
+    Router->>Router: Validate protocol version
     Router->>Router: Validate query parameters
     Router->>Executor: Run plot init function(fig, params)
     Executor-->>Router: Return state dict
     Router->>Router: Create FastAPICanvas(fig)
     Router->>Router: Create FastAPIManger(canvas)
+    Router->>Router: Apply device_pixel_ratio
     
-    Note over Router: Wait for client protocol version (REQUIRED first message)
-    Client->>Router: {"type": "protocol_version", "version": 0}
-    Router->>Router: Validate client version
+    Note over Router: Server sends consolidated config message
+    Router->>Client: {"type": "config", "protocol_version": 0, "connection_id": "<uuid>", "figure": {...}, "toolbar": {...}, "save": {...}, "image": {...}, "update_schema": {...}}
     
-    Note over Router: Wait for device_pixel_ratio (REQUIRED second message)
-    Client->>Router: {"type": "set_device_pixel_ratio", "device_pixel_ratio": ratio}
-    Router->>Router: Set device_pixel_ratio on canvas
-    
-    Note over Router: After DPI is set, send all configuration messages
-    Router->>Client: {"type": "image_mode", "mode": "full"}
-    Router->>Client: {"type": "connection_id", "id": "<uuid>"}
-    Router->>Client: {"type": "toolbar_config", "items": [...]}
-    Router->>Client: {"type": "save_formats", "formats": [...]}
-    Router->>Client: {"type": "default_save_format", "format": "png"}
-    Router->>Client: {"type": "history_buttons", "Back": false, "Forward": false}
-    Router->>Client: {"type": "figure_size", "size": [w, h], "dpi": 100}
-    
-    Note over Client: Client receives figure_size and completes initialization
-    Client->>Client: Set canvas_div size from figure_size
+    Note over Client: Client receives config and completes setup
+    Client->>Client: Set canvas_div size from figure.size
+    Client->>Client: Initialize toolbar from toolbar.items
     Client->>Client: Mark _initialized = true
     
-    Note over Router: Enter event loop for normal communication
-    Router->>Router: await websocket.receive_json()
-    
-    Note over Client: Client sends remaining initialization messages
-    Client->>Router: {"type": "supports_binary", "value": true}
-    Router->>Router: Set manager.supports_binary flag (no response)
-    Router->>Router: Drain queue (empty)
-    Router->>Router: await websocket.receive_json()
-    
-    Client->>Router: {"type": "send_image_mode"}
-    Router->>Backend: handle_send_image_mode(ev, websocket)
-    Backend->>Client: {"type": "image_mode", "mode": "full"}
-    Router->>Router: Drain queue (empty)
-    Router->>Router: await websocket.receive_json()
-    
+    Note over Client,Router: Client requests first render
     Client->>Router: {"type": "refresh"}
-    Router->>Router: Force full render
     Router->>Executor: _sync_draw_figure(canvas)
-    Executor->>Backend: canvas.draw()
-    Executor-->>Router: Return PNG bytes
-    Router->>Client: {"type": "figure_label", "label": ""}
-    Router->>Client: {"type": "image_mode", "mode": "full"}
-    Router->>Client: <binary PNG data>
-    Router->>Router: Drain queue (empty)
-    Router->>Router: await websocket.receive_json()
+    Executor-->>Router: Return (image_bytes, is_diff=false)
+    Router->>Client: <8-byte header + PNG data>
     
-    Note over Client: ResizeObserver events are ignored until after first render
     Note over Client,Router: Connection ready for interaction
 ```
 
-### Key Points
+### Message Details
 
-1. **Protocol handshake is required**: 
-   - Server sends `protocol_version` (version 0) immediately after accepting connection
-   - Client MUST send `protocol_version` as its first message
-   - Client MUST send `set_device_pixel_ratio` as its second message
-   - Server validates version, sets device pixel ratio, then sends configuration messages
-   - If incompatible, server sends error and closes connection (code 1008)
+#### Client `init` Message (Required)
 
-2. **Server sends 7 configuration messages** after protocol validation:
-   - `image_mode` (full or diff)
-   - `connection_id` (UUID for downloads)
-   - `toolbar_config` (button definitions)
-   - `save_formats` (available save formats)
-   - `default_save_format` (default format)
-   - `history_buttons` (initial toolbar state)
-   - `figure_size` (initial figure dimensions and DPI)
+```json
+{
+  "type": "init",
+  "protocol_version": 0,
+  "device_pixel_ratio": 2.0,
+  "supports_binary": true
+}
+```
 
-3. **Initialization is deterministic**: The toolbar's `set_history_buttons()` is deferred during `__init__` to prevent race conditions. After protocol validation, the server sends all configuration including history_buttons.
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `type` | string | Yes | - | Must be "init" |
+| `protocol_version` | int | Yes | - | Must match server version (0) |
+| `device_pixel_ratio` | float | No | 1.0 | Device pixel ratio for HiDPI displays |
+| `supports_binary` | bool | No | true | Whether client supports binary WebSocket messages |
 
-4. **Client receives `figure_size` and completes initialization**:
-   - Sets canvas container size to match server's figure size
-   - Marks `_initialized = true` to enable resize event handling
-   - This prevents ResizeObserver from triggering redundant resize events during initialization
+#### Server `config` Message
 
-5. **Client sends remaining initialization messages** after receiving configuration:
-   - `supports_binary` - declares binary WebSocket support
-   - `send_image_mode` - requests current image mode
-   - `refresh` - requests initial draw (canvas is already sized correctly)
-   - Note: `device_pixel_ratio` was already sent before receiving configuration
+```json
+{
+  "type": "config",
+  "protocol_version": 0,
+  "connection_id": "550e8400-e29b-41d4-a716-446655440000",
+  "figure": {
+    "size": [640, 480],
+    "dpi": 100,
+    "label": "My Figure"
+  },
+  "toolbar": {
+    "items": [["Home", "Reset view", "home", "home"], ...],
+    "history": {"back": false, "forward": false}
+  },
+  "save": {
+    "formats": ["png", "pdf", "svg"],
+    "default_format": "png"
+  },
+  "image": {
+    "format": "png"
+  },
+  "update_schema": null
+}
+```
 
-6. **Queue draining**: After handling each client message (except `render` and `refresh` which handle responses inline), the router calls `canvas.drain_queue()` which sends all queued messages. Toolbar actions (pan, zoom, navigate) will queue messages that are sent at this point.
+### Error Handling
+
+If the client sends an invalid `init` message, the server responds with an error and closes the connection:
+
+```json
+{"type": "error", "message": "Incompatible protocol version. Server: 0, client: 999"}
+```
+
+WebSocket close codes:
+- `1008`: Policy violation (invalid plot, params, or protocol mismatch)
+- `1011`: Internal server error (plot generation failed)
+
+---
+
+## Binary Image Format
+
+All rendered images are sent as binary WebSocket messages with an 8-byte header.
+
+### Header Structure
+
+```
+Offset  Size  Type     Field       Description
+------  ----  ------   ----------  -----------
+0       1     uint8    type_mode   0x00=FULL, 0x01=DIFF
+1       1     uint8    format      0x01=PNG, 0x02=JPEG, 0x03=WebP
+2       2     uint16   seq_num     Sequence number (1-65535, 0 reserved)
+4       2     uint16   base_seq    Base sequence for diffs (0 for FULL)
+6       2     uint16   flags       Reserved for future use
+8       ...   bytes    image_data  Image file data
+```
+
+### Sequence Numbers
+
+- Start at 1, increment for each image sent
+- Wrap from 65535 to 1 (0 is reserved as sentinel)
+- For FULL images: `base_seq` is 0
+- For DIFF images: `base_seq` is the sequence number of the base image
+
+### Client Handling
+
+```typescript
+// Parse binary message
+const view = new DataView(buffer);
+const typeMode = view.getUint8(0);  // 0=FULL, 1=DIFF
+const format = view.getUint8(1);    // 1=PNG, 2=JPEG, 3=WebP
+const seqNum = view.getUint16(2, false);  // big-endian
+const baseSeq = view.getUint16(4, false);
+const flags = view.getUint16(6, false);
+const imageData = new Uint8Array(buffer, 8);
+
+// Validate diff base if needed
+if (typeMode === 0x01 && baseSeq !== lastSeqNum) {
+  console.warn('Diff based on unknown frame, requesting full refresh');
+  sendMessage({type: 'refresh'});
+}
+```
 
 ---
 
 ## Client-Initiated Messages
 
-### Mouse Events
+### Render Request
 
-```mermaid
-sequenceDiagram
-    participant Client as Browser
-    participant Router as FastAPI Router
-    participant Backend as FastAPICanvas
-    participant MPL as Matplotlib (button_press_event)
-    participant Toolbar as Toolbar
+Request an image render.
 
-    Client->>Router: {"type": "button_press", "x": x, "y": y, "button": n}
-    Router->>Backend: handle_button_press(ev, websocket)
-    Backend->>Backend: Convert coordinates (flip y-axis)
-    Backend->>MPL: button_press_event(x, y, button, guiEvent=ev)
-    Note over MPL,Toolbar: Matplotlib event handlers may trigger toolbar actions
-    alt Toolbar activated
-        Toolbar->>Backend: queue_event("navigate_mode", mode="PAN")
-        Toolbar->>Backend: queue_event("message", message="Pan/Zoom mode")
-    end
-    Backend-->>Router: (handler returns)
-    Router->>Router: Drain queue
-    Router->>Client: {"type": "navigate_mode", "mode": "PAN"}
-    Router->>Client: {"type": "message", "message": "Pan/Zoom mode"}
-    Router->>Router: await next message
+```json
+{"type": "render"}
 ```
 
-**Mouse event types:**
-- `button_press` - Mouse button pressed
-- `button_release` - Mouse button released
-- `motion_notify` - Mouse moved
-- `dblclick` - Double-click
-- `scroll` - Mouse wheel scrolled
-- `figure_enter` - Mouse entered figure
-- `figure_leave` - Mouse left figure
+**Response:** Binary image with header
 
-**Response:** Queued messages (if any) from event handlers + toolbar
+---
+
+### Refresh Request
+
+Request a full (non-diff) render.
+
+```json
+{"type": "refresh"}
+```
+
+**Response:** Binary image with `type_mode=0x00` (FULL)
+
+---
+
+### Mouse Events
+
+```json
+{"type": "button_press", "x": 100, "y": 200, "button": 1}
+{"type": "button_release", "x": 100, "y": 200, "button": 1}
+{"type": "motion_notify", "x": 150, "y": 250}
+{"type": "scroll", "x": 100, "y": 200, "step": 1}
+{"type": "dblclick", "x": 100, "y": 200, "button": 1}
+{"type": "figure_enter", "x": 0, "y": 0}
+{"type": "figure_leave", "x": 0, "y": 0}
+```
+
+**Response:** Queued messages (if any) from event handlers
 
 ---
 
 ### Keyboard Events
 
-```mermaid
-sequenceDiagram
-    participant Client as Browser
-    participant Router as FastAPI Router
-    participant Backend as FastAPICanvas
-    participant MPL as Matplotlib
-
-    Client->>Router: {"type": "key_press", "key": "a"}
-    Router->>Backend: handle_key_press(ev, websocket)
-    Backend->>MPL: key_press_event(key, guiEvent=ev)
-    Backend-->>Router: (handler returns)
-    Router->>Router: Drain queue (may have messages)
-    Router->>Client: <queued messages if any>
-    Router->>Router: await next message
+```json
+{"type": "key_press", "key": "ctrl+z"}
+{"type": "key_release", "key": "a"}
 ```
-
-**Keyboard event types:**
-- `key_press` - Key pressed
-- `key_release` - Key released
 
 **Response:** Queued messages (if any) from event handlers
 
@@ -191,187 +234,36 @@ sequenceDiagram
 
 ### Resize
 
-```mermaid
-sequenceDiagram
-    participant Client as Browser
-    participant Router as FastAPI Router
-    participant Backend as FastAPICanvas
-    participant Figure as Matplotlib Figure
-
-    Client->>Router: {"type": "resize", "width": 800, "height": 600}
-    Router->>Backend: handle_resize(ev, websocket)
-    Backend->>Backend: Adjust for device_pixel_ratio
-    Backend->>Figure: set_size_inches(w/dpi, h/dpi)
-    Backend->>Client: {"type": "resize", "size": [w, h], "forward": true}
-    Backend-->>Router: (handler returns)
-    Router->>Router: Drain queue (empty)
-    Router->>Router: await next message
-    
-    Note over Client: Client receives resize response
-    Client->>Client: Update canvas dimensions
-    alt forward is true
-        Client->>Router: {"type": "refresh"}
-        Note over Router,Backend: Triggers refresh flow (see below)
-    end
-```
-
-**Request:**
 ```json
 {"type": "resize", "width": 800, "height": 600}
 ```
 
-**Response:** Direct send from handler
+**Response:**
 ```json
 {"type": "resize", "size": [800, 600], "forward": true}
 ```
 
 ---
 
-### Set Device Pixel Ratio
-
-```mermaid
-sequenceDiagram
-    participant Client as Browser
-    participant Router as FastAPI Router
-    participant Backend as FastAPICanvas
-
-    Client->>Router: {"type": "set_device_pixel_ratio", "device_pixel_ratio": 2.0}
-    Router->>Backend: handle_set_device_pixel_ratio(ev, websocket)
-    Backend->>Backend: Update internal ratio
-    alt Ratio changed
-        Backend->>Backend: Mark _force_full = True
-        Backend->>Client: {"type": "draw"}
-    end
-    Backend-->>Router: (handler returns)
-    Router->>Router: Drain queue (empty)
-    Router->>Router: await next message
-    
-    Note over Client: If draw message received
-    Client->>Router: {"type": "draw"}
-    Note over Router,Backend: Triggers draw flow (see Idle Draw Cycle)
-```
-
-**Request:**
-```json
-{"type": "set_device_pixel_ratio", "device_pixel_ratio": 2.0}
-```
-
-**Response:** Direct send (only if ratio changed)
-```json
-{"type": "invalidate"}
-```
-
----
-
-### Refresh
-
-```mermaid
-sequenceDiagram
-    participant Client as Browser
-    participant Router as FastAPI Router
-    participant Executor as ThreadPoolExecutor
-    participant Backend as FastAPICanvas
-
-    Client->>Router: {"type": "refresh"}
-    Router->>Router: Force full render
-    Router->>Executor: _sync_draw_figure(canvas)
-    Executor->>Backend: canvas.draw()
-    Executor-->>Router: Return PNG bytes
-    Router->>Client: {"type": "figure_label", "label": "Figure Title"}
-    Router->>Client: {"type": "image_mode", "mode": "full"}
-    Router->>Client: <binary PNG data>
-    Router->>Router: Drain queue (empty)
-    Router->>Router: await next message
-```
-
-**Request:**
-```json
-{"type": "refresh"}
-```
-
-**Response:** Direct sends (metadata + image)
-```json
-{"type": "figure_label", "label": "Figure Title"}
-{"type": "image_mode", "mode": "full"}
-<binary PNG data>
-```
-
----
-
 ### Toolbar Button
 
-```mermaid
-sequenceDiagram
-    participant Client as Browser
-    participant Router as FastAPI Router
-    participant Backend as FastAPICanvas
-    participant Toolbar as NavigationToolbar2FastAPI
-
-    Client->>Router: {"type": "toolbar_button", "name": "pan"}
-    Router->>Backend: handle_toolbar_button(ev, websocket)
-    Backend->>Toolbar: Call method by name (e.g., pan())
-    Toolbar->>Backend: queue_event("navigate_mode", mode="PAN")
-    Toolbar->>Backend: queue_event("message", message="Pan mode")
-    Toolbar->>Backend: queue_event("history_buttons", Back=true, Forward=false)
-    alt Method triggered redraw
-        Backend->>Backend: draw_idle() -> queue_event("invalidate")
-    end
-    Backend-->>Router: (handler returns)
-    Router->>Router: Drain queue
-    Router->>Client: {"type": "navigate_mode", "mode": "PAN"}
-    Router->>Client: {"type": "message", "message": "Pan mode"}
-    Router->>Client: {"type": "history_buttons", "Back": true, "Forward": false}
-    opt If invalidate queued
-        Router->>Client: {"type": "invalidate"}
-    end
-    Router->>Router: await next message
+```json
+{"type": "toolbar_button", "name": "pan"}
 ```
 
-**Common toolbar buttons:**
-- `home` - Reset to original view
-- `back` - Navigate back in view history
-- `forward` - Navigate forward in view history
-- `pan` - Activate pan/zoom mode
-- `zoom` - Activate zoom mode
+Common buttons: `home`, `back`, `forward`, `pan`, `zoom`
 
-**Response:** Queued messages from toolbar (varies by button)
+**Response:** Queued messages from toolbar (navigate_mode, history_buttons, etc.)
 
 ---
 
 ### Update Parameters
 
-```mermaid
-sequenceDiagram
-    participant Client as Browser
-    participant Router as FastAPI Router
-    participant Backend as FastAPICanvas
-    participant Executor as ThreadPoolExecutor
-    participant UpdateFn as User Update Function
-
-    Client->>Router: {"type": "update_params", "params": {"value": 2.5}}
-    Router->>Router: Validate params against update schema
-    alt Validation fails
-        Router->>Client: {"type": "error", "message": "Invalid params"}
-        Router->>Router: await next message
-    else Validation succeeds
-        Router->>Executor: Run update function(state, params)
-        Executor->>UpdateFn: update_fn(fig, state, params)
-        UpdateFn->>UpdateFn: Modify figure/state
-        Executor-->>Router: Return updated state
-        Router->>Backend: draw_idle()
-        Backend->>Backend: queue_event("invalidate")
-        Router->>Router: Drain queue
-        Router->>Client: {"type": "invalidate"}
-        Router->>Router: await next message
-    end
-```
-
-**Request:**
 ```json
-{"type": "update_params", "params": {"value": 2.5, "color": "red"}}
+{"type": "update_params", "params": {"frequency": 2.5}}
 ```
 
-**Response:** Queued invalidate message
+**Response:**
 ```json
 {"type": "invalidate"}
 ```
@@ -380,35 +272,11 @@ sequenceDiagram
 
 ### Save Figure
 
-```mermaid
-sequenceDiagram
-    participant Client as Browser
-    participant Router as FastAPI Router
-    participant Executor as ThreadPoolExecutor
-    participant Figure as Matplotlib Figure
-
-    Client->>Router: {"type": "save_figure", "format": "png", "dpi": 100}
-    Router->>Router: Validate format
-    Router->>Executor: _sync_save_figure(fig, format, dpi, transparent)
-    Executor->>Figure: fig.savefig(buf, format=format, dpi=dpi)
-    Executor-->>Router: Return bytes
-    Router->>Router: Generate file_id, store file
-    Router->>Client: {"type": "save_complete", "file_id": "...", "download_url": "..."}
-    Router->>Router: Drain queue (empty)
-    Router->>Router: await next message
-```
-
-**Request:**
 ```json
-{
-  "type": "save_figure",
-  "format": "png",
-  "dpi": 100,
-  "transparent": false
-}
+{"type": "save_figure", "format": "png", "dpi": 150, "transparent": false}
 ```
 
-**Response:** Direct send
+**Response:**
 ```json
 {
   "type": "save_complete",
@@ -419,216 +287,119 @@ sequenceDiagram
 }
 ```
 
+Or on error:
+```json
+{"type": "save_error", "message": "Unsupported format"}
+```
+
 ---
 
 ## Server-Initiated Messages
 
-The server can send messages at any time, typically in response to canvas events or toolbar actions.
+### Cursor Update
 
-### Message Types
+```json
+{"type": "cursor", "cursor": "crosshair"}
+```
 
-| Type | Trigger | Content |
-|------|---------|---------|
-| `invalidate` | Canvas needs redraw | `{"type": "invalidate"}` |
-| `image_mode` | Before sending image | `{"type": "image_mode", "mode": "full"\|"diff"}` |
-| `figure_label` | Figure title changed | `{"type": "figure_label", "label": "Title"}` |
-| `figure_size` | Initial configuration | `{"type": "figure_size", "size": [w, h], "dpi": 100}` |
-| `message` | Toolbar displays message | `{"type": "message", "message": "Text"}` |
-| `navigate_mode` | Pan/zoom mode changed | `{"type": "navigate_mode", "mode": "PAN"\|"ZOOM"\|"NONE"}` |
-| `history_buttons` | Nav stack changed | `{"type": "history_buttons", "Back": bool, "Forward": bool}` |
-| `rubberband` | Selection in progress | `{"type": "rubberband", "x0": n, "y0": n, "x1": n, "y1": n}` |
-| `save` | Toolbar save button | `{"type": "save"}` (triggers client save flow) |
+### Status Message
+
+```json
+{"type": "message", "message": "x=1.5, y=2.3"}
+```
+
+### Navigate Mode
+
+```json
+{"type": "navigate_mode", "mode": "PAN"}
+```
+
+Mode values: `"PAN"`, `"ZOOM"`, `null`
+
+### History Buttons
+
+```json
+{"type": "history_buttons", "Back": true, "Forward": false}
+```
+
+### Invalidate
+
+Signals that the figure has changed and client should request a render.
+
+```json
+{"type": "invalidate"}
+```
+
+### Rubberband
+
+Draw a selection rectangle (for zoom tool).
+
+```json
+{"type": "rubberband", "x0": 100, "y0": 200, "x1": 300, "y1": 400}
+```
+
+### Resize
+
+Server-initiated resize (e.g., from figure.set_size_inches).
+
+```json
+{"type": "resize", "size": [800, 600], "forward": true}
+```
+
+### Error
+
+```json
+{"type": "error", "message": "Error description"}
+```
 
 ---
 
 ## Render Cycle
 
-The render cycle is how matplotlib figures are rendered and sent to the browser when requested by the client.
+### Idle Draw Pattern
 
 ```mermaid
 sequenceDiagram
     participant Client as Browser
     participant Router as FastAPI Router
-    participant Executor as ThreadPoolExecutor
     participant Backend as FastAPICanvas
-    participant Renderer as RendererAgg
 
-    Note over Client,Backend: Something triggered canvas.draw_idle()
+    Note over Backend: Some action triggers draw_idle()
     Backend->>Backend: queue_event("invalidate")
-    Note over Backend: Message queued, not sent yet
-    
-    Note over Router: After current event handler completes
+    Backend-->>Router: (handler returns)
     Router->>Router: Drain queue
     Router->>Client: {"type": "invalidate"}
-    Router->>Router: await next message
     
-    Note over Client: Client receives invalidate notification
+    Note over Client: Client receives invalidate
     Client->>Router: {"type": "render"}
+    Router->>Router: Execute _sync_draw_figure in thread pool
+    Router->>Client: <8-byte header + PNG data>
     
-    Note over Router: Handle render request
-    Router->>Executor: _sync_draw_figure(canvas)
-    Note over Executor: Run in background thread
-    Executor->>Backend: get_renderer()
-    Backend->>Backend: Check if new renderer needed
-    alt Need new renderer
-        Backend->>Renderer: Create RendererAgg(w, h, dpi)
-        Backend->>Backend: Save last buffer for diff
-    end
-    Backend-->>Executor: Return renderer
-    
-    Executor->>Backend: canvas.draw()
-    Backend->>Backend: Render all figure artists
-    
-    Executor->>Backend: Determine image mode (full or diff)
-    alt First draw or _force_full
-        Backend->>Backend: mode = "full"
-        Backend->>Backend: Clear _force_full flag
-    else Subsequent render
-        Backend->>Backend: Compare buffers
-        alt > 50% pixels changed
-            Backend->>Backend: mode = "full"
-        else < 50% pixels changed
-            Backend->>Backend: mode = "diff"
-            Backend->>Backend: Create diff image (changed pixels only)
-        end
-    end
-    
-    Executor->>Executor: Encode PNG (full or diff)
-    Executor-->>Router: Return PNG bytes
-    
-    Router->>Client: {"type": "image_mode", "mode": "full"}
-    Router->>Client: <binary PNG data>
-    Router->>Router: Drain queue (may have new messages)
-    opt Queue not empty
-        Router->>Client: <queued messages>
-    end
-    Router->>Router: await next message
-    
-    Note over Client: Client receives image
-    Client->>Client: imageObj.src = blob URL
-    Note over Client: imageObj.onload fires
-    Client->>Client: context.drawImage(imageObj, 0, 0)
-    Note over Client: Figure updated on screen
+    Note over Client: Client displays image
+    Client->>Client: Parse header, create blob, update canvas
 ```
 
-### Key Points
-
-1. **Asynchronous notification**: `draw_idle()` queues an `invalidate` message. The client can debounce these and request renders at its own pace.
-
-2. **Thread pool execution**: The actual rendering happens in a background thread to avoid blocking the event loop.
-
-3. **Differential rendering**: After the first render, the backend compares the current buffer with the previous one. If < 50% of pixels changed, it sends only the diff.
-
-4. **Full vs Diff mode**:
-   - **Full**: Entire PNG image
-   - **Diff**: PNG with transparent background, only changed pixels visible
-
-5. **Binary WebSocket**: Images are sent as binary WebSocket frames, not JSON.
-
-6. **Client rendering**: The browser uses an `<img>` element to decode the PNG, then draws it to a `<canvas>` using `drawImage()`.
-
----
-
-## Protocol Version Negotiation
+### Full Refresh Pattern
 
 ```mermaid
 sequenceDiagram
     participant Client as Browser
     participant Router as FastAPI Router
 
-    Router->>Client: {"type": "protocol_version", "version": 0}
-    Client->>Router: {"type": "protocol_version", "version": N}
-    
-    alt N == 0
-        Note over Router: Version compatible, send configuration
-        Router->>Client: 6 configuration messages
-    else N == null or missing
-        Router->>Client: {"type": "error", "message": "Protocol version is required"}
-        Router->>Router: Close WebSocket (code 1008)
-    else N != 0
-        Router->>Client: {"type": "error", "message": "Incompatible protocol version"}
-        Router->>Router: Close WebSocket (code 1008)
-    end
+    Client->>Router: {"type": "refresh"}
+    Router->>Router: Set canvas._force_full = True
+    Router->>Router: Execute _sync_draw_figure in thread pool
+    Router->>Client: <8-byte header (type_mode=0x00 FULL) + PNG data>
 ```
-
-**Protocol version is REQUIRED**: Both client and server must send the version field. The client's protocol_version message MUST be the first client message after receiving the server's protocol_version.
-
-Currently, only protocol version `0` is supported. Future versions may introduce breaking changes to the message format or protocol flow.
 
 ---
 
-## Error Handling
+## Message Count Comparison
 
-```mermaid
-sequenceDiagram
-    participant Client as Browser
-    participant Router as FastAPI Router
+| Action | Old Protocol | v0 Protocol |
+|--------|--------------|-------------|
+| Handshake | 14 messages | 5 messages |
+| Render | 2 messages (image_mode + binary) | 1 message (binary with header) |
+| Refresh | 3 messages (label + image_mode + binary) | 1 message (binary with header) |
 
-    Client->>Router: Invalid message or parameters
-    Router->>Router: Validation fails
-    Router->>Client: {"type": "error", "message": "Error details"}
-    
-    alt Fatal error
-        Router->>Router: Close WebSocket with error code
-    else Recoverable error
-        Router->>Router: Continue event loop
-    end
-```
-
-**Error message format:**
-```json
-{"type": "error", "message": "Error description"}
-```
-
-Common error scenarios:
-- Invalid protocol version
-- Invalid parameters for plot initialization
-- Invalid parameters for update
-- Unknown save format
-- Validation errors
-- Protocol version missing or incompatible
-- Wrong message type as first client message
-
----
-
-## Message Queue Behavior
-
-**Important:** The message queue is drained after MOST client messages are processed, with two exceptions:
-
-1. **`render`**: Sends complete response inline (image_mode + binary PNG), then continues to next message
-2. **`refresh`**: Sends complete response inline (figure_label + image_mode + binary PNG), then continues to next message
-
-**Protocol handshake is outside the event loop:** The protocol_version exchange happens before entering the main event loop, so it doesn't use the queue mechanism.
-
-```python
-# In router.py:
-
-# Protocol handshake (before event loop):
-# 1. Send server protocol_version
-# 2. Wait for client protocol_version
-# 3. Validate and send all configuration messages
-
-# Event loop:
-while True:
-    data = await websocket.receive_json()
-    
-    # render and refresh handlers:
-    if data["type"] in ("render", "refresh"):
-        # ... render image ...
-        await websocket.send_json({"type": "image_mode", ...})
-        await websocket.send_bytes(image_data)
-        continue  # Skip drain_queue
-
-    # All other handlers:
-    else:
-        await handler(data, websocket)
-        await canvas.drain_queue(websocket)  # Always called for other messages
-```
-
-This means:
-1. Protocol handshake completes before entering event loop
-2. Toolbar can queue messages at any time during event handlers
-3. Those messages will be sent after the next client message is processed (except render/refresh)
-4. Tests must account for variable message sequences
-5. Client should be prepared to receive queued messages after most requests
-6. Client can debounce `invalidate` notifications and request renders at its own pace
+The v0 protocol reduces initialization overhead by ~65% and per-render overhead by 50%.

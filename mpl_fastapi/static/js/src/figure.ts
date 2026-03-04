@@ -5,10 +5,16 @@
  * - Canvas rendering and image updates
  * - Mouse and keyboard event handling
  * - Toolbar integration
- * - WebSocket message protocol
+ * - WebSocket message protocol (v0)
  */
 
-import type { ImageMode } from './types.js';
+import type { ImageMode, ConfigMessage } from './types.js';
+import {
+  PROTOCOL_VERSION,
+  ImageTypeMode,
+  parseBinaryImage,
+  getImageMimeType,
+} from './types.js';
 import { WebSocketManager } from './websocket-manager.js';
 
 // Static path configuration
@@ -137,17 +143,15 @@ export class Figure {
         }
       }
 
-      // Send protocol version as first message from client (REQUIRED)
-      this.send_message('protocol_version', { version: 0 });
-
-      // Send device_pixel_ratio as second message (before server sends config)
-      // This allows server to calculate correct figure size
-      this.send_message('set_device_pixel_ratio', {
+      // Send consolidated init message (v0 protocol - REQUIRED as first message)
+      this.send_message('init', {
+        protocol_version: PROTOCOL_VERSION,
         device_pixel_ratio: this.ratio,
+        supports_binary: this.supports_binary,
       });
 
-      // Defer remaining initialization messages until after receiving all
-      // configuration messages (including figure_size) to avoid redundant draws
+      // Server will respond with consolidated 'config' message
+      // Then we send 'refresh' to get the first image
     });
 
     // Register message handler with WebSocketManager
@@ -626,6 +630,89 @@ export class Figure {
     }
   }
 
+  /**
+   * Handle consolidated config message (v0 protocol)
+   * This replaces separate protocol_version, connection_id, toolbar_config,
+   * save_formats, default_save_format, history_buttons, and figure_size messages.
+   */
+  handle_config(fig: Figure, msg: ConfigMessage): void {
+    // Validate protocol version
+    if (msg.protocol_version !== PROTOCOL_VERSION) {
+      console.error(
+        `Protocol version mismatch: client=${PROTOCOL_VERSION}, server=${msg.protocol_version}`
+      );
+      fig.ws_manager?.close();
+      throw new Error(
+        `Incompatible protocol version. Client: ${PROTOCOL_VERSION}, server: ${msg.protocol_version}`
+      );
+    }
+    console.log(`Protocol version validated: ${msg.protocol_version}`);
+
+    // Store connection ID
+    fig.connection_id = msg.connection_id;
+
+    // Store toolbar config (will init toolbar after)
+    fig.toolbar_items = msg.toolbar.items;
+    fig.save_formats = msg.save.formats;
+    fig.default_save_format = msg.save.default_format;
+
+    // Initialize toolbar now that we have all config
+    if (!fig.toolbar_ready) {
+      fig.toolbar_ready = true;
+      fig._init_toolbar();
+    }
+
+    // Apply initial history button state
+    if (fig.buttons['Back']) {
+      fig.buttons['Back'].disabled = !msg.toolbar.history.back;
+      fig.buttons['Back'].setAttribute(
+        'aria-disabled',
+        String(!msg.toolbar.history.back)
+      );
+    }
+    if (fig.buttons['Forward']) {
+      fig.buttons['Forward'].disabled = !msg.toolbar.history.forward;
+      fig.buttons['Forward'].setAttribute(
+        'aria-disabled',
+        String(!msg.toolbar.history.forward)
+      );
+    }
+
+    // Apply figure size
+    const [width, height] = msg.figure.size;
+    fig._initial_size = [width, height];
+    fig._server_size = [width, height];
+
+    // Set initial size on canvas
+    if (fig.canvas_div) {
+      fig.canvas_div.style.width = `${width}px`;
+      fig.canvas_div.style.height = `${height}px`;
+    }
+
+    // Set figure label
+    if (fig.header && msg.figure.label) {
+      fig.header.textContent = msg.figure.label;
+    }
+
+    // Mark as initialized before first refresh to prevent ResizeObserver feedback
+    fig._initialized = true;
+
+    // Request initial render now that canvas is properly sized
+    fig.send_message('refresh', {});
+  }
+
+  /**
+   * Handle error message from server
+   */
+  handle_error(fig: Figure, msg: any): void {
+    console.error('Server error:', msg.message);
+    if (fig.message) {
+      fig.message.textContent = `Error: ${msg.message}`;
+      fig.message.style.color = 'red';
+    }
+  }
+
+  // Legacy handlers for backward compatibility with older servers
   handle_protocol_version(fig: Figure, msg: any): void {
     const server_version = msg['version'];
     // Protocol version is REQUIRED
@@ -636,15 +723,15 @@ export class Figure {
       }
       throw new Error('Protocol version is required');
     }
-    if (server_version !== 0) {
+    if (server_version !== PROTOCOL_VERSION) {
       console.error(
-        `Protocol version mismatch: client expects 0, server sent ${server_version}`
+        `Protocol version mismatch: client expects ${PROTOCOL_VERSION}, server sent ${server_version}`
       );
       if (fig.ws_manager) {
         fig.ws_manager.close();
       }
       throw new Error(
-        `Incompatible protocol version. Client expects 0, got ${server_version}`
+        `Incompatible protocol version. Client expects ${PROTOCOL_VERSION}, got ${server_version}`
       );
     }
     console.log(`Server protocol version validated: ${server_version}`);
@@ -662,30 +749,31 @@ export class Figure {
     fig.connection_id = msg['id'];
   }
 
+  // Legacy handler - config message now includes figure size
   handle_figure_size(fig: Figure, msg: any): void {
     // Store initial size to be applied before first render
     const size: [number, number] = msg['size'];
     fig._initial_size = size;
     fig._server_size = size;
 
-    // Now that we have all configuration including size, send initialization messages
-    // This ensures canvas is sized correctly before the first draw
-    // Note: device_pixel_ratio was already sent with protocol_version
-    fig.send_message('supports_binary', { value: fig.supports_binary });
-    fig.send_message('send_image_mode', {});
-    
     // Set initial size on canvas before requesting first render
     if (fig.canvas_div && fig._initial_size) {
       const [width, height] = fig._initial_size;
       fig.canvas_div.style.width = `${width}px`;
       fig.canvas_div.style.height = `${height}px`;
     }
-    
+
     // Mark as initialized before first refresh to prevent ResizeObserver feedback
     fig._initialized = true;
-    
+
     // Request initial render now that canvas is properly sized
-    fig.send_message('refresh', {});
+    // Only do this for legacy protocol - v0 config handler does this
+    if (!fig.toolbar_ready) {
+      // Legacy path - need to wait for toolbar config
+      fig.send_message('supports_binary', { value: fig.supports_binary });
+      fig.send_message('send_image_mode', {});
+      fig.send_message('refresh', {});
+    }
   }
 
   handle_toolbar_config(fig: Figure, msg: any): void {
@@ -748,6 +836,33 @@ export class Figure {
 
   private _make_on_message_function(): (evt: MessageEvent) => void {
     return (evt: MessageEvent) => {
+      // Handle binary image data (v0 protocol with 8-byte header)
+      if (evt.data instanceof ArrayBuffer) {
+        const { header, imageData } = parseBinaryImage(evt.data);
+
+        // Update image mode based on header
+        this.image_mode = header.typeMode === ImageTypeMode.FULL ? 'full' : 'diff';
+
+        // Get correct MIME type from header
+        const mimeType = getImageMimeType(header.format);
+
+        // Create blob with correct type - cast to ArrayBuffer to satisfy TypeScript
+        const blob = new Blob([imageData as unknown as ArrayBuffer], { type: mimeType });
+
+        // Free memory for previous frames
+        if (this.imageObj.src) {
+          (window.URL || (window as any).webkitURL).revokeObjectURL(this.imageObj.src);
+        }
+
+        this.imageObj.src = (window.URL || (window as any).webkitURL).createObjectURL(
+          blob
+        );
+        this.updated_canvas_event();
+        this.waiting = false;
+        return;
+      }
+
+      // Handle legacy Blob format (for backward compatibility)
       if (evt.data instanceof Blob) {
         let img = evt.data;
         if (img.type !== 'image/png') {
@@ -860,6 +975,33 @@ export class Figure {
   toolbar_button_onmouseover(tooltip: string): void {
     if (this.message) {
       this.message.textContent = tooltip;
+    }
+  }
+
+  /**
+   * Clean up resources and remove DOM elements
+   * Call this when the figure is no longer needed
+   */
+  destroy(): void {
+    // Disconnect ResizeObserver to prevent memory leaks and runaway observers
+    if (this.resizeObserverInstance) {
+      this.resizeObserverInstance.disconnect();
+      this.resizeObserverInstance = null;
+    }
+
+    // Close WebSocket if still open
+    if (this.ws_manager) {
+      this.ws_manager.close();
+    }
+
+    // Revoke any object URLs to free memory
+    if (this.imageObj.src && this.imageObj.src.startsWith('blob:')) {
+      (window.URL || (window as any).webkitURL).revokeObjectURL(this.imageObj.src);
+    }
+
+    // Remove DOM elements
+    if (this.root && this.root.parentNode) {
+      this.root.parentNode.removeChild(this.root);
     }
   }
 }

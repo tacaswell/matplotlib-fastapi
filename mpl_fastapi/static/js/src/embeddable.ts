@@ -118,7 +118,8 @@ export class MatplotlibEmbeddable {
   private _buildWebSocketUrl(): string {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    let wsUrl = `${protocol}//${host}${this.config.baseUrl}/ws/${this.config.plotName}`;
+    // Use v0 protocol endpoint
+    let wsUrl = `${protocol}//${host}${this.config.baseUrl}/ws/v0/${this.config.plotName}`;
 
     // Add init parameters as query string
     const params = new URLSearchParams(
@@ -174,7 +175,9 @@ export class MatplotlibEmbeddable {
           }
           this.config.onDisconnect();
         } else if (event.code !== 1000) {
-          // Connection failed before it was established
+          // Connection failed before it was established (e.g., invalid figure name)
+          // Clean up the figure to prevent resource leaks (ResizeObserver, DOM elements)
+          this._cleanupFigure();
           this.config.onError(
             new Error(`Connection failed: ${event.reason || 'Unknown error'}`)
           );
@@ -182,6 +185,8 @@ export class MatplotlibEmbeddable {
       });
 
       this.ws_manager.onError(() => {
+        // Clean up the figure to prevent resource leaks
+        this._cleanupFigure();
         this.config.onError(new Error('WebSocket connection failed'));
       });
 
@@ -422,6 +427,17 @@ export class MatplotlibEmbeddable {
   }
 
   /**
+   * Clean up the figure without closing WebSocket
+   * Used internally when connection fails
+   */
+  private _cleanupFigure(): void {
+    if (this.figure) {
+      this.figure.destroy();
+      this.figure = null;
+    }
+  }
+
+  /**
    * Disconnect and cleanup
    */
   disconnect(): void {
@@ -429,11 +445,8 @@ export class MatplotlibEmbeddable {
       this.ws_manager.close();
       this.ws_manager = null;
     }
-    if (this.figure && this.figure.root) {
-      this.figure.root.remove();
-    }
+    this._cleanupFigure();
     this.connected = false;
-    this.figure = null;
   }
 
   /**

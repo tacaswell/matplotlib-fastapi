@@ -16,7 +16,7 @@ Example usage with httpx:
     ...     init_params={"frequency": 2.0}
     ... )
     >>> with ws_client.connect():
-    ...     image_data = ws_client.send_refresh()  # Get metadata + render
+    ...     image_data = ws_client.send_refresh()  # Get first image
 
 Example usage with TestClient:
     >>> from fastapi.testclient import TestClient
@@ -29,15 +29,18 @@ Example usage with TestClient:
     ...     plot_name="sine",
     ... )
     >>> with ws_client.connect():
-    ...     image_data = ws_client.send_refresh()  # Get metadata + render
+    ...     image_data = ws_client.send_refresh()  # Get first image
 """
 
 from __future__ import annotations
 
 import io
 import logging
+import struct
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
+from enum import IntEnum
 from typing import Any, Protocol
 from urllib.parse import urlencode
 
@@ -45,6 +48,67 @@ import numpy as np
 from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+# Protocol constants
+PROTOCOL_VERSION = 0
+BINARY_HEADER_SIZE = 8
+
+
+class ImageTypeMode(IntEnum):
+    """Binary image type/mode - first byte of header."""
+    FULL = 0x00
+    DIFF = 0x01
+
+
+class ImageFormat(IntEnum):
+    """Binary image format - second byte of header."""
+    PNG = 0x01
+    JPEG = 0x02
+    WEBP = 0x03
+
+
+@dataclass
+class BinaryImageHeader:
+    """Parsed binary image header (8 bytes total).
+
+    Structure: [type_mode: 1, format: 1, seq_num: 2, base_seq: 2, flags: 2]
+    """
+    type_mode: ImageTypeMode
+    format: ImageFormat
+    seq_num: int
+    base_seq: int
+    flags: int
+
+
+def parse_binary_image(data: bytes) -> tuple[BinaryImageHeader, bytes]:
+    """Parse binary image with 8-byte header.
+
+    Parameters
+    ----------
+    data : bytes
+        Binary data with header + image
+
+    Returns
+    -------
+    tuple[BinaryImageHeader, bytes]
+        Parsed header and image data
+    """
+    if len(data) < BINARY_HEADER_SIZE:
+        raise ValueError(f"Binary data too short: {len(data)} < {BINARY_HEADER_SIZE}")
+
+    type_mode = ImageTypeMode(data[0])
+    img_format = ImageFormat(data[1])
+    seq_num, base_seq, flags = struct.unpack(">HHH", data[2:8])
+
+    header = BinaryImageHeader(
+        type_mode=type_mode,
+        format=img_format,
+        seq_num=seq_num,
+        base_seq=base_seq,
+        flags=flags,
+    )
+    image_data = data[BINARY_HEADER_SIZE:]
+    return header, image_data
 
 
 class WebSocketAdapter(Protocol):
@@ -219,12 +283,11 @@ def create_httpx_adapter(client: Any) -> ContextManagerWebSocketAdapter:
 
 
 class MatplotlibWebSocketClient:
-    """Client for matplotlib-fastapi WebSocket protocol.
+    """Client for matplotlib-fastapi WebSocket protocol (v0).
 
-    This client handles the full protocol including:
-    - Protocol version negotiation
-    - Initial server messages (config, formats, etc.)
-    - Device pixel ratio setup
+    This client handles the full v0 protocol including:
+    - Consolidated init/config handshake
+    - Binary images with 8-byte headers
     - Interactive events (mouse, keyboard, toolbar)
     - Parameter updates
     - Drawing and image retrieval
@@ -257,6 +320,12 @@ class MatplotlibWebSocketClient:
         Default save format from server
     image_mode : str | None
         Current image mode (full or diff)
+    figure_size : tuple[int, int] | None
+        Current figure size in CSS pixels
+    figure_dpi : float | None
+        Figure DPI
+    figure_label : str | None
+        Figure label/title
     """
 
     def __init__(
@@ -282,17 +351,22 @@ class MatplotlibWebSocketClient:
         self.save_formats: list[str] = []
         self.default_save_format: str | None = None
         self.image_mode: str | None = None
+        self.figure_size: tuple[int, int] | None = None
+        self.figure_dpi: float | None = None
+        self.figure_label: str | None = None
+        self.update_schema: dict[str, Any] | None = None
 
         # Image state for diff compositing
         self._current_image: Image.Image | None = None
+        self._last_seq_num: int = 0
 
         # Protocol state
         self._server_protocol_version: int | None = None
         self._initialized = False
 
     def _build_ws_url(self) -> str:
-        """Build WebSocket URL with query parameters."""
-        url = f"{self.base_url}/ws/{self.plot_name}"
+        """Build WebSocket URL with query parameters (v0 endpoint)."""
+        url = f"{self.base_url}/ws/v0/{self.plot_name}"
         if self.init_params:
             query = urlencode(self.init_params)
             url = f"{url}?{query}"
@@ -310,8 +384,7 @@ class MatplotlibWebSocketClient:
         Example
         -------
         >>> with client.connect():
-        ...     client.send_refresh()
-        ...     image = client.send_draw()
+        ...     image = client.send_refresh()
         """
         try:
             # Establish connection
@@ -319,11 +392,8 @@ class MatplotlibWebSocketClient:
             self.adapter.connect(url)
             logger.info(f"Connected to {self.plot_name}")
 
-            # Receive and process initial server messages
-            self._receive_initial_messages()
-
-            # Send client initialization messages (sets _initialized = True)
-            self._send_client_init()
+            # Send init message and receive config (v0 protocol)
+            self._perform_handshake()
 
             logger.info(f"Client initialized for {self.plot_name}")
 
@@ -333,117 +403,79 @@ class MatplotlibWebSocketClient:
             # Cleanup on exit
             self._initialized = False
             self._current_image = None
+            self._last_seq_num = 0
             self.adapter.disconnect()
             logger.info(f"Disconnected from {self.plot_name}")
 
-    def _receive_initial_messages(self) -> None:
-        """Receive initial message from server and complete handshake.
+    def _perform_handshake(self) -> None:
+        """Perform v0 protocol handshake.
 
-        Protocol flow:
-        1. Server sends: protocol_version (first message)
-        2. Client sends: protocol_version (MUST be first client message)
-        3. Client sends: set_device_pixel_ratio (MUST be second client message)
-        4. Server sets device_pixel_ratio, then sends: image_mode, connection_id,
-           toolbar_config, save_formats, default_save_format, history_buttons,
-           figure_size (7 messages)
-
-        This method receives protocol_version, validates it, sends client protocol_version,
-        sends device_pixel_ratio, then receives the 7 configuration messages.
+        Protocol v0 flow:
+        1. Client sends: init message (protocol_version, device_pixel_ratio, supports_binary)
+        2. Server sends: config message (consolidated configuration)
+        3. Client sends: refresh to get first image
         """
-        # 1. Receive server's protocol_version (first message) - don't use _receive_json 
-        # because we're not initialized yet
-        msg = self.adapter.receive_json()
-        if msg["type"] != "protocol_version":
-            raise RuntimeError(
-                f"Expected protocol_version as first message, got {msg['type']}"
-            )
-
-        # Protocol version is REQUIRED
-        if "version" not in msg:
-            raise ValueError("Protocol version missing from server message")
-        self._server_protocol_version = msg["version"]
-        if self._server_protocol_version != 0:
-            raise ValueError(
-                f"Incompatible protocol version: {self._server_protocol_version}"
-            )
-        logger.debug(f"Server protocol version: {self._server_protocol_version}")
-
-        # 2. Send client protocol_version (MUST be first client message)
-        self.adapter.send_json({"type": "protocol_version", "version": 0})
-        logger.debug("Sent client protocol version: 0")
-
-        # 3. Send device_pixel_ratio (MUST be second client message)
-        # This allows server to calculate correct figure size before sending config
-        self.adapter.send_json({
-            "type": "set_device_pixel_ratio",
+        # 1. Send init message (MUST be first client message)
+        init_msg = {
+            "type": "init",
+            "protocol_version": PROTOCOL_VERSION,
             "device_pixel_ratio": self.device_pixel_ratio,
-        })
-        logger.debug(f"Sent device_pixel_ratio: {self.device_pixel_ratio}")
-
-        # 4. Receive 7 configuration messages from server
-        expected_types = {
-            "image_mode",
-            "connection_id",
-            "toolbar_config",
-            "save_formats",
-            "default_save_format",
-            "history_buttons",
-            "figure_size",
+            "supports_binary": self.supports_binary,
         }
-        seen_types: set[str] = set()
+        self.adapter.send_json(init_msg)
+        logger.debug(f"Sent init message: protocol_version={PROTOCOL_VERSION}")
 
-        for _ in range(10):  # Safety limit (should only need 7)
-            msg = self.adapter.receive_json()
-            msg_type = msg["type"]
-            seen_types.add(msg_type)
-
-            # Process message through centralized handler
-            self._process_message(msg)
-
-            # Log history_buttons since it's not tracked in persistent state
-            if msg_type == "history_buttons":
-                logger.debug("Received initial history_buttons")
-
-            # Check if we've received all expected messages
-            if expected_types.issubset(seen_types):
-                break
-
-        # Verify we got all expected messages
-        if not expected_types.issubset(seen_types):
-            missing = expected_types - seen_types
+        # 2. Receive config message
+        config_msg = self.adapter.receive_json()
+        if config_msg["type"] == "error":
+            raise RuntimeError(f"Server error: {config_msg.get('message', 'Unknown')}")
+        if config_msg["type"] != "config":
             raise RuntimeError(
-                f"Did not receive all initial messages. Missing: {missing}"
+                f"Expected config message, got {config_msg['type']}"
             )
 
-    def _send_client_init(self) -> None:
-        """Send client initialization messages (after protocol handshake).
+        # Validate protocol version
+        server_version = config_msg.get("protocol_version")
+        if server_version != PROTOCOL_VERSION:
+            raise ValueError(
+                f"Protocol version mismatch: client={PROTOCOL_VERSION}, server={server_version}"
+            )
+        self._server_protocol_version = server_version
+        logger.debug(f"Server protocol version validated: {server_version}")
 
-        Client sends:
-        1. supports_binary
-        2. send_image_mode
-        3. refresh (gets metadata + first render)
+        # Extract configuration from consolidated config message
+        self.connection_id = config_msg["connection_id"]
+        
+        # Figure config
+        figure_config = config_msg.get("figure", {})
+        size = figure_config.get("size", [640, 480])
+        self.figure_size = (size[0], size[1])
+        self.figure_dpi = figure_config.get("dpi", 100)
+        self.figure_label = figure_config.get("label", "")
+        
+        # Toolbar config
+        toolbar_config = config_msg.get("toolbar", {})
+        self.toolbar_items = toolbar_config.get("items", [])
+        
+        # Save config
+        save_config = config_msg.get("save", {})
+        self.save_formats = save_config.get("formats", ["png"])
+        self.default_save_format = save_config.get("default_format", "png")
+        
+        # Image config
+        image_config = config_msg.get("image", {})
+        self.image_mode = "full"  # Start with full mode
+        
+        # Update schema
+        self.update_schema = config_msg.get("update_schema")
 
-        Note: device_pixel_ratio is now sent during handshake, not here.
-
-        All responses are automatically received and processed.
-        """
-        # Mark as initialized so we can use the send methods
-        self._initialized = True
-
-        # 1. Send supports_binary (no response expected)
-        self.adapter.send_json(
-            {"type": "supports_binary", "value": self.supports_binary}
+        logger.debug(
+            f"Config received: connection_id={self.connection_id}, "
+            f"figure_size={self.figure_size}, toolbar_items={len(self.toolbar_items)}"
         )
 
-        # 2. Request image mode (wait for response)
-        self.adapter.send_json({"type": "send_image_mode"})
-        mode_msg = self._receive_json()
-        if mode_msg["type"] != "image_mode":
-            logger.warning(f"Expected image_mode, got {mode_msg['type']}")
-
-        # 3. Send refresh to get metadata and first render
-        image_data = self.send_refresh()  # Waits for figure_label, image_mode, and PNG
-        logger.debug(f"Initialized with first image: {len(image_data)} bytes")
+        # Mark as initialized
+        self._initialized = True
 
     # Core message receive/send methods
 
@@ -469,39 +501,42 @@ class MatplotlibWebSocketClient:
         """
         return self.adapter.receive_bytes()
 
-    # Message sending methods (now wait for expected responses)
+    # Message sending methods
 
     def _receive_render_response(self) -> bytes:
-        """Shared helper to receive image_mode + PNG bytes.
-
-        Used by both send_render() and send_refresh().
+        """Receive binary image with 8-byte header (v0 protocol).
 
         Returns
         -------
         bytes
-            PNG image data (composited if diff mode)
+            Image data (composited if diff mode)
         """
-        # Wait for image_mode message
-        mode_msg = self._receive_json()
-        if mode_msg["type"] != "image_mode":
-            raise RuntimeError(
-                f"Expected image_mode in render response, got {mode_msg['type']}"
-            )
+        # Receive binary data with header
+        raw_data = self._receive_bytes()
+        header, image_data = parse_binary_image(raw_data)
 
-        # Receive and process image data
-        image_data = self._receive_bytes()
-        logger.debug(f"Received image: {len(image_data)} bytes ({self.image_mode} mode)")
+        # Update image mode based on header
+        self.image_mode = "full" if header.type_mode == ImageTypeMode.FULL else "diff"
+
+        # Track sequence numbers
+        self._last_seq_num = header.seq_num
+
+        logger.debug(
+            f"Received image: {len(image_data)} bytes "
+            f"(mode={self.image_mode}, seq={header.seq_num}, base={header.base_seq})"
+        )
+
         return self._process_image(image_data, composite_diffs=True)
 
     def send_render(self) -> bytes:
         """Request figure render and return image data.
 
-        Automatically waits for the image_mode message and image data.
+        Automatically waits for binary image with header.
 
         Returns
         -------
         bytes
-            PNG image data (composited if diff mode)
+            Image data (composited if diff mode)
         """
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
@@ -511,28 +546,21 @@ class MatplotlibWebSocketClient:
         return self._receive_render_response()
 
     def send_refresh(self) -> bytes:
-        """Request figure refresh with metadata and fresh render.
+        """Request figure refresh with full render.
 
-        Automatically waits for figure_label, image_mode, and image data.
+        Forces a full (non-diff) render and returns the image data.
 
         Returns
         -------
         bytes
-            PNG image data (composited if diff mode, full image)
+            Full image data
         """
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
         self.adapter.send_json({"type": "refresh"})
         logger.debug("Sent refresh request")
 
-        # Wait for figure_label message
-        label_msg = self._receive_json()
-        if label_msg["type"] != "figure_label":
-            logger.warning(
-                f"Expected figure_label after refresh, got {label_msg['type']}"
-            )
-
-        # Receive render response (image_mode + PNG bytes)
+        # Receive binary image with header
         return self._receive_render_response()
 
     def send_resize(self, width: int, height: int) -> dict[str, Any]:

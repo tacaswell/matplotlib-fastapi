@@ -8,17 +8,24 @@ The router supports:
 - JSON API for programmatic access
 - Individual plot viewers with WebSocket communication
 - Dynamic parameter passing via query strings
+
+Protocol v0 uses a simplified message flow:
+- Client sends consolidated `init` message as first message
+- Server responds with consolidated `config` message
+- Binary image messages have 8-byte headers with sequence numbers
 """
 
 import asyncio
 import io
 import logging
+import struct
 import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +38,69 @@ from pydantic import BaseModel, ValidationError
 from starlette.websockets import WebSocketDisconnect
 
 from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
+
+
+# Protocol constants
+PROTOCOL_VERSION = 0
+
+
+class ImageTypeMode(IntEnum):
+    """Combined image type and mode byte values."""
+
+    FULL = 0x00  # Full image
+    DIFF = 0x01  # Differential image
+
+
+class ImageFormat(IntEnum):
+    """Image format byte values."""
+
+    PNG = 0x01
+    JPEG = 0x02
+    WEBP = 0x03
+
+
+def _build_image_header(
+    type_mode: ImageTypeMode,
+    image_format: ImageFormat,
+    seq_num: int,
+    base_seq: int,
+    flags: int = 0,
+) -> bytes:
+    """Build the 8-byte binary image header.
+
+    Header structure:
+        Byte 0:    type_mode   - 0x00=full_image, 0x01=diff_image
+        Byte 1:    format      - 0x01=PNG, 0x02=JPEG, 0x03=WebP
+        Bytes 2-3: seq_num     - uint16 BE, sequence number of this image
+        Bytes 4-5: base_seq    - uint16 BE, base sequence (0 for full images)
+        Bytes 6-7: flags       - reserved (0x0000)
+
+    Parameters
+    ----------
+    type_mode : ImageTypeMode
+        Image type and mode (full or diff)
+    image_format : ImageFormat
+        Image encoding format
+    seq_num : int
+        Sequence number of this image (1-65535, wraps)
+    base_seq : int
+        Sequence number this diff is based on (0 for full images)
+    flags : int
+        Reserved flags (default 0)
+
+    Returns
+    -------
+    bytes
+        8-byte header
+    """
+    return struct.pack(
+        ">BBHHH",
+        type_mode,
+        image_format,
+        seq_num & 0xFFFF,
+        base_seq & 0xFFFF,
+        flags & 0xFFFF,
+    )
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -195,7 +265,7 @@ def _sync_save_figure(
     return buf.getvalue()
 
 
-def _sync_draw_figure(canvas: FastAPICanvas) -> bytes | None:
+def _sync_draw_figure(canvas: FastAPICanvas) -> tuple[bytes, bool]:
     """Synchronous figure draw operation for thread pool execution.
 
     This function runs in a background thread to avoid blocking the event loop.
@@ -208,8 +278,8 @@ def _sync_draw_figure(canvas: FastAPICanvas) -> bytes | None:
 
     Returns
     -------
-    bytes | None
-        PNG image data (diff or full) or None if no update needed
+    tuple[bytes, bool]
+        Tuple of (PNG image data, is_diff) where is_diff is True for diff mode
     """
     from io import BytesIO
 
@@ -232,11 +302,11 @@ def _sync_draw_figure(canvas: FastAPICanvas) -> bytes | None:
 
     if canvas._force_full or np.any(pixels[:, :, 3] != 255):
         # Full image mode
-        canvas._current_image_mode = "full"
+        is_diff = False
         output = buff
     else:
         # Diff mode
-        canvas._current_image_mode = "diff"
+        is_diff = True
         diff = buff != canvas._last_buff
         output = np.where(diff, buff, 0)
 
@@ -248,7 +318,39 @@ def _sync_draw_figure(canvas: FastAPICanvas) -> bytes | None:
     data = output.view(dtype=np.uint8).reshape((*output.shape, 4))
     png_buf = BytesIO()
     Image.fromarray(data).save(png_buf, format="png")
-    return png_buf.getvalue()
+    return png_buf.getvalue(), is_diff
+
+
+@dataclass
+class ImageSequenceState:
+    """Tracks image sequence numbers for a connection."""
+
+    seq_num: int = 0  # Current sequence number
+    last_full_seq: int = 0  # Sequence number of last full image
+
+    def next_full(self) -> tuple[int, int]:
+        """Get next sequence number for a full image.
+
+        Returns
+        -------
+        tuple[int, int]
+            (seq_num, base_seq) where base_seq is 0 for full images
+        """
+        self.seq_num = (self.seq_num % 65535) + 1  # 1-65535, skip 0
+        self.last_full_seq = self.seq_num
+        return self.seq_num, 0
+
+    def next_diff(self) -> tuple[int, int]:
+        """Get next sequence number for a diff image.
+
+        Returns
+        -------
+        tuple[int, int]
+            (seq_num, base_seq) where base_seq is the previous seq_num
+        """
+        base_seq = self.seq_num
+        self.seq_num = (self.seq_num % 65535) + 1
+        return self.seq_num, base_seq
 
 
 async def _send_render_response(
@@ -256,15 +358,14 @@ async def _send_render_response(
     canvas: FastAPICanvas,
     executor: ThreadPoolExecutor,
     loop: asyncio.AbstractEventLoop,
+    seq_state: ImageSequenceState,
 ) -> None:
-    """Shared helper to render figure and send image response.
+    """Shared helper to render figure and send binary image with header.
 
     This function handles the common pattern of:
     1. Running draw in background thread
-    2. Sending image_mode message
-    3. Sending PNG bytes
-
-    Used by both 'render' and 'refresh' message handlers.
+    2. Building 8-byte binary header with sequence numbers
+    3. Sending header + PNG bytes as single binary message
 
     Parameters
     ----------
@@ -276,26 +377,39 @@ async def _send_render_response(
         Thread pool for blocking operations
     loop : asyncio.AbstractEventLoop
         Event loop for running in executor
+    seq_state : ImageSequenceState
+        Sequence number tracker for this connection
     """
     logger.debug("Running draw() in background thread")
 
-    diff_image = await loop.run_in_executor(
+    image_data, is_diff = await loop.run_in_executor(
         executor,
         _sync_draw_figure,
         canvas,
     )
 
-    # Send image mode
-    await websocket.send_json(
-        {
-            "type": "image_mode",
-            "mode": canvas._current_image_mode,
-        }
+    # Determine sequence numbers
+    if is_diff:
+        seq_num, base_seq = seq_state.next_diff()
+        type_mode = ImageTypeMode.DIFF
+    else:
+        seq_num, base_seq = seq_state.next_full()
+        type_mode = ImageTypeMode.FULL
+
+    # Build header
+    header = _build_image_header(
+        type_mode=type_mode,
+        image_format=ImageFormat.PNG,
+        seq_num=seq_num,
+        base_seq=base_seq,
     )
 
-    # Send the image data
-    if diff_image is not None:
-        await websocket.send_bytes(diff_image)
+    # Send header + image as single binary message
+    await websocket.send_bytes(header + image_data)
+    logger.debug(
+        f"Sent image: type={type_mode.name}, seq={seq_num}, base={base_seq}, "
+        f"size={len(image_data)} bytes"
+    )
 
 
 def shutdown_figure_executor() -> None:
@@ -565,10 +679,19 @@ def create_mpl_router(
             },
         )
 
-    # Route: WebSocket connection for interactive plotting
-    @router.websocket("/ws/{plot_name}")
-    async def websocket_endpoint(websocket: WebSocket, plot_name: str) -> None:
-        """Handle WebSocket connection for a plot."""
+    # Route: WebSocket connection for interactive plotting (v0 protocol)
+    @router.websocket("/ws/v0/{plot_name}")
+    async def websocket_endpoint_v0(websocket: WebSocket, plot_name: str) -> None:
+        """Handle WebSocket connection for a plot using v0 protocol.
+
+        Protocol v0 Flow:
+        1. Server accepts connection
+        2. Client sends `init` message (REQUIRED first message)
+        3. Server validates and sends `config` message
+        4. Client sends `refresh` to get first image
+        5. Server sends binary image with 8-byte header
+        6. Interactive session begins
+        """
         # Validate plot exists BEFORE accepting connection
         if plot_name not in plot_generators:
             logger.warning(
@@ -578,10 +701,7 @@ def create_mpl_router(
             return
 
         await websocket.accept()
-
-        # Send protocol version immediately after accepting connection
-        await websocket.send_json({"type": "protocol_version", "version": 0})
-        logger.debug("Sent protocol version: 0")
+        logger.debug(f"WebSocket accepted for plot '{plot_name}'")
 
         # Generate unique connection ID for this WebSocket session
         connection_id = str(uuid.uuid4())
@@ -600,7 +720,66 @@ def create_mpl_router(
             await websocket.close(code=1008, reason=f"Invalid params: {e}")
             return
 
-        logger.info(f"WebSocket connected for plot '{plot_name}' with params: {params}")
+        # Wait for client `init` message as FIRST message (REQUIRED)
+        try:
+            data = await websocket.receive_json()
+        except WebSocketDisconnect:
+            logger.info(
+                f"WebSocket disconnected before init for plot '{plot_name}'"
+            )
+            return
+        except Exception as e:
+            logger.error(f"Error receiving init message: {e}", exc_info=True)
+            return
+
+        # Validate this is the init message
+        if data.get("type") != "init":
+            logger.error(
+                f"Expected 'init' as first message, got '{data.get('type')}'"
+            )
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": "init must be the first client message",
+                }
+            )
+            await websocket.close(code=1008, reason="init must be first message")
+            return
+
+        # Validate protocol version (REQUIRED field in init)
+        client_version = data.get("protocol_version")
+        if client_version is None:
+            logger.error("Protocol version missing from init message")
+            await websocket.send_json(
+                {"type": "error", "message": "protocol_version is required in init"}
+            )
+            await websocket.close(code=1008, reason="Protocol version missing")
+            return
+        if client_version != PROTOCOL_VERSION:
+            logger.error(
+                f"Incompatible protocol: server={PROTOCOL_VERSION}, client={client_version}"
+            )
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": f"Incompatible protocol version. Server: {PROTOCOL_VERSION}, client: {client_version}",
+                }
+            )
+            await websocket.close(
+                code=1008,
+                reason=f"Protocol mismatch: expected {PROTOCOL_VERSION}, got {client_version}",
+            )
+            return
+
+        # Extract client configuration from init message
+        device_pixel_ratio = data.get("device_pixel_ratio", 1.0)
+        supports_binary = data.get("supports_binary", True)
+
+        logger.info(
+            f"WebSocket initialized for plot '{plot_name}': "
+            f"params={params}, dpr={device_pixel_ratio}, binary={supports_binary}"
+        )
+
         loop = asyncio.get_event_loop()
         executor = _get_figure_executor()
 
@@ -616,146 +795,66 @@ def create_mpl_router(
             )
         except Exception as e:
             logger.error(f"Error generating plot '{plot_name}': {e}", exc_info=True)
+            await websocket.send_json(
+                {"type": "error", "message": f"Plot generation failed: {e}"}
+            )
             await websocket.close(code=1011, reason=f"Plot generation failed: {e}")
             return
 
         # Attach FastAPICanvas after figure is populated
         canvas = FastAPICanvas(fig)
 
+        # Apply device pixel ratio
+        if device_pixel_ratio != 1.0:
+            if canvas._set_device_pixel_ratio(device_pixel_ratio):  # type: ignore[attr-defined]
+                canvas._force_full = True
+            logger.debug(f"Set device pixel ratio: {device_pixel_ratio}")
+
         # Attach manager
         manager = FastAPIManger(canvas, 0)
+        manager.supports_binary = supports_binary
 
-        # Type narrowing for safety
-        if not isinstance(canvas, FastAPICanvas):
-            raise TypeError(f"Expected FastAPICanvas, got {type(canvas)}")
-        if not isinstance(manager, FastAPIManger):
-            raise TypeError(f"Expected FastAPIManger, got {type(manager)}")
+        # Initialize image sequence tracker
+        seq_state = ImageSequenceState()
 
-        # Get toolbar configuration (will be sent after protocol handshake)
+        # Get toolbar configuration
         toolbar_config = FastAPIManger.get_toolbar_config()
 
-        # Wait for client protocol version as FIRST message (REQUIRED)
-        try:
-            data = await websocket.receive_json()
-        except WebSocketDisconnect:
-            logger.info(
-                f"WebSocket disconnected before protocol version for plot '{plot_name}'"
-            )
-            return
-        except Exception as e:
-            logger.error(f"Error receiving protocol version: {e}", exc_info=True)
-            return
-
-        # Validate this is the protocol_version message
-        if data.get("type") != "protocol_version":
-            logger.error(
-                f"Expected protocol_version as first message, got '{data.get('type')}'"
-            )
-            await websocket.send_json(
-                {
-                    "type": "error",
-                    "message": "Protocol version must be the first client message",
-                }
-            )
-            await websocket.close(
-                code=1008,
-                reason="Protocol version must be first message",
-            )
-            return
-
-        # Validate client protocol version (REQUIRED)
-        client_version = data.get("version")
-        if client_version is None:
-            logger.error("Protocol version missing from client message")
-            await websocket.send_json(
-                {
-                    "type": "error",
-                    "message": "Protocol version is required",
-                }
-            )
-            await websocket.close(
-                code=1008,
-                reason="Protocol version missing",
-            )
-            return
-        if client_version != 0:
-            logger.error(
-                f"Incompatible protocol version: server=0, client={client_version}"
-            )
-            await websocket.send_json(
-                {
-                    "type": "error",
-                    "message": f"Incompatible protocol version. Server expects 0, got {client_version}",
-                }
-            )
-            await websocket.close(
-                code=1008,
-                reason=f"Protocol version mismatch: expected 0, got {client_version}",
-            )
-            return
-        logger.debug(f"Client protocol version validated: {client_version}")
-
-        # Wait for device_pixel_ratio as SECOND client message (before sending config)
-        # This allows us to calculate correct figure size
-        try:
-            data = await websocket.receive_json()
-        except WebSocketDisconnect:
-            logger.info(
-                f"WebSocket disconnected before device_pixel_ratio for plot '{plot_name}'"
-            )
-            return
-        except Exception as e:
-            logger.error(f"Error receiving device_pixel_ratio: {e}", exc_info=True)
-            return
-
-        # Handle device_pixel_ratio message
-        if data.get("type") == "set_device_pixel_ratio":
-            client_device_pixel_ratio = data.get("device_pixel_ratio", 1.0)
-            if client_device_pixel_ratio != 1:
-                # Set device pixel ratio before calculating figure size
-                if canvas._set_device_pixel_ratio(client_device_pixel_ratio):  # type: ignore[attr-defined]
-                    canvas._force_full = True
-                logger.debug(f"Set device pixel ratio: {client_device_pixel_ratio}")
-        else:
-            # If not set_device_pixel_ratio, log warning but continue with default
-            logger.warning(
-                f"Expected set_device_pixel_ratio as second message, got '{data.get('type')}'. Using default ratio."
-            )
-
-        # After protocol version is validated and DPI set, send all initial configuration messages
-        # Get initial figure size to send to client (using correct device_pixel_ratio)
+        # Calculate figure size in CSS pixels
         width_inches, height_inches = fig.get_size_inches()
         width_px = round(width_inches * fig.dpi / canvas.device_pixel_ratio)
         height_px = round(height_inches * fig.dpi / canvas.device_pixel_ratio)
-        
-        await websocket.send_json({"type": "image_mode", "mode": "full"})
-        await websocket.send_json({"type": "connection_id", "id": connection_id})
-        await websocket.send_json(
-            {"type": "toolbar_config", "items": toolbar_config["toolbar_items"]}
-        )
-        await websocket.send_json(
-            {"type": "save_formats", "formats": toolbar_config["save_formats"]}
-        )
-        await websocket.send_json(
-            {
-                "type": "default_save_format",
-                "format": toolbar_config["default_save_format"],
-            }
-        )
-        # Send initial history_buttons after other config
-        # Note: toolbar defers set_history_buttons during __init__ to prevent race conditions
-        await websocket.send_json(
-            {"type": "history_buttons", "Back": False, "Forward": False}
-        )
-        # Send initial figure size to allow client to size canvas correctly before first draw
-        await websocket.send_json(
-            {
-                "type": "figure_size",
+
+        # Build and send consolidated config message
+        config_msg = {
+            "type": "config",
+            "protocol_version": PROTOCOL_VERSION,
+            "connection_id": connection_id,
+            "figure": {
                 "size": [width_px, height_px],
                 "dpi": fig.dpi,
-            }
-        )
-        logger.debug("Sent all initial configuration messages")
+                "label": fig.get_label(),
+            },
+            "toolbar": {
+                "items": toolbar_config["toolbar_items"],
+                "history": {"back": False, "forward": False},
+            },
+            "save": {
+                "formats": toolbar_config["save_formats"],
+                "default_format": toolbar_config["default_save_format"],
+            },
+            "image": {
+                "format": "png",  # Currently only PNG supported
+            },
+            "update_schema": None,
+        }
+
+        # Include update schema if available
+        if config.update is not None:
+            config_msg["update_schema"] = config.update.params_model.model_json_schema()
+
+        await websocket.send_json(config_msg)
+        logger.debug("Sent consolidated config message")
 
         # Event loop
         try:
@@ -771,17 +870,14 @@ def create_mpl_router(
                     )
                     return
 
-                # Log all received messages
-                if e_type := data.get("type") not in ("motion_notify",):
-                    logger.debug(
-                        f"Received message type='{e_type}' for plot '{plot_name}'"
-                    )
+                e_type = data.get("type")
+
+                # Skip logging for high-frequency events
+                if e_type not in ("motion_notify", "figure_enter", "figure_leave"):
+                    logger.debug(f"Received message type='{e_type}' for plot '{plot_name}'")
 
                 try:
-                    if data["type"] == "supports_binary":
-                        manager.supports_binary = data["value"]
-                        logger.debug(f"Set supports_binary={data['value']}")
-                    elif data["type"] == "save_figure":
+                    if e_type == "save_figure":
                         # Handle save request
                         try:
                             file_format = data.get("format", "png")
@@ -800,10 +896,9 @@ def create_mpl_router(
                             # Generate unique file ID
                             file_id = str(uuid.uuid4())
 
-                            # Save figure in thread pool to avoid blocking event loop
+                            # Save figure in thread pool
                             logger.debug(
-                                f"Saving figure '{plot_name}' to {format_lower} "
-                                f"in background thread"
+                                f"Saving figure '{plot_name}' to {format_lower}"
                             )
 
                             file_data = await loop.run_in_executor(
@@ -834,8 +929,6 @@ def create_mpl_router(
                             _clean_old_saved_files()
 
                             # Extract base path from WebSocket path
-                            # WebSocket URL pattern: /prefix/ws/{plot_name}
-                            # We want: /prefix/download/{file_id}
                             base_path = ""
                             ws_path = websocket.url.path
                             if "/ws/" in ws_path:
@@ -843,7 +936,6 @@ def create_mpl_router(
 
                             download_url = f"{base_path}/download/{file_id}"
 
-                            # Send success response to client
                             await websocket.send_json(
                                 {
                                     "type": "save_complete",
@@ -855,8 +947,7 @@ def create_mpl_router(
                             )
 
                             logger.info(
-                                f"Saved figure '{plot_name}' as {format_lower}, "
-                                f"file_id={file_id}"
+                                f"Saved figure '{plot_name}' as {format_lower}"
                             )
 
                         except ValueError as e:
@@ -874,7 +965,8 @@ def create_mpl_router(
                                     "message": f"Failed to save figure: {str(e)}",
                                 }
                             )
-                    elif data["type"] == "update_params":
+
+                    elif e_type == "update_params":
                         # Handle update request
                         if config.update is None:
                             logger.warning(
@@ -883,9 +975,7 @@ def create_mpl_router(
                             )
                             continue
                         try:
-                            # Validate update parameters
                             update_params = config.update.params_model(**data["params"])
-
                         except ValidationError as e:
                             logger.warning(
                                 f"Invalid update parameters for plot {plot_name}: {e}"
@@ -894,11 +984,6 @@ def create_mpl_router(
                         try:
                             logger.info(
                                 f"Updating plot '{plot_name}' with params: {update_params}"
-                            )
-
-                            # Call update function in background thread
-                            logger.debug(
-                                f"Updating figure '{plot_name}' in background thread"
                             )
 
                             state = await loop.run_in_executor(
@@ -916,58 +1001,42 @@ def create_mpl_router(
                                 f"Error updating plot '{plot_name}': {e}",
                                 exc_info=True,
                             )
-                    elif data["type"] == "render":
-                        # Client requests immediate render with PNG response
-                        await _send_render_response(websocket, canvas, executor, loop)
 
-                        # Render is special - don't drain queue after
-                        # because we've already sent the complete response
-                        continue
-                    elif data["type"] == "refresh":
-                        # Client requests metadata + immediate render
-                        # Send figure label first
-                        await websocket.send_json(
-                            {"type": "figure_label", "label": canvas.figure.get_label()}
+                    elif e_type == "render":
+                        # Client requests render with binary image response
+                        await _send_render_response(
+                            websocket, canvas, executor, loop, seq_state
                         )
+                        continue  # Don't drain queue - response already sent
 
-                        # Force full render and send image
+                    elif e_type == "refresh":
+                        # Client requests full refresh
                         canvas._force_full = True
-                        await _send_render_response(websocket, canvas, executor, loop)
+                        await _send_render_response(
+                            websocket, canvas, executor, loop, seq_state
+                        )
+                        continue  # Don't drain queue - response already sent
 
-                        # Refresh is special - don't drain queue after
-                        # because we've already sent the complete response
-                        continue
                     else:
-                        e_type = data["type"]
-                        # Skip logging for motion events to reduce noise
-                        if e_type not in (
-                            "motion_notify",
-                            "figure_enter",
-                            "figure_leave",
-                        ):
-                            logger.debug(f"Calling handler for event type '{e_type}'")
-
+                        # Delegate to canvas handlers for other event types
                         handler = getattr(
                             canvas, f"handle_{e_type}", canvas.handle_unknown_event
                         )
                         await handler(data, websocket)
 
                     # Drain the message queue and send responses
-                    queue_size = len(canvas._msg_queue)
-                    if queue_size > 0:
-                        logger.debug(f"Draining queue with {queue_size} messages")
                     await canvas.drain_queue(websocket)
+
                 except Exception as e:
                     logger.error(
-                        f"Error handling event '{data.get('type', 'unknown')}': {e}",
+                        f"Error handling event '{e_type}': {e}",
                         exc_info=True,
                     )
-                    # Continue processing other events
         finally:
             # Cleanup on disconnect
             logger.debug(f"Cleaning up resources for plot '{plot_name}'")
 
-            # Clean up all saved files for this connection
+            # Clean up saved files for this connection
             if connection_id in _connection_files:
                 file_ids = list(_connection_files[connection_id])
                 for file_id in file_ids:

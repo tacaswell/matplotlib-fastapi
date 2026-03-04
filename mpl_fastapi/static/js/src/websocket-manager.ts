@@ -43,6 +43,9 @@ export class WebSocketManager {
     const WebSocketType = this.getWebSocketType();
     this.ws = new WebSocketType(this.url);
 
+    // Set binary type to arraybuffer for v0 protocol binary image handling
+    this.ws.binaryType = 'arraybuffer';
+
     this.ws.onopen = (event: Event) => {
       this._isConnecting = false;
       this._isConnected = true;

@@ -73,15 +73,12 @@ class TestWebSocketConnection:
 
         # 'value' must be float, this will fail validation
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            adapter.connect("/plots/ws/simple?value=invalid")
-            # Server sends protocol_version first
-            msg = adapter.receive_json()
-            assert msg["type"] == "protocol_version"
+            adapter.connect("/plots/ws/v0/simple?value=invalid")
 
-            # Send client protocol_version
-            adapter.send_json({"type": "protocol_version", "version": 0})
+            # Send init message
+            adapter.send_json({"type": "init", "protocol_version": 0})
 
-            # Then sends error message before closing
+            # Should receive error message before closing
             msg = adapter.receive_json()
             assert msg["type"] == "error"
             assert "Invalid parameters" in msg["message"]
@@ -98,15 +95,12 @@ class TestWebSocketConnection:
 
         # 'value' must be between 0.1 and 10.0
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            adapter.connect("/plots/ws/simple?value=100.0")
-            # Server sends protocol_version first
-            msg = adapter.receive_json()
-            assert msg["type"] == "protocol_version"
+            adapter.connect("/plots/ws/v0/simple?value=100.0")
 
-            # Send client protocol_version
-            adapter.send_json({"type": "protocol_version", "version": 0})
+            # Send init message
+            adapter.send_json({"type": "init", "protocol_version": 0})
 
-            # Then sends error message before closing
+            # Should receive error message before closing
             msg = adapter.receive_json()
             assert msg["type"] == "error"
             assert "Invalid parameters" in msg["message"]
@@ -245,7 +239,7 @@ class TestWebSocketConnection:
 
 
 class TestProtocolVersion:
-    """Tests for protocol version negotiation."""
+    """Tests for protocol version negotiation (v0)."""
 
     def test_protocol_version_mismatch_closes_connection(
         self, client: TestClient
@@ -255,13 +249,10 @@ class TestProtocolVersion:
         adapter = ContextManagerWebSocketAdapter(client)
 
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            adapter.connect("/plots/ws/simple?value=1.0")
-            # Receive protocol_version (first message)
-            msg = adapter.receive_json()
-            assert msg["type"] == "protocol_version"
+            adapter.connect("/plots/ws/v0/simple?value=1.0")
 
-            # Send back incompatible version
-            adapter.send_json({"type": "protocol_version", "version": 999})
+            # Send init with incompatible version
+            adapter.send_json({"type": "init", "protocol_version": 999})
 
             # Should receive error message immediately
             msg = adapter.receive_json()
@@ -296,13 +287,10 @@ class TestProtocolVersion:
         adapter = ContextManagerWebSocketAdapter(client)
 
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            adapter.connect("/plots/ws/simple?value=1.0")
-            # Receive server's protocol_version
-            msg = adapter.receive_json()
-            assert msg["type"] == "protocol_version"
+            adapter.connect("/plots/ws/v0/simple?value=1.0")
 
-            # Send back protocol_version message without version field
-            adapter.send_json({"type": "protocol_version"})
+            # Send init without protocol_version field
+            adapter.send_json({"type": "init"})
 
             # Should receive error message immediately
             msg = adapter.receive_json()
@@ -315,15 +303,12 @@ class TestProtocolVersion:
         assert exc_info.value.code == 1008
 
     def test_wrong_first_message_closes_connection(self, client: TestClient) -> None:
-        """Test that sending non-protocol_version as first message closes connection."""
+        """Test that sending non-init as first message closes connection."""
         # Use raw adapter to test protocol-level error handling
         adapter = ContextManagerWebSocketAdapter(client)
 
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            adapter.connect("/plots/ws/simple?value=1.0")
-            # Receive server's protocol_version
-            msg = adapter.receive_json()
-            assert msg["type"] == "protocol_version"
+            adapter.connect("/plots/ws/v0/simple?value=1.0")
 
             # Send wrong message type as first client message
             adapter.send_json({"type": "refresh"})
@@ -331,7 +316,7 @@ class TestProtocolVersion:
             # Should receive error message
             msg = adapter.receive_json()
             assert msg["type"] == "error"
-            assert "first" in msg["message"].lower()
+            assert "init" in msg["message"].lower()
 
             # Try to receive more - should disconnect
             adapter.receive_json()
@@ -395,7 +380,7 @@ class TestImageRendering:
         )
 
         with ws_client.connect():
-            # send_refresh waits for figure_label, image_mode, and image data automatically
+            # send_refresh requests full render and waits for binary image
             image_data = ws_client.send_refresh()
 
             # Verify we got the image
@@ -619,22 +604,22 @@ class TestWebSocketAdapters:
     """Tests for WebSocket adapter implementations."""
 
     def test_test_client_adapter_basic(self, client: TestClient) -> None:
-        """Test TestClientAdapter basic operations."""
+        """Test TestClientAdapter basic operations with v0 protocol."""
         adapter = create_fastapi_test_client_adapter(client)
 
         # Before connection
         assert not adapter.is_connected()
 
-        # Connect
-        adapter.connect("/plots/ws/simple")
+        # Connect to v0 endpoint
+        adapter.connect("/plots/ws/v0/simple")
         assert adapter.is_connected()
 
-        # Receive protocol version
-        msg = adapter.receive_json()
-        assert msg["type"] == "protocol_version"
+        # Send init message (client sends first in v0 protocol)
+        adapter.send_json({"type": "init", "protocol_version": 0})
 
-        # Send protocol version
-        adapter.send_json({"type": "protocol_version", "version": 0})
+        # Receive config response
+        msg = adapter.receive_json()
+        assert msg["type"] == "config"
 
         # Disconnect
         adapter.disconnect()
@@ -836,6 +821,9 @@ class TestInteractiveCallbacks:
         )
 
         with ws_client.connect():
+            # First, get initial full image to establish base for diffs
+            ws_client.send_refresh()
+
             # Send button press via WebSocket
             # Coordinates in display space
             click_x, click_y = 200, 200
@@ -957,6 +945,9 @@ class TestInteractiveCallbacks:
         )
 
         with ws_client.connect():
+            # First, get initial full image to establish base for diffs
+            ws_client.send_refresh()
+
             # Send double-click via WebSocket
             click_x, click_y = 150, 150
             ws_client.send_mouse_event("dblclick", x=click_x, y=click_y, button=1)

@@ -6,6 +6,83 @@
  */
 
 // ============================================================================
+// Protocol Constants (v0)
+// ============================================================================
+
+/** Current protocol version */
+export const PROTOCOL_VERSION = 0;
+
+/** Binary image type/mode - first byte of header */
+export enum ImageTypeMode {
+  FULL = 0x00,
+  DIFF = 0x01,
+}
+
+/** Binary image format - second byte of header */
+export enum ImageFormat {
+  PNG = 0x01,
+  JPEG = 0x02,
+  WEBP = 0x03,
+}
+
+/**
+ * Parsed binary image header (8 bytes total)
+ * Structure: [type_mode: 1, format: 1, seq_num: 2, base_seq: 2, flags: 2]
+ */
+export interface BinaryImageHeader {
+  /** Image type: FULL (0x00) or DIFF (0x01) */
+  typeMode: ImageTypeMode;
+  /** Image format: PNG (0x01), JPEG (0x02), WEBP (0x03) */
+  format: ImageFormat;
+  /** Sequence number (1-65535, 0 reserved) */
+  seqNum: number;
+  /** Base sequence for diffs (0 for FULL) */
+  baseSeq: number;
+  /** Reserved flags */
+  flags: number;
+}
+
+/** Binary header size in bytes */
+export const BINARY_HEADER_SIZE = 8;
+
+/**
+ * Parse binary image header from ArrayBuffer
+ * @param buffer - ArrayBuffer containing at least 8 bytes
+ * @returns Parsed header and image data
+ */
+export function parseBinaryImage(buffer: ArrayBuffer): {
+  header: BinaryImageHeader;
+  imageData: Uint8Array;
+} {
+  const view = new DataView(buffer);
+  const header: BinaryImageHeader = {
+    typeMode: view.getUint8(0) as ImageTypeMode,
+    format: view.getUint8(1) as ImageFormat,
+    seqNum: view.getUint16(2, false), // big-endian
+    baseSeq: view.getUint16(4, false), // big-endian
+    flags: view.getUint16(6, false), // big-endian
+  };
+  const imageData = new Uint8Array(buffer, BINARY_HEADER_SIZE);
+  return { header, imageData };
+}
+
+/**
+ * Get MIME type string for image format
+ */
+export function getImageMimeType(format: ImageFormat): string {
+  switch (format) {
+    case ImageFormat.PNG:
+      return 'image/png';
+    case ImageFormat.JPEG:
+      return 'image/jpeg';
+    case ImageFormat.WEBP:
+      return 'image/webp';
+    default:
+      return 'image/png';
+  }
+}
+
+// ============================================================================
 // Configuration Types
 // ============================================================================
 
@@ -65,6 +142,75 @@ export type NavigationMode = 'PAN' | 'ZOOM' | null;
  */
 export interface BaseMessage {
   type: string;
+}
+
+// ============================================================================
+// Protocol v0 Consolidated Messages
+// ============================================================================
+
+/**
+ * Client → Server: Initial handshake message (MUST be first message)
+ */
+export interface InitMessage extends BaseMessage {
+  type: 'init';
+  /** Protocol version (must match server) */
+  protocol_version: number;
+  /** Device pixel ratio for HiDPI displays (default: 1.0) */
+  device_pixel_ratio?: number;
+  /** Whether client supports binary WebSocket messages (default: true) */
+  supports_binary?: boolean;
+}
+
+/**
+ * Server → Client: Consolidated configuration response
+ */
+export interface ConfigMessage extends BaseMessage {
+  type: 'config';
+  /** Protocol version */
+  protocol_version: number;
+  /** Unique connection ID for this session */
+  connection_id: string;
+  /** Figure configuration */
+  figure: {
+    /** Figure size in CSS pixels [width, height] */
+    size: [number, number];
+    /** Figure DPI */
+    dpi: number;
+    /** Figure label/title */
+    label: string;
+  };
+  /** Toolbar configuration */
+  toolbar: {
+    /** Array of toolbar item definitions [name, tooltip, icon, method] */
+    items: Array<[string, string, string, string]>;
+    /** Initial navigation history state */
+    history: {
+      back: boolean;
+      forward: boolean;
+    };
+  };
+  /** Save/download configuration */
+  save: {
+    /** Supported file formats */
+    formats: string[];
+    /** Default format */
+    default_format: string;
+  };
+  /** Image encoding configuration */
+  image: {
+    /** Image format (png, jpeg, webp) */
+    format: string;
+  };
+  /** JSON schema for update parameters (null if not supported) */
+  update_schema: Record<string, unknown> | null;
+}
+
+/**
+ * Server → Client: Error message
+ */
+export interface ErrorMessage extends BaseMessage {
+  type: 'error';
+  message: string;
 }
 
 /**
@@ -197,6 +343,8 @@ export interface SaveErrorMessage extends BaseMessage {
  * Union type of all server messages
  */
 export type ServerMessage =
+  | ConfigMessage
+  | ErrorMessage
   | ImageModeMessage
   | ConnectionIdMessage
   | FigureLabelMessage
@@ -348,6 +496,7 @@ export interface AckMessage extends BaseMessage {
  * Union type of all client messages
  */
 export type ClientMessage =
+  | InitMessage
   | SupportsBinaryMessage
   | SendImageModeMessage
   | SetDevicePixelRatioMessage
