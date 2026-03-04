@@ -146,11 +146,56 @@ class SavedFile:
     metadata: dict[str, Any]
 
 
-# Module-level cache for saved files (replaces _active_figures)
-# Maps file_id -> SavedFile
-_saved_files: dict[str, SavedFile] = {}
-# Maps connection_id -> set of file_ids for cleanup
-_connection_files: dict[str, set[str]] = defaultdict(set)
+class RouterState:
+    """Holds mutable state for a router instance.
+
+    This class encapsulates all per-router state including:
+    - Active WebSocket connections tracking
+    - Cached saved files
+
+    Using a class instance instead of module-level globals allows
+    multiple router instances to coexist without shared state.
+    """
+
+    def __init__(self) -> None:
+        # Saved files cache
+        # Maps file_id -> SavedFile
+        self.saved_files: dict[str, SavedFile] = {}
+        # Maps connection_id -> set of file_ids for cleanup
+        self.connection_files: dict[str, set[str]] = defaultdict(set)
+
+        # Connection tracking
+        # Maps plot_name -> count of active connections
+        self.active_connections: dict[str, int] = defaultdict(int)
+        self.total_connections: int = 0
+
+    def connect(self, plot_name: str) -> None:
+        """Record a new WebSocket connection."""
+        self.active_connections[plot_name] += 1
+        self.total_connections += 1
+
+    def disconnect(self, plot_name: str) -> None:
+        """Record a WebSocket disconnection."""
+        self.active_connections[plot_name] -= 1
+        self.total_connections -= 1
+        if self.active_connections[plot_name] <= 0:
+            del self.active_connections[plot_name]
+
+    def get_health_stats(self) -> dict[str, Any]:
+        """Get health statistics.
+
+        Returns
+        -------
+        dict
+            Health status with connection counts and cached file count
+        """
+        return {
+            "status": "ok",
+            "connections": self.total_connections,
+            "connections_by_plot": dict(self.active_connections),
+            "cached_files": len(self.saved_files),
+        }
+
 
 # Type aliases for plot generator and update functions
 # Using Any for parameters to support subclasses of BaseModel
@@ -205,6 +250,7 @@ class MPLRouter:
     router: APIRouter
     static_files: StaticFiles
     static_mount_path: str
+    state: RouterState
 
 
 def _get_figure_executor() -> ThreadPoolExecutor:
@@ -425,39 +471,39 @@ def shutdown_figure_executor() -> None:
         _figure_executor = None
 
 
-def _clean_old_saved_files() -> None:
+def _clean_old_saved_files(state: RouterState) -> None:
     """Remove expired files and enforce max size limit."""
     now = datetime.now()
     expired_ids = []
 
     # Find expired files
-    for file_id, saved_file in _saved_files.items():
+    for file_id, saved_file in state.saved_files.items():
         if now - saved_file.created_at > SAVE_CACHE_TTL:
             expired_ids.append(file_id)
 
     # Remove expired
     for file_id in expired_ids:
-        _remove_saved_file(file_id)
+        _remove_saved_file(state, file_id)
 
     # Enforce max size (remove oldest if over limit)
-    if len(_saved_files) > SAVE_CACHE_MAX_SIZE:
-        sorted_files = sorted(_saved_files.items(), key=lambda x: x[1].created_at)
-        files_to_remove = len(_saved_files) - SAVE_CACHE_MAX_SIZE
+    if len(state.saved_files) > SAVE_CACHE_MAX_SIZE:
+        sorted_files = sorted(state.saved_files.items(), key=lambda x: x[1].created_at)
+        files_to_remove = len(state.saved_files) - SAVE_CACHE_MAX_SIZE
         for file_id, _ in sorted_files[:files_to_remove]:
-            _remove_saved_file(file_id)
+            _remove_saved_file(state, file_id)
 
 
-def _remove_saved_file(file_id: str) -> None:
+def _remove_saved_file(state: RouterState, file_id: str) -> None:
     """Remove a saved file from all caches."""
-    if file_id in _saved_files:
-        saved_file = _saved_files[file_id]
-        del _saved_files[file_id]
+    if file_id in state.saved_files:
+        saved_file = state.saved_files[file_id]
+        del state.saved_files[file_id]
 
         # Remove from connection index
-        if saved_file.connection_id in _connection_files:
-            _connection_files[saved_file.connection_id].discard(file_id)
-            if not _connection_files[saved_file.connection_id]:
-                del _connection_files[saved_file.connection_id]
+        if saved_file.connection_id in state.connection_files:
+            state.connection_files[saved_file.connection_id].discard(file_id)
+            if not state.connection_files[saved_file.connection_id]:
+                del state.connection_files[saved_file.connection_id]
 
         logger.debug(f"Removed saved file: {file_id}")
 
@@ -526,6 +572,9 @@ def create_mpl_router(
     """
     router = APIRouter()
 
+    # Create state instance for this router
+    router_state = RouterState()
+
     # Setup templates
     if template_dir is None:
         template_dir = Path(__file__).parent / "templates"
@@ -587,6 +636,22 @@ def create_mpl_router(
             )
         return PlotsListResponse(plots=plots_info)
 
+    # Route: Health check endpoint
+    @router.get("/health")
+    async def health_check() -> dict[str, Any]:
+        """Health check endpoint with connection statistics.
+
+        Returns
+        -------
+        dict
+            Health status with:
+            - status: "ok" if healthy
+            - connections: Total active WebSocket connections
+            - connections_by_plot: Breakdown of connections per plot
+            - cached_files: Number of cached save files
+        """
+        return router_state.get_health_stats()
+
     # Route: View a specific plot
     @router.get("/plot/{plot_name}", response_class=HTMLResponse)
     async def view_plot(
@@ -646,13 +711,13 @@ def create_mpl_router(
             The unique file ID provided after a save operation
         """
         # Validate file exists
-        if file_id not in _saved_files:
+        if file_id not in router_state.saved_files:
             raise HTTPException(
                 status_code=404,
                 detail="File not found. It may have expired or been deleted.",
             )
 
-        saved_file = _saved_files[file_id]
+        saved_file = router_state.saved_files[file_id]
 
         # Determine MIME type
         mime_types = {
@@ -702,6 +767,9 @@ def create_mpl_router(
 
         await websocket.accept()
         logger.debug(f"WebSocket accepted for plot '{plot_name}'")
+
+        # Track active connection
+        router_state.connect(plot_name)
 
         # Generate unique connection ID for this WebSocket session
         connection_id = str(uuid.uuid4())
@@ -922,11 +990,11 @@ def create_mpl_router(
                             )
 
                             # Store in caches
-                            _saved_files[file_id] = saved_file
-                            _connection_files[connection_id].add(file_id)
+                            router_state.saved_files[file_id] = saved_file
+                            router_state.connection_files[connection_id].add(file_id)
 
                             # Clean old files
-                            _clean_old_saved_files()
+                            _clean_old_saved_files(router_state)
 
                             # Extract base path from WebSocket path
                             base_path = ""
@@ -1036,11 +1104,14 @@ def create_mpl_router(
             # Cleanup on disconnect
             logger.debug(f"Cleaning up resources for plot '{plot_name}'")
 
+            # Decrement connection counter
+            router_state.disconnect(plot_name)
+
             # Clean up saved files for this connection
-            if connection_id in _connection_files:
-                file_ids = list(_connection_files[connection_id])
+            if connection_id in router_state.connection_files:
+                file_ids = list(router_state.connection_files[connection_id])
                 for file_id in file_ids:
-                    _remove_saved_file(file_id)
+                    _remove_saved_file(router_state, file_id)
                 logger.debug(
                     f"Removed {len(file_ids)} saved file(s) for connection {connection_id}"
                 )
@@ -1102,4 +1173,5 @@ def create_mpl_router(
         router=router,
         static_files=static_files,
         static_mount_path=static_mount_path,
+        state=router_state,
     )

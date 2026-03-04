@@ -188,3 +188,43 @@ class TestParameterValidation:
 
         # Schemas should be identical
         assert list_schema == api_schema
+
+
+class TestHealthCheckAPI:
+    """Tests for the /health endpoint."""
+
+    def test_health_check_returns_200(self, client: TestClient) -> None:
+        """Test that health check returns 200 OK."""
+        response = client.get("/plots/health")
+        assert response.status_code == 200
+
+    def test_health_check_returns_json(self, client: TestClient) -> None:
+        """Test that the response is valid JSON."""
+        response = client.get("/plots/health")
+        assert response.headers["content-type"].startswith("application/json")
+
+    def test_health_check_structure(self, client: TestClient) -> None:
+        """Test that health check has expected structure."""
+        response = client.get("/plots/health")
+        data = response.json()
+
+        assert "status" in data
+        assert data["status"] == "ok"
+
+        assert "connections" in data
+        assert isinstance(data["connections"], int)
+
+        assert "connections_by_plot" in data
+        assert isinstance(data["connections_by_plot"], dict)
+
+        assert "cached_files" in data
+        assert isinstance(data["cached_files"], int)
+
+    def test_health_check_initial_state(self, client: TestClient) -> None:
+        """Test that health check shows zero connections initially."""
+        response = client.get("/plots/health")
+        data = response.json()
+
+        # No WebSocket connections in this test
+        assert data["connections"] == 0
+        assert data["connections_by_plot"] == {}
