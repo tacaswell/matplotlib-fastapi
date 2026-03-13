@@ -19,7 +19,7 @@ pixi install
 The main demo shows interactive sine, cosine, and Lissajous curve plots:
 
 ```bash
-uvicorn demos.sine_wave:app --reload
+uvicorn demos.demo_server:app --reload
 ```
 
 Then visit:
@@ -61,7 +61,7 @@ npm install
 npm run build
 
 # Run FastAPI server (from repo root)
-uvicorn demos.sine_wave:app --reload
+uvicorn demos.demo_server:app --reload
 ```
 
 Visit http://localhost:8000/react-app/ - everything is served through FastAPI, no separate dev server needed!

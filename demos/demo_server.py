@@ -6,7 +6,7 @@ when users connect via WebSocket. It also shows the update functionality where
 plots can be dynamically updated without recreating the entire figure.
 
 Run with:
-    uvicorn demos.sine_wave:app --reload
+    uvicorn demos.demo_server:app --reload
 
 Then visit:
     http://localhost:8000/plots - List all available plots
@@ -77,8 +77,7 @@ def create_sine_plot(fig: Figure, params: SinePlotParams) -> None:
     None
         This version doesn't support updates, returns None
     """
-    ax = fig.add_subplot(111)
-
+    ax = fig.subplots()
     # Generate data
     x = np.linspace(0, 4 * np.pi, params.points)
     y = params.amplitude * np.sin(params.frequency * x + params.phase)

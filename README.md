@@ -154,10 +154,10 @@ pixi run check  # Run all checks (Python + TypeScript)
 
 See the `demos/` directory for complete examples:
 
-- `sine_wave.py`: Basic sine wave plot with phase control
+- `demo_server.py`: Server with basic
 - `embeddable_demo.html`: Examples of embeddable component usage
 - `index.html`: Template-based integration example
-
+- `react-example`: A
 
 ## License
 

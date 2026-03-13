@@ -47,7 +47,7 @@ This outputs to `demos/react-example/dist/`.
 From the repository root:
 
 ```bash
-uvicorn demos.sine_wave:app --reload
+uvicorn demos.demo_server:app --reload
 ```
 
 ### 5. Open in browser
@@ -64,7 +64,7 @@ cd demos/react-example
 npm run dev
 
 # Terminal 2: Run FastAPI with reload
-uvicorn demos.sine_wave:app --reload
+uvicorn demos.demo_server:app --reload
 ```
 
 ## How It Works
