@@ -39,7 +39,6 @@ from starlette.websockets import WebSocketDisconnect
 
 from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
 
-
 # Protocol constants
 PROTOCOL_VERSION = 0
 
@@ -101,6 +100,7 @@ def _build_image_header(
         base_seq & 0xFFFF,
         flags & 0xFFFF,
     )
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -792,9 +792,7 @@ def create_mpl_router(
         try:
             data = await websocket.receive_json()
         except WebSocketDisconnect:
-            logger.info(
-                f"WebSocket disconnected before init for plot '{plot_name}'"
-            )
+            logger.info(f"WebSocket disconnected before init for plot '{plot_name}'")
             return
         except Exception as e:
             logger.error(f"Error receiving init message: {e}", exc_info=True)
@@ -802,9 +800,7 @@ def create_mpl_router(
 
         # Validate this is the init message
         if data.get("type") != "init":
-            logger.error(
-                f"Expected 'init' as first message, got '{data.get('type')}'"
-            )
+            logger.error(f"Expected 'init' as first message, got '{data.get('type')}'")
             await websocket.send_json(
                 {
                     "type": "error",
@@ -942,7 +938,9 @@ def create_mpl_router(
 
                 # Skip logging for high-frequency events
                 if e_type not in ("motion_notify", "figure_enter", "figure_leave"):
-                    logger.debug(f"Received message type='{e_type}' for plot '{plot_name}'")
+                    logger.debug(
+                        f"Received message type='{e_type}' for plot '{plot_name}'"
+                    )
 
                 try:
                     if e_type == "save_figure":
@@ -1014,9 +1012,7 @@ def create_mpl_router(
                                 }
                             )
 
-                            logger.info(
-                                f"Saved figure '{plot_name}' as {format_lower}"
-                            )
+                            logger.info(f"Saved figure '{plot_name}' as {format_lower}")
 
                         except ValueError as e:
                             logger.warning(f"Invalid save request: {e}")

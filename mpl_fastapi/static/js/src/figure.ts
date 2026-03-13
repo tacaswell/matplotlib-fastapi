@@ -847,7 +847,9 @@ export class Figure {
         const mimeType = getImageMimeType(header.format);
 
         // Create blob with correct type - cast to ArrayBuffer to satisfy TypeScript
-        const blob = new Blob([imageData as unknown as ArrayBuffer], { type: mimeType });
+        const blob = new Blob([imageData as unknown as ArrayBuffer], {
+          type: mimeType,
+        });
 
         // Free memory for previous frames
         if (this.imageObj.src) {

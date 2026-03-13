@@ -44,7 +44,6 @@ from enum import IntEnum
 from typing import Any, Protocol
 from urllib.parse import urlencode
 
-import numpy as np
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -56,12 +55,14 @@ BINARY_HEADER_SIZE = 8
 
 class ImageTypeMode(IntEnum):
     """Binary image type/mode - first byte of header."""
+
     FULL = 0x00
     DIFF = 0x01
 
 
 class ImageFormat(IntEnum):
     """Binary image format - second byte of header."""
+
     PNG = 0x01
     JPEG = 0x02
     WEBP = 0x03
@@ -73,6 +74,7 @@ class BinaryImageHeader:
 
     Structure: [type_mode: 1, format: 1, seq_num: 2, base_seq: 2, flags: 2]
     """
+
     type_mode: ImageTypeMode
     format: ImageFormat
     seq_num: int
@@ -430,9 +432,7 @@ class MatplotlibWebSocketClient:
         if config_msg["type"] == "error":
             raise RuntimeError(f"Server error: {config_msg.get('message', 'Unknown')}")
         if config_msg["type"] != "config":
-            raise RuntimeError(
-                f"Expected config message, got {config_msg['type']}"
-            )
+            raise RuntimeError(f"Expected config message, got {config_msg['type']}")
 
         # Validate protocol version
         server_version = config_msg.get("protocol_version")
@@ -445,27 +445,27 @@ class MatplotlibWebSocketClient:
 
         # Extract configuration from consolidated config message
         self.connection_id = config_msg["connection_id"]
-        
+
         # Figure config
         figure_config = config_msg.get("figure", {})
         size = figure_config.get("size", [640, 480])
         self.figure_size = (size[0], size[1])
         self.figure_dpi = figure_config.get("dpi", 100)
         self.figure_label = figure_config.get("label", "")
-        
+
         # Toolbar config
         toolbar_config = config_msg.get("toolbar", {})
         self.toolbar_items = toolbar_config.get("items", [])
-        
+
         # Save config
         save_config = config_msg.get("save", {})
         self.save_formats = save_config.get("formats", ["png"])
         self.default_save_format = save_config.get("default_format", "png")
-        
+
         # Image config
         image_config = config_msg.get("image", {})
         self.image_mode = "full"  # Start with full mode
-        
+
         # Update schema
         self.update_schema = config_msg.get("update_schema")
 
@@ -622,9 +622,13 @@ class MatplotlibWebSocketClient:
         # Wait for invalidate message (update always triggers redraw)
         invalidate_msg = self._receive_json()
         if invalidate_msg["type"] == "error":
-            raise RuntimeError(f"Update failed: {invalidate_msg.get('message', 'Unknown error')}")
+            raise RuntimeError(
+                f"Update failed: {invalidate_msg.get('message', 'Unknown error')}"
+            )
         if invalidate_msg["type"] != "invalidate":
-            logger.warning(f"Expected invalidate after update_params, got {invalidate_msg['type']}")
+            logger.warning(
+                f"Expected invalidate after update_params, got {invalidate_msg['type']}"
+            )
 
     def send_mouse_event(
         self,
@@ -732,7 +736,9 @@ class MatplotlibWebSocketClient:
             logger.info(f"Save complete: {response['filename']}")
             return response
         if response["type"] == "error":
-            raise RuntimeError(f"Save failed: {response.get('message', 'Unknown error')}")
+            raise RuntimeError(
+                f"Save failed: {response.get('message', 'Unknown error')}"
+            )
         raise RuntimeError(f"Unexpected response to save_figure: {response['type']}")
 
     # Image processing
@@ -774,7 +780,9 @@ class MatplotlibWebSocketClient:
             logger.debug(f"Received figure size: {figure_size} @ {figure_dpi} DPI")
         # Other message types don't update persistent state
 
-    def _process_image(self, image_data: bytes, *, composite_diffs: bool = True) -> bytes:
+    def _process_image(
+        self, image_data: bytes, *, composite_diffs: bool = True
+    ) -> bytes:
         """Process image data and update internal state.
 
         Handles diff compositing if enabled. Should be called for every image
@@ -797,10 +805,12 @@ class MatplotlibWebSocketClient:
             self._current_image = Image.open(io.BytesIO(image_data)).convert("RGBA")
             logger.debug(f"Stored full image: {self._current_image.size}")
             return image_data
-        elif self.image_mode == "diff":
+        if self.image_mode == "diff":
             if self._current_image is None:
                 # No base image, treat diff as full
-                logger.warning("Received diff image without base image, treating as full")
+                logger.warning(
+                    "Received diff image without base image, treating as full"
+                )
                 self._current_image = Image.open(io.BytesIO(image_data)).convert("RGBA")
                 return image_data
 
@@ -823,8 +833,7 @@ class MatplotlibWebSocketClient:
             composited_data = output.getvalue()
             logger.debug(f"Composited diff: {len(composited_data)} bytes")
             return composited_data
-        else:
-            raise RuntimeError(f"Unknown image mode: {self.image_mode}")
+        raise RuntimeError(f"Unknown image mode: {self.image_mode}")
 
     # Utility methods for advanced use cases
 

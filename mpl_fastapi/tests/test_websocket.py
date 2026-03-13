@@ -237,7 +237,6 @@ class TestWebSocketConnection:
             ws_client.send_toolbar_button("pan")
 
 
-
 class TestProtocolVersion:
     """Tests for protocol version negotiation (v0)."""
 
@@ -324,7 +323,6 @@ class TestProtocolVersion:
         assert exc_info.value.code == 1008
 
 
-
 class TestImageRendering:
     """Tests for image rendering and retrieval."""
 
@@ -398,7 +396,7 @@ class TestImageRendering:
         with ws_client.connect():
             # Send toolbar button which queues messages
             ws_client.send_toolbar_button("pan")
-            
+
             # Receive messages using receive_message()
             # Toolbar actions can queue multiple message types
             received_types = []
@@ -408,10 +406,9 @@ class TestImageRendering:
                 # Break if we get an invalidate message (last expected message)
                 if msg["type"] == "invalidate":
                     break
-            
+
             # Verify we received expected message types from pan button
             assert "navigate_mode" in received_types or "message" in received_types
-
 
 
 class TestResizing:
@@ -454,7 +451,6 @@ class TestResizing:
                 assert isinstance(msg, dict)
                 assert msg["type"] == "resize"
                 assert msg["size"] == [width, height]
-
 
 
 class TestDPI:
@@ -794,8 +790,9 @@ class TestInteractiveCallbacks:
         4. Render local figure
         5. Compare that renders are identical (pixel data, not PNG bytes)
         """
-        import numpy as np
         from pathlib import Path
+
+        import numpy as np
         from fastapi.testclient import TestClient
         from matplotlib.backend_bases import MouseEvent
         from matplotlib.figure import Figure
@@ -908,18 +905,17 @@ class TestInteractiveCallbacks:
                 # Save local image
                 Image.fromarray(local_pixels).save(local_path)
 
-                print(f"\nImages saved to:")
+                print("\nImages saved to:")
                 print(f"  Remote: {remote_path}")
                 print(f"  Local: {local_path}")
 
                 raise
 
-    def test_double_click_event_byte_for_byte(
-        self, test_app_with_interactive
-    ) -> None:
+    def test_double_click_event_byte_for_byte(self, test_app_with_interactive) -> None:
         """Test double-click event with pixel comparison."""
-        import numpy as np
         from pathlib import Path
+
+        import numpy as np
         from fastapi.testclient import TestClient
         from matplotlib.backend_bases import MouseEvent
         from matplotlib.figure import Figure
@@ -1019,7 +1015,7 @@ class TestInteractiveCallbacks:
                     f.write(ws_image_bytes)
                 Image.fromarray(local_pixels).save(local_path)
 
-                print(f"\nImages saved to:")
+                print("\nImages saved to:")
                 print(f"  Remote: {remote_path}")
                 print(f"  Local: {local_path}")
 
@@ -1027,7 +1023,6 @@ class TestInteractiveCallbacks:
 
     def test_scroll_event_byte_for_byte(self, test_app_with_interactive) -> None:
         """Test scroll event with pixel comparison."""
-        import numpy as np
         from fastapi.testclient import TestClient
         from matplotlib.backend_bases import MouseEvent
         from matplotlib.figure import Figure
