@@ -31,7 +31,7 @@
       ready(
         function () {
           // Pass query parameters from the page URL to the WebSocket
-          var ws_url = "{{ ws_uri }}/ws/{{ fig_id }}";
+          var ws_url = "{{ ws_uri }}/ws/v0/{{ fig_id }}";
           if (window.location.search) {
             ws_url += window.location.search;
           }
