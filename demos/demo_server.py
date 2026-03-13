@@ -17,6 +17,7 @@ Then visit:
 
 import logging
 import numpy as np
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -260,7 +261,7 @@ mpl = create_mpl_router(
     }
 )
 
-# Create FastAPI app and mount the router
+# Create FastAPI app
 app = FastAPI(
     title="Matplotlib FastAPI Demo",
     description="Interactive matplotlib plots served via FastAPI and WebSockets",
@@ -274,11 +275,21 @@ app.include_router(mpl.router, prefix="/plots")
 app.mount(mpl.static_mount_path, mpl.static_files, name="mpl_static")
 
 
-# Register shutdown handler for thread pool cleanup
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up resources on application shutdown."""
-    shutdown_figure_executor()
+# Add lifespan context manager after app creation
+# This demonstrates how to add a lifespan to an existing FastAPI app
+existing_lifespan = app.router.lifespan_context
+
+@asynccontextmanager
+async def lifespan_with_mpl(app: FastAPI):
+    """Compose matplotlib cleanup with any existing lifespan."""
+    async with existing_lifespan(app):
+        # Startup: resources already initialized
+        yield
+        # Shutdown: clean up matplotlib resources
+        shutdown_figure_executor()
+
+# Replace the app's lifespan with our composed version
+app.router.lifespan_context = lifespan_with_mpl
 
 
 # Add route to serve home page
