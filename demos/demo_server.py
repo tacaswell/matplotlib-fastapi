@@ -226,7 +226,7 @@ def create_lissajous_plot(fig: Figure, params: LissajousParams) -> None:
 mpl = create_mpl_router(
     {
         "sine": PlotConfig(
-            description="Interactive sine wave with adjustable frequency, amplitude, and phase",
+            description="sine wave with configure-on-init frequency, amplitude, and phase",
             init=InitConfig(
                 function=create_sine_plot,
                 params_model=SinePlotParams,
@@ -329,4 +329,3 @@ npm run build
             """,
             status_code=200,
         )
-
