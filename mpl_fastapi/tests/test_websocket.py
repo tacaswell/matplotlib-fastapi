@@ -72,18 +72,18 @@ class TestWebSocketConnection:
         adapter = ContextManagerWebSocketAdapter(client)
 
         # 'value' must be float, this will fail validation
+        adapter.connect("/plots/ws/v0/simple?value=invalid")
+
+        # Send init message
+        adapter.send_json({"type": "init", "protocol_version": 0})
+
+        # Should receive error message before closing
+        msg = adapter.receive_json()
+        assert msg["type"] == "error"
+        assert "Invalid parameters" in msg["message"]
+
+        # Try to receive more - this should raise WebSocketDisconnect
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            adapter.connect("/plots/ws/v0/simple?value=invalid")
-
-            # Send init message
-            adapter.send_json({"type": "init", "protocol_version": 0})
-
-            # Should receive error message before closing
-            msg = adapter.receive_json()
-            assert msg["type"] == "error"
-            assert "Invalid parameters" in msg["message"]
-
-            # Try to receive more - this should raise WebSocketDisconnect
             adapter.receive_json()
 
         assert exc_info.value.code == 1008
@@ -94,18 +94,18 @@ class TestWebSocketConnection:
         adapter = ContextManagerWebSocketAdapter(client)
 
         # 'value' must be between 0.1 and 10.0
+        adapter.connect("/plots/ws/v0/simple?value=100.0")
+
+        # Send init message
+        adapter.send_json({"type": "init", "protocol_version": 0})
+
+        # Should receive error message before closing
+        msg = adapter.receive_json()
+        assert msg["type"] == "error"
+        assert "Invalid parameters" in msg["message"]
+
+        # Try to receive more - this should raise WebSocketDisconnect
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            adapter.connect("/plots/ws/v0/simple?value=100.0")
-
-            # Send init message
-            adapter.send_json({"type": "init", "protocol_version": 0})
-
-            # Should receive error message before closing
-            msg = adapter.receive_json()
-            assert msg["type"] == "error"
-            assert "Invalid parameters" in msg["message"]
-
-            # Try to receive more - this should raise WebSocketDisconnect
             adapter.receive_json()
 
         assert exc_info.value.code == 1008
@@ -247,18 +247,18 @@ class TestProtocolVersion:
         # Use raw adapter to test protocol-level error handling
         adapter = ContextManagerWebSocketAdapter(client)
 
+        adapter.connect("/plots/ws/v0/simple?value=1.0")
+
+        # Send init with incompatible version
+        adapter.send_json({"type": "init", "protocol_version": 999})
+
+        # Should receive error message immediately
+        msg = adapter.receive_json()
+        assert msg["type"] == "error"
+        assert "Incompatible protocol version" in msg["message"]
+
+        # Try to receive more - should disconnect
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            adapter.connect("/plots/ws/v0/simple?value=1.0")
-
-            # Send init with incompatible version
-            adapter.send_json({"type": "init", "protocol_version": 999})
-
-            # Should receive error message immediately
-            msg = adapter.receive_json()
-            assert msg["type"] == "error"
-            assert "Incompatible protocol version" in msg["message"]
-
-            # Try to receive more - should disconnect
             adapter.receive_json()
 
         assert exc_info.value.code == 1008
@@ -285,18 +285,18 @@ class TestProtocolVersion:
         # Use raw adapter to test protocol-level error handling
         adapter = ContextManagerWebSocketAdapter(client)
 
+        adapter.connect("/plots/ws/v0/simple?value=1.0")
+
+        # Send init without protocol_version field
+        adapter.send_json({"type": "init"})
+
+        # Should receive error message immediately
+        msg = adapter.receive_json()
+        assert msg["type"] == "error"
+        assert "required" in msg["message"].lower()
+
+        # Try to receive more - should disconnect
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            adapter.connect("/plots/ws/v0/simple?value=1.0")
-
-            # Send init without protocol_version field
-            adapter.send_json({"type": "init"})
-
-            # Should receive error message immediately
-            msg = adapter.receive_json()
-            assert msg["type"] == "error"
-            assert "required" in msg["message"].lower()
-
-            # Try to receive more - should disconnect
             adapter.receive_json()
 
         assert exc_info.value.code == 1008
@@ -306,18 +306,18 @@ class TestProtocolVersion:
         # Use raw adapter to test protocol-level error handling
         adapter = ContextManagerWebSocketAdapter(client)
 
+        adapter.connect("/plots/ws/v0/simple?value=1.0")
+
+        # Send wrong message type as first client message
+        adapter.send_json({"type": "refresh"})
+
+        # Should receive error message
+        msg = adapter.receive_json()
+        assert msg["type"] == "error"
+        assert "init" in msg["message"].lower()
+
+        # Try to receive more - should disconnect
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            adapter.connect("/plots/ws/v0/simple?value=1.0")
-
-            # Send wrong message type as first client message
-            adapter.send_json({"type": "refresh"})
-
-            # Should receive error message
-            msg = adapter.receive_json()
-            assert msg["type"] == "error"
-            assert "init" in msg["message"].lower()
-
-            # Try to receive more - should disconnect
             adapter.receive_json()
 
         assert exc_info.value.code == 1008
@@ -692,7 +692,7 @@ class TestToolbarNavigation:
 
         with ws_client.connect():
             # Get initial image - send_render returns image directly
-            initial_image = ws_client.send_render()
+            ws_client.send_render()
 
             # Activate pan mode
             ws_client.send_toolbar_button("pan")
@@ -803,7 +803,7 @@ class TestInteractiveCallbacks:
         # Step 1: Create local figure with same generator function
         local_fig = Figure()
         local_params = SimpleParams(value=1.0)
-        local_state = create_interactive_plot(local_fig, local_params)
+        create_interactive_plot(local_fig, local_params)
         local_canvas = FastAPICanvas(local_fig)
         local_canvas.draw()
 
@@ -833,7 +833,8 @@ class TestInteractiveCallbacks:
                 msg = ws_client.receive_message()
                 if msg["type"] == "invalidate":
                     break
-            assert msg is not None and msg["type"] == "invalidate"
+            assert msg is not None
+            assert msg["type"] == "invalidate"
 
             # Get rendered image from WebSocket - send_render returns image directly
             ws_image_bytes = ws_client.send_render()
@@ -926,7 +927,7 @@ class TestInteractiveCallbacks:
         # Create local figure
         local_fig = Figure()
         local_params = SimpleParams(value=1.0)
-        local_state = create_interactive_plot(local_fig, local_params)
+        create_interactive_plot(local_fig, local_params)
         local_canvas = FastAPICanvas(local_fig)
         local_canvas.draw()
 
@@ -1033,7 +1034,7 @@ class TestInteractiveCallbacks:
         # Create local figure
         local_fig = Figure()
         local_params = SimpleParams(value=1.0)
-        local_state = create_interactive_plot(local_fig, local_params)
+        create_interactive_plot(local_fig, local_params)
         local_canvas = FastAPICanvas(local_fig)
         local_canvas.draw()
 
