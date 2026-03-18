@@ -15,9 +15,9 @@ Protocol v0 uses a simplified message flow:
 - Binary image messages have 8-byte headers with sequence numbers
 """
 
-from __future__ import annotations
-
 import asyncio
+import functools
+import hashlib
 import io
 import logging
 import struct
@@ -44,6 +44,39 @@ from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
 
 # Protocol constants
 PROTOCOL_VERSION = 0
+
+
+# Cache headers for immutable JS bundles.
+# These files are build artifacts that never change within a deployment,
+# so we use a long max-age with immutable.
+_JS_CACHE_HEADERS: dict[str, str] = {
+    "Cache-Control": "public, max-age=86400, immutable",
+}
+
+
+@functools.lru_cache(maxsize=64)
+def _read_static_file(filename: str) -> tuple[str, str] | None:
+    """Read a static JS/map file from the dist directory, cached in memory.
+
+    Returns the file content and a content-based ETag.  Both are cached
+    after the first read so subsequent requests are free.
+
+    Parameters
+    ----------
+    filename : str
+        Filename relative to ``static/js/dist/`` (e.g. ``"component.esm.js"``).
+
+    Returns
+    -------
+    tuple[str, str] or None
+        ``(content, etag)`` or ``None`` if the file does not exist.
+    """
+    path = Path(__file__).parent / "static/js/dist" / filename
+    if path.exists():
+        content = path.read_text(encoding="utf-8")
+        etag = hashlib.sha256(content.encode()).hexdigest()[:16]
+        return content, f'"{etag}"'
+    return None
 
 
 class ImageTypeMode(IntEnum):
@@ -1262,26 +1295,50 @@ def create_mpl_router(
     @router.get("/js/mpl.js", response_class=PlainTextResponse)
     async def get_mpl_js() -> PlainTextResponse:
         """Serve the matplotlib JavaScript bundle (TypeScript-compiled)."""
-        js = FastAPIManger.get_javascript()
-        return PlainTextResponse(js, headers={"Content-Type": "application/javascript"})
+        result = _read_static_file("component.js")
+        if result is None:
+            raise HTTPException(status_code=404, detail="JavaScript bundle not found")
+        content, etag = result
+        return PlainTextResponse(
+            content,
+            headers={
+                "Content-Type": "application/javascript",
+                **_JS_CACHE_HEADERS,
+                "ETag": etag,
+            },
+        )
 
     # Route: Serve embeddable component bundle (IIFE)
     @router.get("/component.js", response_class=PlainTextResponse)
     async def get_component_js() -> PlainTextResponse:
         """Serve the embeddable matplotlib component JavaScript (TypeScript-compiled)."""
-        # This now serves the TypeScript-compiled bundle from dist/
-        js = FastAPIManger.get_javascript()
-        return PlainTextResponse(js, headers={"Content-Type": "application/javascript"})
+        result = _read_static_file("component.js")
+        if result is None:
+            raise HTTPException(status_code=404, detail="JavaScript bundle not found")
+        content, etag = result
+        return PlainTextResponse(
+            content,
+            headers={
+                "Content-Type": "application/javascript",
+                **_JS_CACHE_HEADERS,
+                "ETag": etag,
+            },
+        )
 
     # Route: Serve embeddable component bundle (ESM)
     @router.get("/component.esm.js", response_class=PlainTextResponse)
     async def get_component_esm_js() -> PlainTextResponse:
         """Serve the ESM version of the embeddable matplotlib component."""
-        esm_path = Path(__file__).parent / "static/js/dist/component.esm.js"
-        if esm_path.exists():
+        result = _read_static_file("component.esm.js")
+        if result is not None:
+            content, etag = result
             return PlainTextResponse(
-                esm_path.read_text(encoding="utf-8"),
-                headers={"Content-Type": "application/javascript"},
+                content,
+                headers={
+                    "Content-Type": "application/javascript",
+                    **_JS_CACHE_HEADERS,
+                    "ETag": etag,
+                },
             )
         raise HTTPException(status_code=404, detail="ESM bundle not found")
 
@@ -1289,11 +1346,16 @@ def create_mpl_router(
     @router.get("/component.js.map", response_class=PlainTextResponse)
     async def get_component_js_map() -> PlainTextResponse:
         """Serve the source map for the TypeScript-compiled component."""
-        map_path = Path(__file__).parent / "static/js/dist/component.js.map"
-        if map_path.exists():
+        result = _read_static_file("component.js.map")
+        if result is not None:
+            content, etag = result
             return PlainTextResponse(
-                map_path.read_text(encoding="utf-8"),
-                headers={"Content-Type": "application/json"},
+                content,
+                headers={
+                    "Content-Type": "application/json",
+                    **_JS_CACHE_HEADERS,
+                    "ETag": etag,
+                },
             )
         raise HTTPException(status_code=404, detail="Source map not found")
 
@@ -1301,11 +1363,16 @@ def create_mpl_router(
     @router.get("/component.esm.js.map", response_class=PlainTextResponse)
     async def get_component_esm_js_map() -> PlainTextResponse:
         """Serve the source map for the ESM component."""
-        map_path = Path(__file__).parent / "static/js/dist/component.esm.js.map"
-        if map_path.exists():
+        result = _read_static_file("component.esm.js.map")
+        if result is not None:
+            content, etag = result
             return PlainTextResponse(
-                map_path.read_text(encoding="utf-8"),
-                headers={"Content-Type": "application/json"},
+                content,
+                headers={
+                    "Content-Type": "application/json",
+                    **_JS_CACHE_HEADERS,
+                    "ETag": etag,
+                },
             )
         raise HTTPException(status_code=404, detail="ESM source map not found")
 

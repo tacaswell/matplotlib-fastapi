@@ -11,7 +11,6 @@ efficient differential image updates to minimize data transfer.
 
 import logging
 from collections import deque
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -359,13 +358,6 @@ class FastAPIManger(FigureManagerBase):
             "save_formats": save_formats,
             "default_save_format": FastAPICanvas.get_default_filetype(),
         }
-
-    @classmethod
-    def get_javascript(cls) -> str:
-        """Return the TypeScript-compiled JavaScript bundle."""
-        # Read the TypeScript-compiled bundle from dist/
-        dist_path = Path(__file__).parent / "static/js/dist/component.js"
-        return dist_path.read_text(encoding="utf-8")
 
 
 class FastAPIBackend(_Backend):
