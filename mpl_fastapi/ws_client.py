@@ -195,35 +195,35 @@ class ContextManagerWebSocketAdapter:
         connect_fn = getattr(self.client, self.connect_method)
         self._websocket = connect_fn(url)
         self._websocket.__enter__()
-        logger.debug(f"{self.adapter_name} connected to {url}")
+        logger.debug("%s connected to %s", self.adapter_name, url)
 
     def disconnect(self) -> None:
         """Close WebSocket connection."""
         if self._websocket is not None:
             self._websocket.__exit__(None, None, None)
             self._websocket = None
-            logger.debug(f"{self.adapter_name} disconnected")
+            logger.debug("%s disconnected", self.adapter_name)
 
     def send_json(self, data: dict[str, Any]) -> None:
         """Send JSON message."""
         if self._websocket is None:
             raise RuntimeError("Not connected")
         self._websocket.send_json(data)
-        logger.debug(f"{self.adapter_name} sent JSON: {data}")
+        logger.debug("%s sent JSON: %s", self.adapter_name, data)
 
     def send_bytes(self, data: bytes) -> None:
         """Send binary message."""
         if self._websocket is None:
             raise RuntimeError("Not connected")
         self._websocket.send_bytes(data)
-        logger.debug(f"{self.adapter_name} sent {len(data)} bytes")
+        logger.debug("%s sent %d bytes", self.adapter_name, len(data))
 
     def receive_json(self) -> dict[str, Any]:
         """Receive JSON message."""
         if self._websocket is None:
             raise RuntimeError("Not connected")
         msg: dict[str, Any] = self._websocket.receive_json()
-        logger.debug(f"{self.adapter_name} received JSON: {msg}")
+        logger.debug("%s received JSON: %s", self.adapter_name, msg)
         return msg
 
     def receive_bytes(self) -> bytes:
@@ -231,7 +231,7 @@ class ContextManagerWebSocketAdapter:
         if self._websocket is None:
             raise RuntimeError("Not connected")
         data: bytes = self._websocket.receive_bytes()
-        logger.debug(f"{self.adapter_name} received {len(data)} bytes")
+        logger.debug("%s received %d bytes", self.adapter_name, len(data))
         return data
 
     def is_connected(self) -> bool:
@@ -392,12 +392,12 @@ class MatplotlibWebSocketClient:
             # Establish connection
             url = self._build_ws_url()
             self.adapter.connect(url)
-            logger.info(f"Connected to {self.plot_name}")
+            logger.info("Connected to %s", self.plot_name)
 
             # Send init message and receive config (v0 protocol)
             self._perform_handshake()
 
-            logger.info(f"Client initialized for {self.plot_name}")
+            logger.info("Client initialized for %s", self.plot_name)
 
             yield self
 
@@ -407,7 +407,7 @@ class MatplotlibWebSocketClient:
             self._current_image = None
             self._last_seq_num = 0
             self.adapter.disconnect()
-            logger.info(f"Disconnected from {self.plot_name}")
+            logger.info("Disconnected from %s", self.plot_name)
 
     def _perform_handshake(self) -> None:
         """Perform v0 protocol handshake.
@@ -425,7 +425,7 @@ class MatplotlibWebSocketClient:
             "supports_binary": self.supports_binary,
         }
         self.adapter.send_json(init_msg)
-        logger.debug(f"Sent init message: protocol_version={PROTOCOL_VERSION}")
+        logger.debug("Sent init message: protocol_version=%s", PROTOCOL_VERSION)
 
         # 2. Receive config message
         config_msg = self.adapter.receive_json()
@@ -441,7 +441,7 @@ class MatplotlibWebSocketClient:
                 f"Protocol version mismatch: client={PROTOCOL_VERSION}, server={server_version}"
             )
         self._server_protocol_version = server_version
-        logger.debug(f"Server protocol version validated: {server_version}")
+        logger.debug("Server protocol version validated: %s", server_version)
 
         # Extract configuration from consolidated config message
         self.connection_id = config_msg["connection_id"]
@@ -470,8 +470,8 @@ class MatplotlibWebSocketClient:
         self.update_schema = config_msg.get("update_schema")
 
         logger.debug(
-            f"Config received: connection_id={self.connection_id}, "
-            f"figure_size={self.figure_size}, toolbar_items={len(self.toolbar_items)}"
+            "Config received: connection_id=%s, figure_size=%s, toolbar_items=%d",
+            self.connection_id, self.figure_size, len(self.toolbar_items),
         )
 
         # Mark as initialized
@@ -522,8 +522,8 @@ class MatplotlibWebSocketClient:
         self._last_seq_num = header.seq_num
 
         logger.debug(
-            f"Received image: {len(image_data)} bytes "
-            f"(mode={self.image_mode}, seq={header.seq_num}, base={header.base_seq})"
+            "Received image: %d bytes (mode=%s, seq=%s, base=%s)",
+            len(image_data), self.image_mode, header.seq_num, header.base_seq,
         )
 
         return self._process_image(image_data, composite_diffs=True)
@@ -581,7 +581,7 @@ class MatplotlibWebSocketClient:
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
         self.adapter.send_json({"type": "resize", "width": width, "height": height})
-        logger.debug(f"Sent resize request: {width}x{height}")
+        logger.debug("Sent resize request: %dx%d", width, height)
 
         # Wait for resize acknowledgment
         resize_msg = self._receive_json()
@@ -604,7 +604,7 @@ class MatplotlibWebSocketClient:
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
         self.adapter.send_json({"type": "toolbar_button", "name": button_name})
-        logger.debug(f"Sent toolbar button: {button_name}")
+        logger.debug("Sent toolbar button: %s", button_name)
 
     def send_update_params(self, params: dict[str, Any]) -> None:
         """Update plot parameters and wait for invalidate message.
@@ -617,7 +617,7 @@ class MatplotlibWebSocketClient:
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
         self.adapter.send_json({"type": "update_params", "params": params})
-        logger.debug(f"Sent update params: {params}")
+        logger.debug("Sent update params: %s", params)
 
         # Wait for invalidate message (update always triggers redraw)
         invalidate_msg = self._receive_json()
@@ -627,7 +627,7 @@ class MatplotlibWebSocketClient:
             )
         if invalidate_msg["type"] != "invalidate":
             logger.warning(
-                f"Expected invalidate after update_params, got {invalidate_msg['type']}"
+                "Expected invalidate after update_params, got %s", invalidate_msg['type']
             )
 
     def send_mouse_event(
@@ -668,7 +668,7 @@ class MatplotlibWebSocketClient:
         self.adapter.send_json(msg)
         # Don't log motion events to reduce noise
         if event_type not in ("motion_notify", "figure_enter", "figure_leave"):
-            logger.debug(f"Sent mouse event: {event_type}")
+            logger.debug("Sent mouse event: %s", event_type)
 
     def send_keyboard_event(self, event_type: str, key: str) -> None:
         """Send keyboard event to server.
@@ -686,11 +686,11 @@ class MatplotlibWebSocketClient:
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
         self.adapter.send_json({"type": event_type, "key": key})
-        logger.debug(f"Sent keyboard event: {event_type} - {key}")
+        logger.debug("Sent keyboard event: %s - %s", event_type, key)
 
     def send_save_figure(
         self,
-        format: str = "png",  # noqa: A002
+        format: str = "png",
         dpi: int = 100,
         transparent: bool = False,
     ) -> dict[str, Any]:
@@ -728,12 +728,12 @@ class MatplotlibWebSocketClient:
                 "transparent": transparent,
             }
         )
-        logger.debug(f"Sent save request: {format} @ {dpi} DPI")
+        logger.debug("Sent save request: %s @ %d DPI", format, dpi)
 
         # Wait for save_complete or save_error response
         response = self._receive_json()
         if response["type"] == "save_complete":
-            logger.info(f"Save complete: {response['filename']}")
+            logger.info("Save complete: %s", response['filename'])
             return response
         if response["type"] == "error":
             raise RuntimeError(
@@ -759,25 +759,25 @@ class MatplotlibWebSocketClient:
         # Update state based on message type
         if msg_type == "image_mode":
             self.image_mode = msg["mode"]
-            logger.debug(f"Updated image mode: {self.image_mode}")
+            logger.debug("Updated image mode: %s", self.image_mode)
         elif msg_type == "connection_id":
             self.connection_id = msg["id"]
-            logger.debug(f"Updated connection ID: {self.connection_id}")
+            logger.debug("Updated connection ID: %s", self.connection_id)
         elif msg_type == "toolbar_config":
             self.toolbar_items = msg["items"]
-            logger.debug(f"Updated toolbar items: {len(self.toolbar_items)}")
+            logger.debug("Updated toolbar items: %d", len(self.toolbar_items))
         elif msg_type == "save_formats":
             self.save_formats = msg["formats"]
-            logger.debug(f"Updated save formats: {self.save_formats}")
+            logger.debug("Updated save formats: %s", self.save_formats)
         elif msg_type == "default_save_format":
             self.default_save_format = msg["format"]
-            logger.debug(f"Updated default save format: {self.default_save_format}")
+            logger.debug("Updated default save format: %s", self.default_save_format)
         elif msg_type == "figure_size":
             # Store figure size information (not strictly necessary for client state,
             # but useful for debugging and validation)
             figure_size = msg.get("size")
             figure_dpi = msg.get("dpi")
-            logger.debug(f"Received figure size: {figure_size} @ {figure_dpi} DPI")
+            logger.debug("Received figure size: %s @ %s DPI", figure_size, figure_dpi)
         # Other message types don't update persistent state
 
     def _process_image(
@@ -803,7 +803,7 @@ class MatplotlibWebSocketClient:
         if not composite_diffs or self.image_mode == "full":
             # Store full image for future diff compositing
             self._current_image = Image.open(io.BytesIO(image_data)).convert("RGBA")
-            logger.debug(f"Stored full image: {self._current_image.size}")
+            logger.debug("Stored full image: %s", self._current_image.size)
             return image_data
         if self.image_mode == "diff":
             if self._current_image is None:
@@ -831,7 +831,7 @@ class MatplotlibWebSocketClient:
             output = io.BytesIO()
             self._current_image.save(output, format="PNG")
             composited_data = output.getvalue()
-            logger.debug(f"Composited diff: {len(composited_data)} bytes")
+            logger.debug("Composited diff: %d bytes", len(composited_data))
             return composited_data
         raise RuntimeError(f"Unknown image mode: {self.image_mode}")
 

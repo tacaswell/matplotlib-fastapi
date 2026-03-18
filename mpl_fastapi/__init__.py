@@ -20,11 +20,6 @@ from .router import (
 )
 
 __all__ = [
-    "__version__",
-    "compose_lifespans",
-    "create_mpl_router",
-    "install_mpl_router",
-    "shutdown_figure_executor",
     "InitConfig",
     "Lifespan",
     "MPLRouter",
@@ -34,4 +29,9 @@ __all__ = [
     "PlotsListResponse",
     "UpdateConfig",
     "UpdateFunction",
+    "__version__",
+    "compose_lifespans",
+    "create_mpl_router",
+    "install_mpl_router",
+    "shutdown_figure_executor",
 ]

@@ -82,7 +82,7 @@ def _build_javascript() -> None:
         )
         print("✓ npm dependencies installed")
     except subprocess.CalledProcessError as e:
-        print(f"\nERROR: npm install failed:", file=sys.stderr)
+        print("\nERROR: npm install failed:", file=sys.stderr)
         print(e.stderr.decode() if e.stderr else str(e), file=sys.stderr)
         sys.exit(1)
 
@@ -95,8 +95,8 @@ def _build_javascript() -> None:
             check=True
         )
         print("✓ TypeScript compilation complete")
-    except subprocess.CalledProcessError as e:
-        print(f"\nERROR: TypeScript build failed:", file=sys.stderr)
+    except subprocess.CalledProcessError:
+        print("\nERROR: TypeScript build failed:", file=sys.stderr)
         sys.exit(1)
 
     # Verify output exists

@@ -16,9 +16,9 @@ Then visit:
 """
 
 import logging
-import numpy as np
 from pathlib import Path
 
+import numpy as np
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from matplotlib.figure import Figure
@@ -89,7 +89,7 @@ def create_sine_plot(fig: Figure, params: SinePlotParams) -> None:
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_title(
-        f"Sine Wave: y = {params.amplitude} × sin({params.frequency}x + {params.phase:.2f})"
+        f"Sine Wave: y = ${params.amplitude} \sin({params.frequency}x + {params.phase:.2f})$"
     )
     ax.legend()
 
@@ -123,7 +123,7 @@ def create_interactive_sine(fig: Figure, params: SinePlotParams) -> dict:
     ax.set_ylabel("y")
     ax.set_ylim(-params.amplitude * 1.2, params.amplitude * 1.2)
     title = ax.set_title(
-        f"Interactive Sine: y = {params.amplitude} × sin({params.frequency}x)"
+        f"Interactive Sine: $y = {params.amplitude}\sin({params.frequency}x)$"
     )
 
     # Return state object that update function will use
@@ -150,7 +150,7 @@ def update_interactive_sine(state: dict, params: SineUpdateParams) -> dict:
 
     # Update title to show current phase
     state["title"].set_text(
-        f"Interactive Sine: y = {state['amplitude']} × sin({state['frequency']}x + {params.phase:.2f})"
+        f"Interactive Sine: $y = {state['amplitude']} \sin({state['frequency']}x + {params.phase:.2f})$"
     )
 
     # Update and return state
@@ -183,9 +183,11 @@ def create_cosine_plot(fig: Figure, params: CosinePlotParams) -> None:
     ax.grid(True, alpha=0.3)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
-    title = f"Cosine Wave: y = {params.amplitude} × cos({params.frequency}x)"
+    rhs = f'{params.amplitude}\cos({params.frequency}x)'
     if params.damping > 0:
-        title += f" × e^(-{params.damping}x)"
+        rhs += f"e^{{-{params.damping}x}}"
+    title = f"Cosine Wave: y = ${rhs}$"
+
     ax.set_title(title)
     ax.legend()
 

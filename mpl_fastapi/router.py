@@ -302,7 +302,7 @@ def _get_figure_executor() -> ThreadPoolExecutor:
         _figure_executor = ThreadPoolExecutor(
             max_workers=_executor_max_workers, thread_name_prefix="mpl_worker"
         )
-        logger.info(f"Created ThreadPoolExecutor with {_executor_max_workers} workers")
+        logger.info("Created ThreadPoolExecutor with %d workers", _executor_max_workers)
     return _figure_executor
 
 
@@ -489,8 +489,8 @@ async def _send_render_response(
     # Send header + image as single binary message
     await websocket.send_bytes(header + image_data)
     logger.debug(
-        f"Sent image: type={type_mode.name}, seq={seq_num}, base={base_seq}, "
-        f"size={len(image_data)} bytes"
+        "Sent image: type=%s, seq=%s, base=%s, size=%d bytes",
+        type_mode.name, seq_num, base_seq, len(image_data),
     )
 
 
@@ -541,7 +541,7 @@ def _remove_saved_file(state: RouterState, file_id: str) -> None:
             if not state.connection_files[saved_file.connection_id]:
                 del state.connection_files[saved_file.connection_id]
 
-        logger.debug(f"Removed saved file: {file_id}")
+        logger.debug("Removed saved file: %s", file_id)
 
 
 # Type alias for the lifespan callable that FastAPI expects.
@@ -597,9 +597,8 @@ def compose_lifespans(
                 async with only(app):
                     yield
             case (first, *rest):
-                async with first(app):
-                    async with compose_lifespans(*rest)(app):
-                        yield
+                async with first(app), compose_lifespans(*rest)(app):
+                    yield
 
     return composed  # type: ignore[return-value]
 
@@ -672,9 +671,7 @@ def install_mpl_router(
 
     # 3. Chain the mpl lifespan with the existing app lifespan
     existing_lifespan = app.router.lifespan_context
-    app.router.lifespan_context = compose_lifespans(
-        existing_lifespan, _mpl_lifespan()
-    )
+    app.router.lifespan_context = compose_lifespans(existing_lifespan, _mpl_lifespan())
 
 
 def create_mpl_router(
@@ -907,7 +904,7 @@ def create_mpl_router(
         }
         mime_type = mime_types.get(saved_file.format, "application/octet-stream")
 
-        logger.info(f"Serving saved file {file_id} ({saved_file.format})")
+        logger.info("Serving saved file %s (%s)", file_id, saved_file.format)
 
         # Return as streaming response with download headers
         return StreamingResponse(
@@ -934,20 +931,20 @@ def create_mpl_router(
         # Validate plot exists BEFORE accepting connection
         if plot_name not in plot_generators:
             logger.warning(
-                f"WebSocket connection attempted for unknown plot: {plot_name}"
+                "WebSocket connection attempted for unknown plot: %s", plot_name
             )
             await websocket.close(code=1008, reason=f"Unknown plot: {plot_name}")
             return
 
         await websocket.accept()
-        logger.debug(f"WebSocket accepted for plot '{plot_name}'")
+        logger.debug("WebSocket accepted for plot '%s'", plot_name)
 
         # Track active connection
         router_state.connect(plot_name)
 
         # Generate unique connection ID for this WebSocket session
         connection_id = str(uuid.uuid4())
-        logger.debug(f"Generated connection ID: {connection_id}")
+        logger.debug("Generated connection ID: %s", connection_id)
 
         config = plot_generators[plot_name]
 
@@ -955,7 +952,7 @@ def create_mpl_router(
         try:
             params = config.init.params_model(**websocket.query_params)
         except ValidationError as e:
-            logger.warning(f"Invalid parameters for plot {plot_name}: {e}")
+            logger.warning("Invalid parameters for plot %s: %s", plot_name, e)
             await websocket.send_json(
                 {"type": "error", "message": f"Invalid parameters: {e}"}
             )
@@ -966,15 +963,15 @@ def create_mpl_router(
         try:
             data = await websocket.receive_json()
         except WebSocketDisconnect:
-            logger.info(f"WebSocket disconnected before init for plot '{plot_name}'")
+            logger.info("WebSocket disconnected before init for plot '%s'", plot_name)
             return
         except Exception as e:
-            logger.error(f"Error receiving init message: {e}", exc_info=True)
+            logger.exception("Error receiving init message: %s", e)
             return
 
         # Validate this is the init message
         if data.get("type") != "init":
-            logger.error(f"Expected 'init' as first message, got '{data.get('type')}'")
+            logger.error("Expected 'init' as first message, got '%s'", data.get('type'))
             await websocket.send_json(
                 {
                     "type": "error",
@@ -995,7 +992,7 @@ def create_mpl_router(
             return
         if client_version != PROTOCOL_VERSION:
             logger.error(
-                f"Incompatible protocol: server={PROTOCOL_VERSION}, client={client_version}"
+                "Incompatible protocol: server=%s, client=%s", PROTOCOL_VERSION, client_version
             )
             await websocket.send_json(
                 {
@@ -1014,8 +1011,8 @@ def create_mpl_router(
         supports_binary = data.get("supports_binary", True)
 
         logger.info(
-            f"WebSocket initialized for plot '{plot_name}': "
-            f"params={params}, dpr={device_pixel_ratio}, binary={supports_binary}"
+            "WebSocket initialized for plot '%s': params=%s, dpr=%s, binary=%s",
+            plot_name, params, device_pixel_ratio, supports_binary,
         )
 
         loop = asyncio.get_event_loop()
@@ -1024,7 +1021,7 @@ def create_mpl_router(
         # Create figure and call generator to populate it in background thread
         fig = Figure()
         try:
-            logger.debug(f"Initializing figure '{plot_name}' in background thread")
+            logger.debug("Initializing figure '%s' in background thread", plot_name)
             state = await loop.run_in_executor(
                 executor,
                 config.init.function,
@@ -1032,7 +1029,7 @@ def create_mpl_router(
                 params,
             )
         except Exception as e:
-            logger.error(f"Error generating plot '{plot_name}': {e}", exc_info=True)
+            logger.exception("Error generating plot '%s': %s", plot_name, e)
             await websocket.send_json(
                 {"type": "error", "message": f"Plot generation failed: {e}"}
             )
@@ -1046,7 +1043,7 @@ def create_mpl_router(
         if device_pixel_ratio != 1.0:
             if canvas._set_device_pixel_ratio(device_pixel_ratio):  # type: ignore[attr-defined]
                 canvas._force_full = True
-            logger.debug(f"Set device pixel ratio: {device_pixel_ratio}")
+            logger.debug("Set device pixel ratio: %s", device_pixel_ratio)
 
         # Attach manager
         manager = FastAPIManger(canvas, 0)
@@ -1100,11 +1097,11 @@ def create_mpl_router(
                 try:
                     data = await websocket.receive_json()
                 except WebSocketDisconnect:
-                    logger.info(f"WebSocket disconnected for plot '{plot_name}'")
+                    logger.info("WebSocket disconnected for plot '%s'", plot_name)
                     return
                 except Exception as e:
-                    logger.error(
-                        f"Error receiving WebSocket message: {e}", exc_info=True
+                    logger.exception(
+                        "Error receiving WebSocket message: %s", e
                     )
                     return
 
@@ -1113,7 +1110,7 @@ def create_mpl_router(
                 # Skip logging for high-frequency events
                 if e_type not in ("motion_notify", "figure_enter", "figure_leave"):
                     logger.debug(
-                        f"Received message type='{e_type}' for plot '{plot_name}'"
+                        "Received message type='%s' for plot '%s'", e_type, plot_name
                     )
 
                 try:
@@ -1138,7 +1135,7 @@ def create_mpl_router(
 
                             # Save figure in thread pool
                             logger.debug(
-                                f"Saving figure '{plot_name}' to {format_lower}"
+                                "Saving figure '%s' to %s", plot_name, format_lower
                             )
 
                             file_data = await loop.run_in_executor(
@@ -1186,21 +1183,21 @@ def create_mpl_router(
                                 }
                             )
 
-                            logger.info(f"Saved figure '{plot_name}' as {format_lower}")
+                            logger.info("Saved figure '%s' as %s", plot_name, format_lower)
 
                         except ValueError as e:
-                            logger.warning(f"Invalid save request: {e}")
+                            logger.warning("Invalid save request: %s", e)
                             await websocket.send_json(
                                 {"type": "save_error", "message": str(e)}
                             )
                         except Exception as e:
-                            logger.error(
-                                f"Error saving figure '{plot_name}': {e}", exc_info=True
+                            logger.exception(
+                                "Error saving figure '%s': %s", plot_name, e
                             )
                             await websocket.send_json(
                                 {
                                     "type": "save_error",
-                                    "message": f"Failed to save figure: {str(e)}",
+                                    "message": f"Failed to save figure: {e!s}",
                                 }
                             )
 
@@ -1208,20 +1205,21 @@ def create_mpl_router(
                         # Handle update request
                         if config.update is None:
                             logger.warning(
-                                f"Update requested for plot '{plot_name}' "
-                                "but no update function configured"
+                                "Update requested for plot '%s' "
+                                "but no update function configured",
+                                plot_name,
                             )
                             continue
                         try:
                             update_params = config.update.params_model(**data["params"])
                         except ValidationError as e:
                             logger.warning(
-                                f"Invalid update parameters for plot {plot_name}: {e}"
+                                "Invalid update parameters for plot %s: %s", plot_name, e
                             )
                             continue
                         try:
                             logger.info(
-                                f"Updating plot '{plot_name}' with params: {update_params}"
+                                "Updating plot '%s' with params: %s", plot_name, update_params
                             )
 
                             state = await loop.run_in_executor(
@@ -1235,9 +1233,8 @@ def create_mpl_router(
                             canvas.draw_idle()
 
                         except Exception as e:
-                            logger.error(
-                                f"Error updating plot '{plot_name}': {e}",
-                                exc_info=True,
+                            logger.exception(
+                                "Error updating plot '%s': %s", plot_name, e
                             )
 
                     elif e_type == "render":
@@ -1282,13 +1279,12 @@ def create_mpl_router(
                     await canvas.drain_queue(websocket)
 
                 except Exception as e:
-                    logger.error(
-                        f"Error handling event '{e_type}': {e}",
-                        exc_info=True,
+                    logger.exception(
+                        "Error handling event '%s': %s", e_type, e
                     )
         finally:
             # Cleanup on disconnect
-            logger.debug(f"Cleaning up resources for plot '{plot_name}'")
+            logger.debug("Cleaning up resources for plot '%s'", plot_name)
 
             # Decrement connection counter
             router_state.disconnect(plot_name)
@@ -1299,13 +1295,13 @@ def create_mpl_router(
                 for file_id in file_ids:
                     _remove_saved_file(router_state, file_id)
                 logger.debug(
-                    f"Removed {len(file_ids)} saved file(s) for connection {connection_id}"
+                    "Removed %d saved file(s) for connection %s", len(file_ids), connection_id
                 )
 
             try:
                 manager.destroy()
             except Exception as e:
-                logger.error(f"Error during cleanup: {e}", exc_info=True)
+                logger.exception("Error during cleanup: %s", e)
 
     # Route: Serve matplotlib JavaScript
     @router.get("/js/mpl.js", response_class=PlainTextResponse)

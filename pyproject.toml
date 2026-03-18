@@ -72,8 +72,60 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20", "RET", "SIM", "ARG"]
-ignore = ["E501"]  # Line too long (handled by formatter)
+extend-select = [
+  "ARG",      # flake8-unused-arguments
+  "B",        # flake8-bugbear
+  "C4",       # flake8-comprehensions
+  "EM",       # flake8-errmsg
+  "EXE",      # flake8-executable
+  "G",        # flake8-logging-format
+  "I",        # isort
+  "ICN",      # flake8-import-conventions
+  "NPY",      # NumPy specific rules
+  "PD",       # pandas-vet
+  "PGH",      # pygrep-hooks
+  "PIE",      # flake8-pie
+  "PL",       # pylint
+  "PT",       # flake8-pytest-style
+  "PTH",      # flake8-use-pathlib
+  "RET",      # flake8-return
+  "RUF",      # Ruff-specific
+  "SIM",      # flake8-simplify
+  "T20",      # flake8-print
+  "UP",       # pyupgrade
+  "YTT"      # flake8-2020
+]
+ignore = [
+  "PLR",    # Design related pylint codes
+  "E501",   # Line too long, trust the formatter to get it right
+  "ISC001", # implicit concat, can be handy
+  # QA for wrong opinions
+  "E741",   # allow l as variable name
+  "ICN001", # allow verbose numpy
+  "RET504", # can use a 'redundent' local if you want
+  "RET505", # return in else (clearer with the `else`)
+  "SIM105", # contextlib.suppress rather than try...except (just use language)
+  "SIM108", # ternaries are not actually clearer (just fewer lines)
+  "PTH123", # Path.open vs open (using the builtin is fine)
+  "PIE804", # creating dict to ** it is fine
+  "C408",   # using dict() is fine
+  "NPY002", # allow the old numpy random generator
+  "EM102",  # use an fstring in an exception if you want
+  "EM101",  # use strings in exceptions if you want
+  "T20",    # Removes print statements
+  "UP015",  # "redundant" read mode is OK
+  "UP031",  # % formats are fine
+  "PLC2401", # allow greek to make equations clearer
+  "PTH113",
+  "SIM102",
+  "SIM114",
+  "SIM115",
+  "PLC0415"
+]
+unfixable = [
+  "T20",  # Removes print statements
+  "F841" # Removes unused variables
+]
 
 [tool.mypy]
 python_version = "3.12"

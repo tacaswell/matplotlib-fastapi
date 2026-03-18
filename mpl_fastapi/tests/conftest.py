@@ -7,7 +7,13 @@ from fastapi.testclient import TestClient
 from matplotlib.figure import Figure
 from pydantic import BaseModel, Field
 
-from mpl_fastapi import InitConfig, PlotConfig, UpdateConfig, create_mpl_router, install_mpl_router
+from mpl_fastapi import (
+    InitConfig,
+    PlotConfig,
+    UpdateConfig,
+    create_mpl_router,
+    install_mpl_router,
+)
 
 
 class SimpleParams(BaseModel):

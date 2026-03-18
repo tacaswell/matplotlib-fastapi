@@ -84,7 +84,7 @@ class FastAPICanvas(FigureCanvasAgg):
         ev: dict[str, Any],
         websocket: WebSocket,  # noqa: ARG002
     ) -> None:
-        logger.debug(f"Unknown event type: {ev['type']}, data: {ev}")
+        logger.debug("Unknown event type: %s, data: %s", ev['type'], ev)
         return
 
     async def handle_ack(self, ev: dict[str, Any], websocket: WebSocket) -> None: ...
@@ -206,16 +206,16 @@ class FastAPICanvas(FigureCanvasAgg):
         """Handle toolbar button clicks from the browser."""
         name = event.get("name", "")
         if name not in _ALLOWED_TOOL_ITEMS or name is None:
-            logger.warning(f"Blocked unknown toolbar action: {name!r}")
+            logger.warning("Blocked unknown toolbar action: %r", name)
             return
-        logger.info(f"Toolbar button pressed: {name}")
+        logger.info("Toolbar button pressed: %s", name)
         getattr(self.toolbar, name)()
         # Queue an invalidate event for the client to request render
         self.queue_event("invalidate")
 
     def queue_event(self, event_type: str, **kwargs: Any) -> None:
         """Queue a message to be sent to the client."""
-        logger.debug(f"Queueing event: type={event_type}, kwargs={kwargs}")
+        logger.debug("Queueing event: type=%s, kwargs=%s", event_type, kwargs)
         self._msg_queue.append({"type": event_type, **kwargs})
 
     def draw_idle(self) -> None:
@@ -226,7 +226,7 @@ class FastAPICanvas(FigureCanvasAgg):
         """Send all queued messages to the client."""
         while len(self._msg_queue):
             payload = self._msg_queue.popleft()
-            logger.debug(f"Sending message to client: type={payload.get('type')}")
+            logger.debug("Sending message to client: type=%s", payload.get('type'))
             await websocket.send_json(payload)
 
 
