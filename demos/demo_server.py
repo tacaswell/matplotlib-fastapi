@@ -95,14 +95,6 @@ def create_sine_plot(fig: Figure, params: SinePlotParams) -> None:
 
 
 # Interactive sine wave with update support
-class InteractiveSineParams(BaseModel):
-    """Initial parameters for interactive sine wave."""
-
-    frequency: float = Field(default=1.0, ge=0.1, le=10.0)
-    amplitude: float = Field(default=1.0, ge=0.1, le=5.0)
-    points: int = Field(default=200, ge=50, le=1000)
-
-
 class SineUpdateParams(BaseModel):
     """Update parameters for interactive sine wave - can modify phase."""
 
@@ -111,7 +103,7 @@ class SineUpdateParams(BaseModel):
     )
 
 
-def create_interactive_sine(fig: Figure, params: InteractiveSineParams) -> dict:
+def create_interactive_sine(fig: Figure, params: SinePlotParams) -> dict:
     """
     Generate an interactive sine wave plot with cached state.
 
@@ -236,7 +228,7 @@ mpl = create_mpl_router(
             description="Interactive sine wave with live phase adjustment",
             init=InitConfig(
                 function=create_interactive_sine,
-                params_model=InteractiveSineParams,
+                params_model=SinePlotParams,
             ),
             update=UpdateConfig(
                 function=update_interactive_sine,
