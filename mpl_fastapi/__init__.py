@@ -5,6 +5,7 @@ except ImportError:
 
 from .router import (
     InitConfig,
+    Lifespan,
     MPLRouter,
     PlotConfig,
     PlotGenerator,
@@ -12,15 +13,20 @@ from .router import (
     PlotsListResponse,
     UpdateConfig,
     UpdateFunction,
+    compose_lifespans,
     create_mpl_router,
+    install_mpl_router,
     shutdown_figure_executor,
 )
 
 __all__ = [
     "__version__",
+    "compose_lifespans",
     "create_mpl_router",
+    "install_mpl_router",
     "shutdown_figure_executor",
     "InitConfig",
+    "Lifespan",
     "MPLRouter",
     "PlotConfig",
     "PlotGenerator",

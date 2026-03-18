@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from matplotlib.figure import Figure
 from pydantic import BaseModel, Field
 
-from mpl_fastapi import InitConfig, PlotConfig, UpdateConfig, create_mpl_router
+from mpl_fastapi import InitConfig, PlotConfig, UpdateConfig, create_mpl_router, install_mpl_router
 
 
 class SimpleParams(BaseModel):
@@ -122,8 +122,7 @@ def test_app(
             "updatable": updatable_plot_config,
         }
     )
-    app.include_router(mpl.router, prefix="/plots")
-    app.mount(mpl.static_mount_path, mpl.static_files, name="mpl_static")
+    install_mpl_router(app, mpl, prefix="/plots")
     return app
 
 
@@ -219,6 +218,5 @@ def test_app_with_interactive(
             "interactive": interactive_plot_config,
         }
     )
-    app.include_router(mpl.router, prefix="/plots")
-    app.mount(mpl.static_mount_path, mpl.static_files, name="mpl_static")
+    install_mpl_router(app, mpl, prefix="/plots")
     return app

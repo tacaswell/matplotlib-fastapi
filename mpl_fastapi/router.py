@@ -15,21 +15,24 @@ Protocol v0 uses a simplified message flow:
 - Binary image messages have 8-byte headers with sequence numbers
 """
 
+from __future__ import annotations
+
 import asyncio
 import io
 import logging
 import struct
 import uuid
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -508,6 +511,139 @@ def _remove_saved_file(state: RouterState, file_id: str) -> None:
         logger.debug(f"Removed saved file: {file_id}")
 
 
+# Type alias for the lifespan callable that FastAPI expects.
+# Using Any for the context manager return to be compatible with
+# Starlette's Lifespan which can return state mappings.
+Lifespan = Callable[..., AbstractAsyncContextManager[Any]]
+
+
+def compose_lifespans(
+    *lifespans: Lifespan,
+) -> Lifespan:
+    """Compose multiple lifespan context managers into one.
+
+    FastAPI only accepts a single ``lifespan`` async context manager.
+    This helper chains several together so that startup hooks run in
+    order and shutdown hooks run in reverse order (like nested ``with``
+    blocks).
+
+    Parameters
+    ----------
+    *lifespans : Callable[[FastAPI], AbstractAsyncContextManager[None]]
+        Lifespan context managers to compose.  Each must be decorated
+        with ``@asynccontextmanager`` (or be an async generator function
+        that yields exactly once).
+
+    Returns
+    -------
+    Callable[[FastAPI], AbstractAsyncContextManager[None]]
+        A single lifespan suitable for passing to ``FastAPI(lifespan=...)``.
+
+    Examples
+    --------
+    >>> from contextlib import asynccontextmanager
+    >>> @asynccontextmanager
+    ... async def db_lifespan(app):
+    ...     print("db startup")
+    ...     yield
+    ...     print("db shutdown")
+    >>> @asynccontextmanager
+    ... async def cache_lifespan(app):
+    ...     print("cache startup")
+    ...     yield
+    ...     print("cache shutdown")
+    >>> app = FastAPI(lifespan=compose_lifespans(db_lifespan, cache_lifespan))
+    """
+
+    @asynccontextmanager
+    async def composed(app: FastAPI) -> AsyncIterator[None]:
+        match lifespans:
+            case ():
+                yield
+            case (only,):
+                async with only(app):
+                    yield
+            case (first, *rest):
+                async with first(app):
+                    async with compose_lifespans(*rest)(app):
+                        yield
+
+    return composed  # type: ignore[return-value]
+
+
+def _mpl_lifespan() -> Lifespan:
+    """Create a lifespan context manager that cleans up the figure executor.
+
+    Returns
+    -------
+    Callable
+        An ``@asynccontextmanager``-decorated async generator suitable for
+        use with :func:`compose_lifespans` or ``FastAPI(lifespan=...)``.
+    """
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        yield
+        shutdown_figure_executor()
+
+    return lifespan  # type: ignore[return-value]
+
+
+def install_mpl_router(
+    app: FastAPI,
+    mpl: "MPLRouter",
+    *,
+    prefix: str = "",
+) -> None:
+    """Install an :class:`MPLRouter` onto a FastAPI application.
+
+    This performs all the required wiring in a single call:
+
+    1. ``app.include_router(mpl.router, prefix=prefix)``
+    2. ``app.mount(mpl.static_mount_path, mpl.static_files, ...)``
+    3. Compose the mpl shutdown lifespan with any existing app lifespan.
+
+    The function is idempotent with respect to the lifespan — calling it
+    multiple times (e.g. to mount several ``MPLRouter`` instances) will
+    compose all their lifespans correctly without overwriting the
+    application's own lifespan.
+
+    Parameters
+    ----------
+    app : FastAPI
+        The application to install the router onto.
+    mpl : MPLRouter
+        The router container returned by :func:`create_mpl_router`.
+    prefix : str, optional
+        URL prefix for the router (default ``""``).  For example,
+        ``prefix="/plots"`` would make the list endpoint available at
+        ``/plots/``.
+
+    Examples
+    --------
+    >>> mpl = create_mpl_router({"sine": sine_config})
+    >>> app = FastAPI()
+    >>> install_mpl_router(app, mpl, prefix="/plots")
+    >>>
+    >>> # Multiple routers work too:
+    >>> mpl2 = create_mpl_router({"cosine": cosine_config})
+    >>> install_mpl_router(app, mpl2, prefix="/plots2")
+    """
+    # 1. Include routes
+    app.include_router(mpl.router, prefix=prefix)
+
+    # 2. Mount static files
+    # Use a unique name to allow multiple mounts
+    static_name = f"mpl_static_{prefix.strip('/')}" if prefix else "mpl_static"
+    app.mount(mpl.static_mount_path, mpl.static_files, name=static_name)
+
+    # 3. Chain the mpl lifespan with the existing app lifespan
+    existing_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = compose_lifespans(
+        existing_lifespan, _mpl_lifespan()
+    )
+
+
 def create_mpl_router(
     plot_generators: dict[str, PlotConfig],
     *,
@@ -567,6 +703,11 @@ def create_mpl_router(
     ...         update=UpdateConfig(update_sine_plot, SineUpdateParams),
     ...     ),
     ... })
+    >>> app = FastAPI()
+    >>> install_mpl_router(app, mpl, prefix="/plots")
+
+    Or, for manual control over each step:
+
     >>> app.include_router(mpl.router, prefix="/plots")
     >>> app.mount(mpl.static_mount_path, mpl.static_files, name="mpl_static")
     """
