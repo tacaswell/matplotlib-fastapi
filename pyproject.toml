@@ -120,7 +120,8 @@ ignore = [
   "SIM102",
   "SIM114",
   "SIM115",
-  "PLC0415"
+  "PLC0415",
+  "PLW0603",  # trust that if we use global, we mean it.
 ]
 unfixable = [
   "T20",  # Removes print statements

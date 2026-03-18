@@ -352,6 +352,7 @@ class MatplotlibWebSocketClient:
         self.toolbar_items: list[dict[str, Any]] = []
         self.save_formats: list[str] = []
         self.default_save_format: str | None = None
+        self.image_format: str | None = None
         self.image_mode: str | None = None
         self.figure_size: tuple[int, int] | None = None
         self.figure_dpi: float | None = None
@@ -464,6 +465,7 @@ class MatplotlibWebSocketClient:
 
         # Image config
         image_config = config_msg.get("image", {})
+        self.image_format = image_config["format"]
         self.image_mode = "full"  # Start with full mode
 
         # Update schema

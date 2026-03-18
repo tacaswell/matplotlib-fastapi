@@ -380,7 +380,7 @@ def _sync_draw_figure(canvas: FastAPICanvas) -> tuple[bytes, bool]:
     )
 
     # Check for transparency
-    pixels = buff.view(dtype=np.uint8).reshape(buff.shape + (4,))
+    pixels = buff.view(dtype=np.uint8).reshape((*buff.shape, 4))
 
     if canvas._force_full or np.any(pixels[:, :, 3] != 255):
         # Full image mode
@@ -614,7 +614,7 @@ def _mpl_lifespan() -> Lifespan:
     """
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
         yield
         shutdown_figure_executor()
 

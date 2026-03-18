@@ -297,7 +297,7 @@ else:
     # Fallback route if React isn't built yet
     @app.get("/react-app")
     @app.get("/react-app/{path:path}")
-    async def react_not_built(path: str = ""):
+    async def react_not_built(path: str = ""):   # noqa: ARG001
         """Return instructions if React app hasn't been built."""
         from fastapi.responses import HTMLResponse
         return HTMLResponse(
