@@ -1256,9 +1256,25 @@ def create_mpl_router(
                         continue  # Don't drain queue - response already sent
 
                     else:
-                        # Delegate to canvas handlers for other event types
-                        handler = getattr(
-                            canvas, f"handle_{e_type}", canvas.handle_unknown_event
+                        # Explicit dispatch table for canvas event handlers.
+                        # Every allowable client event type is listed here;
+                        # unknown types fall through to handle_unknown_event.
+                        _canvas_handlers = {
+                            "ack": canvas.handle_ack,
+                            "resize": canvas.handle_resize,
+                            "set_device_pixel_ratio": canvas.handle_set_device_pixel_ratio,
+                            "send_image_mode": canvas.handle_send_image_mode,
+                            "button_press": canvas.handle_button_press,
+                            "button_release": canvas.handle_button_release,
+                            "dblclick": canvas.handle_dblclick,
+                            "figure_enter": canvas.handle_figure_enter,
+                            "figure_leave": canvas.handle_figure_leave,
+                            "motion_notify": canvas.handle_motion_notify,
+                            "scroll": canvas.handle_scroll,
+                            "toolbar_button": canvas.handle_toolbar_button,
+                        }
+                        handler = _canvas_handlers.get(
+                            e_type, canvas.handle_unknown_event
                         )
                         await handler(data, websocket)
 

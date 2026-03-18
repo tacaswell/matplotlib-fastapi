@@ -204,9 +204,12 @@ class FastAPICanvas(FigureCanvasAgg):
         self, event: dict[str, Any], _websocket: WebSocket
     ) -> None:
         """Handle toolbar button clicks from the browser."""
-        logger.info(f"Toolbar button pressed: {event['name']}")
-        # Call the toolbar method
-        getattr(self.toolbar, event["name"])()
+        name = event.get("name", "")
+        if name not in _ALLOWED_TOOL_ITEMS or name is None:
+            logger.warning(f"Blocked unknown toolbar action: {name!r}")
+            return
+        logger.info(f"Toolbar button pressed: {name}")
+        getattr(self.toolbar, name)()
         # Queue an invalidate event for the client to request render
         self.queue_event("invalidate")
 
