@@ -4324,8 +4324,8 @@ packages:
   timestamp: 1767634557029
 - pypi: ./
   name: mpl-fastapi
-  version: 0.0.post72
-  sha256: 597cc96f229c19cd2629f8bc8a9d37f3fa16ace96f42f55ecf1ad40bc8da6000
+  version: 0.0.post74
+  sha256: 2ff04716402409e98fe236767a9c6b9825a4fa32e8317e43e1f61285f01d98cc
   requires_dist:
   - fastapi>=0.100.0
   - matplotlib>=3.10.0
