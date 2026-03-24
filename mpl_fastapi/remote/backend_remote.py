@@ -242,8 +242,13 @@ class FigureCanvasRemote(FigureCanvasBase):
             pass
 
         elif msg_type == "save_complete":
-            # Handled by the transport's _request_save coroutine
-            pass
+            if self.toolbar is not None:
+                self.toolbar._on_save_complete(msg)
+
+        elif msg_type == "save_error":
+            logger.error("Save error: %s", msg.get("message", "unknown"))
+            if self.toolbar is not None:
+                self.toolbar._on_save_error(msg)
 
         else:
             logger.debug("Unhandled server message type: %s", msg_type)
@@ -267,7 +272,9 @@ class FigureCanvasRemote(FigureCanvasBase):
         x, y : float
             Pixel coordinates (matplotlib convention: origin at bottom-left).
         button : int
-            Mouse button (0-indexed for the WS protocol).
+            Mouse button, **0-indexed** (wire protocol / JS convention:
+            0 = left, 1 = middle, 2 = right).  The server adds 1 to
+            convert to matplotlib's 1-indexed ``MouseButton`` values.
         step : float
             Scroll step (for scroll events).
         """
@@ -322,6 +329,27 @@ class FigureCanvasRemote(FigureCanvasBase):
             Button name (``"pan"``, ``"zoom"``, ``"home"``, etc.).
         """
         self._transport.send_json({"type": "toolbar_button", "name": name})
+
+    def _forward_save_figure(
+        self,
+        format: str = "png",
+        dpi: float = 100.0,
+        transparent: bool = False,
+    ) -> None:
+        """Send a ``save_figure`` request to the server.
+
+        The response (``save_complete`` or ``save_error``) arrives via
+        the normal receive loop and is dispatched to
+        ``toolbar._on_save_complete()`` / ``toolbar._on_save_error()``.
+        """
+        self._transport.send_json(
+            {
+                "type": "save_figure",
+                "format": format,
+                "dpi": dpi,
+                "transparent": transparent,
+            }
+        )
 
     # -- abstract (toolkit must implement) ----------------------------------
 
@@ -423,6 +451,17 @@ class RemoteNavigationToolbar2(NavigationToolbar2):
         Subclasses override this to update toggle-button states.
         """
         logger.debug("navigate_mode: %s", mode)
+
+    def _on_save_complete(self, msg: dict[str, Any]) -> None:
+        """Handle a ``save_complete`` message from the server.
+
+        Subclasses override this to download the saved file.
+        """
+        logger.debug("save_complete: %s", msg)
+
+    def _on_save_error(self, msg: dict[str, Any]) -> None:
+        """Handle a ``save_error`` message from the server."""
+        logger.error("save_error: %s", msg.get("message", "unknown"))
 
     def draw_rubberband(
         self,

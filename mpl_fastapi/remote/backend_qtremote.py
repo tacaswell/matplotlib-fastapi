@@ -369,7 +369,9 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
                 modifiers=self._mpl_modifiers(),
                 guiEvent=event,
             )._process()
-            self._forward_mouse_event("button_press", x, y, button=int(button))
+            # Wire protocol uses 0-indexed buttons (JS convention);
+            # the server adds +1 to get matplotlib MouseButton values.
+            self._forward_mouse_event("button_press", x, y, button=int(button) - 1)
 
     def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
         x, y = self.mouseEventCoords(event)
@@ -385,7 +387,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
                 modifiers=self._mpl_modifiers(),
                 guiEvent=event,
             )._process()
-            self._forward_mouse_event("button_press", x, y, button=int(button))
+            self._forward_mouse_event("button_press", x, y, button=int(button) - 1)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         if self.figure is None:
@@ -415,7 +417,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
                 modifiers=self._mpl_modifiers(),
                 guiEvent=event,
             )._process()
-            self._forward_mouse_event("button_release", x, y, button=int(button))
+            self._forward_mouse_event("button_release", x, y, button=int(button) - 1)
 
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
         if (
@@ -517,10 +519,102 @@ class NavigationToolbar2QTRemote(NavigationToolbar2QT):
         self.canvas._forward_toolbar_button("zoom")
 
     def download(self, *args: Any) -> None:  # noqa: ARG002
-        self.canvas._forward_toolbar_button("download")
+        self._save_remote_figure()
 
     def save_figure(self, *args: Any) -> None:  # noqa: ARG002
-        self.canvas._forward_toolbar_button("download")
+        self._save_remote_figure()
+
+    def _save_remote_figure(self) -> None:
+        """Prompt for a filename, then ask the server to save.
+
+        The actual file download happens asynchronously in
+        :meth:`_on_save_complete` once the server responds.
+        """
+        from pathlib import Path
+
+        import matplotlib as mpl
+
+        config = self.canvas._server_config
+        save_formats = config.save_formats
+        default_format = config.default_save_format
+
+        startpath = Path(mpl.rcParams["savefig.directory"]).expanduser()
+        start = str(startpath / f"figure.{default_format}")
+
+        # Build filter string
+        filters = []
+        selected_filter = None
+        for fmt in save_formats:
+            filt = f"{fmt.upper()} files (*.{fmt})"
+            if fmt == default_format:
+                selected_filter = filt
+            filters.append(filt)
+        filter_str = ";;".join(filters)
+
+        fname, _chosen = QtWidgets.QFileDialog.getSaveFileName(
+            self.canvas.parent(),
+            "Choose a filename to save to",
+            start,
+            filter_str,
+            selected_filter or "",
+        )
+        if not fname:
+            return
+
+        # Update save directory for next time
+        if mpl.rcParams["savefig.directory"]:
+            mpl.rcParams["savefig.directory"] = str(Path(fname).parent)
+
+        fmt = Path(fname).suffix.lstrip(".").lower() or default_format
+
+        # Stash the local path so _on_save_complete can finish the job.
+        self._pending_save_path = fname
+
+        # Send save request through the normal message flow.
+        # The response arrives via canvas._on_json_message → toolbar._on_save_complete.
+        self.canvas._forward_save_figure(format=fmt)
+
+    def _on_save_complete(self, msg: dict[str, Any]) -> None:
+        """Download the saved file from the server."""
+        local_path = getattr(self, "_pending_save_path", None)
+        self._pending_save_path = None
+        if local_path is None:
+            return
+
+        download_url = msg.get("download_url", "")
+        if not download_url:
+            QtWidgets.QMessageBox.warning(
+                self.canvas, "Save error", "No download URL returned."
+            )
+            return
+
+        self._download_saved_file(download_url, local_path)
+
+    def _on_save_error(self, msg: dict[str, Any]) -> None:
+        """Show an error dialog for a failed server save."""
+        self._pending_save_path = None
+        QtWidgets.QMessageBox.critical(
+            self.canvas,
+            "Save error",
+            msg.get("message", "Unknown server error"),
+        )
+
+    def _download_saved_file(self, download_url: str, local_path: str) -> None:
+        """Download a saved file from the server via HTTP."""
+        import urllib.parse
+        import urllib.request
+
+        # Build full URL from the WebSocket URL
+        ws_url = self.canvas._transport._url
+        parsed = urllib.parse.urlparse(ws_url)
+        scheme = "https" if parsed.scheme == "wss" else "http"
+        base = f"{scheme}://{parsed.netloc}"
+        full_url = urllib.parse.urljoin(base, download_url)
+
+        try:
+            urllib.request.urlretrieve(full_url, local_path)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self.canvas, "Download error", str(exc))
 
     # -- server push state updates ------------------------------------------
 

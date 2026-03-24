@@ -240,6 +240,10 @@ class TestFigureCanvasQTRemoteEvents:
         button_presses = [c for c in calls if c[0][0].get("type") == "button_press"]
         # We expect both press and release
         assert len(button_presses) >= 1, f"Expected button_press, got {calls}"
+        # Wire protocol uses 0-indexed buttons (JS convention);
+        # the server adds +1 to get matplotlib MouseButton values.
+        # Left click → 0 on the wire.
+        assert button_presses[0][0][0]["button"] == 0
 
     def test_key_press_forwards_to_server(self, qtbot: Any) -> None:
         config = _make_server_config()
