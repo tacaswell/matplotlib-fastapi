@@ -1,0 +1,477 @@
+"""Toolkit-agnostic remote Matplotlib canvas and toolbar.
+
+This module provides :class:`FigureCanvasRemote` and
+:class:`RemoteNavigationToolbar2`, which handle all protocol logic
+(image compositing, event forwarding, server-message dispatch) without
+depending on any GUI toolkit.  A toolkit layer (e.g.
+:mod:`~mpl_fastapi.remote.backend_qtremote`) subclasses these to
+provide actual widget rendering and event loop integration.
+"""
+
+from __future__ import annotations
+
+import io
+import logging
+from typing import Any
+
+from matplotlib.backend_bases import (
+    FigureCanvasBase,
+    FigureManagerBase,
+    NavigationToolbar2,
+)
+from matplotlib.figure import Figure
+from PIL import Image
+
+from mpl_fastapi.remote.transport import RemoteTransport, ServerConfig
+from mpl_fastapi.ws_client import ImageTypeMode, parse_binary_image
+
+__all__ = [
+    "FigureCanvasRemote",
+    "FigureManagerRemote",
+    "RemoteNavigationToolbar2",
+]
+
+logger = logging.getLogger(__name__)
+
+
+class FigureCanvasRemote(FigureCanvasBase):
+    """Canvas that delegates all rendering to a remote mpl_fastapi server.
+
+    This canvas does **not** inherit from ``FigureCanvasAgg`` — there is no
+    local renderer.  All images come from the server via the WebSocket
+    protocol.
+
+    Threading contract
+    ------------------
+    * ``draw()`` and ``schedule_repaint()`` run on the **main** (GUI) thread
+      and only blit the last received image.
+    * Network IO runs on the transport's background thread/task.
+    * ``_on_binary_message`` / ``_on_json_message`` are expected to be called
+      on the main thread (the toolkit layer must marshal via signals or
+      similar).
+
+    Subclass responsibilities (toolkit layer)
+    ------------------------------------------
+    * :meth:`schedule_repaint` — post a repaint/update to the toolkit event
+      loop so that ``draw()`` / ``paintEvent()`` will be called.
+    """
+
+    _remote_image: Image.Image | None
+    _transport: RemoteTransport
+    _server_config: ServerConfig
+
+    # Rubberband state (set by server "rubberband" messages)
+    _rubberband_rect: tuple[float, float, float, float] | None
+
+    def __init__(
+        self,
+        figure: Figure,
+        transport: RemoteTransport,
+        server_config: ServerConfig,
+    ) -> None:
+        super().__init__(figure)
+        self._transport = transport
+        self._server_config = server_config
+        self._remote_image = None
+        self._rubberband_rect = None
+        self._last_seq_num = 0
+
+        # Sync the placeholder figure to match the server.
+        #
+        # The server sends back:
+        #   figure_size  -- CSS pixels (logical pixels on screen)
+        #   figure_dpi   -- *scaled* DPI  (original_dpi * device_pixel_ratio)
+        #
+        # The device_pixel_ratio was sent during the init handshake and the
+        # server used it to scale the figure's DPI via
+        # ``canvas._set_device_pixel_ratio(dpr)``, so:
+        #   original_dpi = figure_dpi / dpr
+        #   size_inches  = css_pixels / original_dpi
+        #
+        # We set the figure to the *original* (unscaled) DPI first, then
+        # call _set_device_pixel_ratio() which scales it up.  This keeps
+        # figure._original_dpi correct so that later DPR changes (e.g.
+        # moving the window to a different-DPI monitor, or Wayland
+        # delivering the real DPR after window creation) work properly.
+        w_css, h_css = server_config.figure_size
+        dpr = transport._device_pixel_ratio
+        scaled_dpi = server_config.figure_dpi
+        original_dpi = scaled_dpi / dpr
+
+        figure.set_dpi(original_dpi)
+        figure.set_size_inches(
+            w_css / original_dpi, h_css / original_dpi, forward=False
+        )
+        self._set_device_pixel_ratio(dpr)
+        if server_config.figure_label:
+            figure.set_label(server_config.figure_label)
+
+    # -- properties ---------------------------------------------------------
+
+    @property
+    def transport(self) -> RemoteTransport:
+        """The WebSocket transport for this canvas."""
+        return self._transport
+
+    @property
+    def remote_image(self) -> Image.Image | None:
+        """The most recent composited image from the server, or ``None``."""
+        return self._remote_image
+
+    # -- rendering (main thread, blit only) ---------------------------------
+
+    def draw(self) -> None:
+        """Blit ``_remote_image`` to the paint surface.
+
+        This is a **no-op at this layer** — toolkit subclasses override
+        ``paintEvent`` (Qt) or equivalent to do the actual blit.  No
+        server IO happens here.
+        """
+        # FigureCanvasBase.draw fires the "draw_event"
+        self.draw_event(self)
+
+    def draw_idle(self) -> None:
+        """Schedule a ``draw()`` on the toolkit event loop.
+
+        Subclasses should override this to e.g.
+        ``QTimer.singleShot(0, self._draw_idle)``.
+        """
+        # Default: call draw immediately (sufficient for non-GUI testing)
+        self.draw()
+
+    def get_width_height(self) -> tuple[int, int]:
+        """Return the canvas size in pixels, from the server config."""
+        return self._server_config.figure_size
+
+    # -- incoming message handlers (called on main thread) ------------------
+
+    def _on_binary_message(self, data: bytes) -> None:
+        """Process an incoming binary image message.
+
+        Parses the 8-byte header, composites diff images, stores the
+        result in ``_remote_image``, and calls ``schedule_repaint()``.
+
+        Parameters
+        ----------
+        data : bytes
+            Raw binary message (header + image data).
+        """
+        header, image_data = parse_binary_image(data)
+        self._last_seq_num = header.seq_num
+
+        if header.type_mode == ImageTypeMode.FULL or self._remote_image is None:
+            self._remote_image = Image.open(io.BytesIO(image_data)).convert("RGBA")
+            logger.debug(
+                "Full image received: seq=%d, size=%s",
+                header.seq_num,
+                self._remote_image.size,
+            )
+        elif header.type_mode == ImageTypeMode.DIFF:
+            diff = Image.open(io.BytesIO(image_data)).convert("RGBA")
+            if diff.size != self._remote_image.size:
+                logger.warning(
+                    "Diff size %s != base size %s — treating as full",
+                    diff.size,
+                    self._remote_image.size,
+                )
+                self._remote_image = diff
+            else:
+                self._remote_image.paste(diff, (0, 0), diff)
+                logger.debug(
+                    "Diff composited: seq=%d, base_seq=%d",
+                    header.seq_num,
+                    header.base_seq,
+                )
+        else:
+            logger.warning("Unknown image type_mode: %s", header.type_mode)
+            self._remote_image = Image.open(io.BytesIO(image_data)).convert("RGBA")
+
+        self.schedule_repaint()
+
+    def _on_json_message(self, msg: dict[str, Any]) -> None:
+        """Dispatch an incoming JSON message from the server.
+
+        Parameters
+        ----------
+        msg : dict
+            Parsed JSON message.
+        """
+        msg_type = msg.get("type")
+        logger.debug("JSON message: type=%s", msg_type)
+
+        if msg_type == "invalidate":
+            # Server says figure changed — request a new render
+            self._transport.send_json({"type": "render"})
+
+        elif msg_type == "resize":
+            size = msg.get("size", [])
+            if len(size) == 2:
+                w_css, h_css = int(size[0]), int(size[1])
+                self._server_config = ServerConfig(
+                    **{
+                        **self._server_config.__dict__,
+                        "figure_size": (w_css, h_css),
+                    }
+                )
+                # figure_dpi is the *scaled* DPI (original * dpr)
+                dpr = self.device_pixel_ratio
+                original_dpi = self._server_config.figure_dpi / dpr
+                self.figure.set_size_inches(
+                    w_css / original_dpi, h_css / original_dpi, forward=False
+                )
+            self.schedule_repaint()
+
+        elif msg_type == "navigate_mode":
+            mode = msg.get("mode", "")
+            if self.toolbar is not None:
+                self.toolbar._on_navigate_mode(mode)
+
+        elif msg_type == "message":
+            text = msg.get("message", "")
+            if self.toolbar is not None:
+                self.toolbar.set_message(text)
+
+        elif msg_type == "rubberband":
+            x0 = msg.get("x0", -1)
+            y0 = msg.get("y0", -1)
+            x1 = msg.get("x1", -1)
+            y1 = msg.get("y1", -1)
+            if x0 < 0 and y0 < 0:
+                self._rubberband_rect = None
+            else:
+                self._rubberband_rect = (x0, y0, x1, y1)
+            self.schedule_repaint()
+
+        elif msg_type == "history_buttons":
+            if self.toolbar is not None:
+                self.toolbar._on_history_buttons(
+                    back=msg.get("Back", False),
+                    forward=msg.get("Forward", False),
+                )
+
+        elif msg_type == "error":
+            logger.error("Server error: %s", msg.get("message", "unknown"))
+
+        elif msg_type == "image_mode":
+            # Informational — we handle mode per-image via the binary header
+            pass
+
+        elif msg_type == "save_complete":
+            # Handled by the transport's _request_save coroutine
+            pass
+
+        else:
+            logger.debug("Unhandled server message type: %s", msg_type)
+
+    # -- event forwarding (main thread → transport) -------------------------
+
+    def _forward_mouse_event(
+        self,
+        event_type: str,
+        x: float,
+        y: float,
+        button: int = 0,
+        step: float = 0,
+    ) -> None:
+        """Forward a mouse event to the server.
+
+        Parameters
+        ----------
+        event_type : str
+            E.g. ``"button_press"``, ``"button_release"``, ``"motion_notify"``.
+        x, y : float
+            Pixel coordinates (matplotlib convention: origin at bottom-left).
+        button : int
+            Mouse button (0-indexed for the WS protocol).
+        step : float
+            Scroll step (for scroll events).
+        """
+        msg: dict[str, Any] = {"type": event_type, "x": x, "y": y, "button": button}
+        if event_type == "scroll":
+            msg["step"] = step
+        self._transport.send_json(msg)
+
+    def _forward_key_event(self, event_type: str, key: str) -> None:
+        """Forward a keyboard event to the server.
+
+        Parameters
+        ----------
+        event_type : str
+            ``"key_press"`` or ``"key_release"``.
+        key : str
+            Key name (matplotlib format).
+        """
+        self._transport.send_json({"type": event_type, "key": key})
+
+    def _forward_resize(self, width: int, height: int) -> None:
+        """Forward a resize event to the server.
+
+        Parameters
+        ----------
+        width, height : int
+            New size in CSS (logical) pixels.  The server will multiply
+            by the device pixel ratio to obtain physical pixels.
+        """
+        self._transport.send_json({"type": "resize", "width": width, "height": height})
+
+    def _forward_set_device_pixel_ratio(self, dpr: float) -> None:
+        """Forward a device-pixel-ratio change to the server.
+
+        Parameters
+        ----------
+        dpr : float
+            The new device pixel ratio.
+        """
+        self._transport.send_json(
+            {"type": "set_device_pixel_ratio", "device_pixel_ratio": dpr}
+        )
+        # Update the transport's record so future reconnections use it
+        self._transport._device_pixel_ratio = dpr
+
+    def _forward_toolbar_button(self, name: str) -> None:
+        """Forward a toolbar button press to the server.
+
+        Parameters
+        ----------
+        name : str
+            Button name (``"pan"``, ``"zoom"``, ``"home"``, etc.).
+        """
+        self._transport.send_json({"type": "toolbar_button", "name": name})
+
+    # -- abstract (toolkit must implement) ----------------------------------
+
+    def schedule_repaint(self) -> None:
+        """Ask the toolkit to schedule a repaint.
+
+        Must be overridden by the toolkit subclass (e.g. ``self.update()``
+        in Qt).
+        """
+        # Default: no-op (headless / testing mode)
+
+
+class RemoteNavigationToolbar2(NavigationToolbar2):
+    """Navigation toolbar that delegates all actions to the remote server.
+
+    Toolbar button presses are forwarded over the WebSocket.  The toolbar
+    UI state (message, history buttons, navigate mode) is driven entirely
+    by server push messages.
+
+    This toolbar does **not** call ``super().pan()`` / ``super().zoom()``
+    because there are no local axes to manipulate.
+    """
+
+    canvas: FigureCanvasRemote  # type: ignore[assignment]
+
+    # Keep the standard toolitems but drop Subplots / Customize
+    # (those require local axes which we don't have).
+    toolitems = (
+        *tuple(
+            item
+            for item in NavigationToolbar2.toolitems
+            if item[3] in {"home", "back", "forward", "pan", "zoom", None}
+        ),
+        ("Download", "Download plot", "filesave", "download"),
+    )
+
+    def __init__(self, canvas: FigureCanvasRemote) -> None:
+        self.message = ""
+        # Suppress set_history_buttons during __init__ (no nav stack yet)
+        self._initializing = True
+        super().__init__(canvas)
+        self._initializing = False
+
+    # -- toolbar actions → send to server -----------------------------------
+
+    def home(self, *args: Any) -> None:  # noqa: ARG002
+        """Reset view to home."""
+        self.canvas._forward_toolbar_button("home")
+
+    def back(self, *args: Any) -> None:  # noqa: ARG002
+        """Navigate back in view history."""
+        self.canvas._forward_toolbar_button("back")
+
+    def forward(self, *args: Any) -> None:  # noqa: ARG002
+        """Navigate forward in view history."""
+        self.canvas._forward_toolbar_button("forward")
+
+    def pan(self, *args: Any) -> None:  # noqa: ARG002
+        """Toggle pan/zoom mode."""
+        self.canvas._forward_toolbar_button("pan")
+
+    def zoom(self, *args: Any) -> None:  # noqa: ARG002
+        """Toggle zoom mode."""
+        self.canvas._forward_toolbar_button("zoom")
+
+    def download(self, *args: Any) -> None:  # noqa: ARG002
+        """Trigger download (save) via server."""
+        self.canvas._forward_toolbar_button("download")
+
+    def save_figure(self, *args: Any) -> None:  # noqa: ARG002
+        """Save figure via the server."""
+        self.canvas._forward_toolbar_button("download")
+
+    # -- state updates from server push messages ----------------------------
+
+    def set_message(self, s: str) -> None:
+        """Update the toolbar status message.
+
+        Called by the canvas's ``_on_json_message`` when a ``"message"``
+        arrives from the server.
+        """
+        self.message = s
+
+    def set_history_buttons(self) -> None:
+        """No-op — history buttons are driven by the server."""
+        if self._initializing:
+            return
+
+    def _on_history_buttons(self, *, back: bool, forward: bool) -> None:
+        """Handle a ``history_buttons`` message from the server.
+
+        Subclasses (Qt, GTK, …) override this to enable/disable buttons.
+        """
+        logger.debug("history_buttons: back=%s, forward=%s", back, forward)
+
+    def _on_navigate_mode(self, mode: str) -> None:
+        """Handle a ``navigate_mode`` message from the server.
+
+        Subclasses override this to update toggle-button states.
+        """
+        logger.debug("navigate_mode: %s", mode)
+
+    def draw_rubberband(
+        self,
+        event: Any,  # noqa: ARG002
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+    ) -> None:
+        """Draw rubberband — delegated to canvas for toolkit rendering."""
+        self.canvas._rubberband_rect = (x0, y0, x1, y1)
+        self.canvas.schedule_repaint()
+
+    def remove_rubberband(self) -> None:
+        """Remove rubberband."""
+        self.canvas._rubberband_rect = None
+        self.canvas.schedule_repaint()
+
+
+class FigureManagerRemote(FigureManagerBase):
+    """Minimal figure manager for remote canvases.
+
+    Toolkit subclasses (e.g. ``FigureManagerQTRemote``) add window
+    management, toolbar wiring, and lifecycle handling.
+    """
+
+    canvas: FigureCanvasRemote  # type: ignore[assignment]
+    toolbar: RemoteNavigationToolbar2 | None  # type: ignore[assignment]
+
+    def __init__(self, canvas: FigureCanvasRemote, num: int) -> None:
+        super().__init__(canvas, num)
+        self.toolbar = RemoteNavigationToolbar2(canvas)
+
+    def destroy(self) -> None:
+        """Disconnect the transport and clean up."""
+        # Transport cleanup is handled by the toolkit layer which owns
+        # the thread / event loop.

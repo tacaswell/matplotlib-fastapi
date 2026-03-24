@@ -32,6 +32,39 @@ Then visit:
 - **http://localhost:8000/embeddable** - Embeddable component demos
 - **http://localhost:8000/react-app/** - React integration example
 
+### Qt Thin-Client Demo
+
+The `qt_remote_demo.py` script demonstrates the **remote thin-client backend** —
+a native Qt application that connects to a running mpl_fastapi server via
+WebSocket.  All rendering happens on the server; the Qt client only displays
+the resulting images and forwards user interactions (pan, zoom, click, key) back.
+
+```bash
+# 1. Start the demo server
+uvicorn demos.demo_server:app --reload
+
+# 2. In another terminal, run the Qt client
+python demos/qt_remote_demo.py
+```
+
+This opens three Qt windows (sine, cosine, lissajous) by default.  You can
+also open a single plot with custom parameters:
+
+```bash
+python demos/qt_remote_demo.py --plot sine frequency=3.0 amplitude=2.0
+python demos/qt_remote_demo.py --plot lissajous freq_x=5 freq_y=4
+```
+
+What to try:
+
+- **Pan & zoom** — toolbar buttons send commands to the server, which
+  re-renders and streams back the updated image.
+- **Multiple windows** — each window has its own WebSocket connection.
+  Different plots can even connect to different servers.
+- **Mouse coordinates** — hover over the plot; the toolbar status bar
+  shows coordinates from the server.
+- **Close a window** — its WebSocket disconnects cleanly.
+
 ### Embeddable Component Demo
 
 The `embeddable_demo.html` file demonstrates the new **MatplotlibEmbeddable** JavaScript API for framework-agnostic plot integration. This shows:
