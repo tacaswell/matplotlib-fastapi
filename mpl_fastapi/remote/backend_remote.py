@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import io
 import logging
-from typing import Any
+import os
+from collections.abc import Callable
+from typing import IO, Any
 
 from matplotlib.backend_bases import (
     FigureCanvasBase,
@@ -242,12 +244,23 @@ class FigureCanvasRemote(FigureCanvasBase):
             pass
 
         elif msg_type == "save_complete":
-            if self.toolbar is not None:
+            pending = self._pending_print_figure_callback
+            if pending is not None:
+                self._pending_print_figure_callback = None
+                filepath, callback = pending
+                callback(msg)
+                self._handle_print_figure_complete(filepath, msg)
+            elif self.toolbar is not None:
                 self.toolbar._on_save_complete(msg)
 
         elif msg_type == "save_error":
             logger.error("Save error: %s", msg.get("message", "unknown"))
-            if self.toolbar is not None:
+            pending = self._pending_print_figure_callback
+            if pending is not None:
+                self._pending_print_figure_callback = None
+                _, callback = pending
+                callback(msg)
+            elif self.toolbar is not None:
                 self.toolbar._on_save_error(msg)
 
         else:
@@ -350,6 +363,135 @@ class FigureCanvasRemote(FigureCanvasBase):
                 "transparent": transparent,
             }
         )
+
+    # -- save (programmatic fig.savefig) ------------------------------------
+
+    # Pending save callback: set by print_figure, consumed by _on_json_message
+    # when a save_complete / save_error arrives.
+    _pending_print_figure_callback: (
+        tuple[str, Callable[[dict[str, Any]], None]] | None
+    ) = None
+
+    def print_figure(
+        self,
+        filename: str | os.PathLike[Any] | IO[Any],
+        dpi: float | str | None = None,
+        facecolor: Any = None,  # noqa: ARG002
+        edgecolor: Any = None,  # noqa: ARG002
+        orientation: str = "portrait",  # noqa: ARG002
+        format: str | None = None,
+        *,
+        bbox_inches: Any = None,  # noqa: ARG002
+        pad_inches: Any = None,  # noqa: ARG002
+        bbox_extra_artists: Any = None,  # noqa: ARG002
+        backend: str | None = None,  # noqa: ARG002
+        transparent: bool = False,
+        **kwargs: Any,  # noqa: ARG002
+    ) -> None:
+        """Save the figure via the remote server.
+
+        This overrides the base-class method so that
+        ``fig.savefig("plot.pdf", dpi=150)`` works.  The server renders
+        the file (supporting vector formats, correct DPI, etc.) and
+        returns a ``download_url``.  The file is then fetched via HTTP
+        and written to *filename*.
+
+        The save request is sent through the normal message flow.  The
+        ``save_complete`` response is intercepted by
+        :meth:`_on_json_message` and routed to either the pending
+        callback registered here, or to ``toolbar._on_save_complete``
+        if no programmatic save is pending.
+
+        Parameters
+        ----------
+        filename : str, path-like, or file-like
+            Destination file path.  File-like objects are not supported
+            for remote saves; a ``ValueError`` is raised.
+        dpi : float or 'figure', optional
+            Resolution.  ``'figure'`` uses the figure's own DPI.
+        format : str, optional
+            File format (e.g. ``'png'``, ``'pdf'``).  Inferred from
+            *filename* extension if not given.
+        transparent : bool
+            Passed to the server.
+        **kwargs
+            Absorbed for compatibility with ``Figure.savefig``.
+        """
+        from pathlib import Path
+
+        import matplotlib as mpl
+
+        if hasattr(filename, "write"):
+            raise ValueError(
+                "Remote print_figure does not support file-like objects; "
+                "pass a file path instead."
+            )
+        path = Path(filename)  # type: ignore[arg-type]
+
+        # Resolve format
+        if format is None:
+            fmt = path.suffix.lstrip(".").lower()
+            if not fmt:
+                fmt = mpl.rcParams.get("savefig.format", "png")
+        else:
+            fmt = format.lower()
+
+        # Resolve DPI
+        resolved_dpi: float
+        if dpi is None:
+            dpi = mpl.rcParams.get("savefig.dpi", "figure")
+        if dpi == "figure":
+            resolved_dpi = float(getattr(self.figure, "_original_dpi", self.figure.dpi))
+        else:
+            resolved_dpi = float(dpi)  # type: ignore[arg-type]
+
+        # Register a callback so _on_json_message routes save_complete here
+        def on_complete(msg: dict[str, Any]) -> None:
+            if msg.get("type") == "save_error":
+                raise RuntimeError(
+                    f"Server save failed: {msg.get('message', 'unknown')}"
+                )
+
+        self._pending_print_figure_callback = (str(path), on_complete)
+
+        # Send the request
+        self._forward_save_figure(format=fmt, dpi=resolved_dpi, transparent=transparent)
+
+        # The actual download happens asynchronously when _on_json_message
+        # receives save_complete and calls _handle_print_figure_complete.
+        # For synchronous callers the toolkit event loop must be running.
+
+    def _handle_print_figure_complete(self, filepath: str, msg: dict[str, Any]) -> None:
+        """Download the saved file after a ``save_complete`` response.
+
+        Called by :meth:`_on_json_message` when a pending
+        ``print_figure`` save completes.
+        """
+        download_url = msg.get("download_url", "")
+        if not download_url:
+            logger.error("save_complete without download_url")
+            return
+        try:
+            self._download_url_to_file(download_url, filepath)
+            logger.info("Saved figure to %s", filepath)
+        except Exception:
+            logger.exception("Failed to download saved figure")
+
+    def _download_url_to_file(self, download_url: str, filepath: str) -> None:
+        """HTTP GET *download_url* and write the response to *filepath*.
+
+        Builds a full URL from the transport's WebSocket URL and the
+        relative *download_url* path returned by the server.
+        """
+        import urllib.parse
+        import urllib.request
+
+        ws_url = self._transport._url
+        parsed = urllib.parse.urlparse(ws_url)
+        scheme = "https" if parsed.scheme == "wss" else "http"
+        base = f"{scheme}://{parsed.netloc}"
+        full_url = urllib.parse.urljoin(base, download_url)
+        urllib.request.urlretrieve(full_url, filepath)
 
     # -- abstract (toolkit must implement) ----------------------------------
 
