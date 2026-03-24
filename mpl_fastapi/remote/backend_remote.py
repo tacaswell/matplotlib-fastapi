@@ -76,27 +76,13 @@ class FigureCanvasRemote(FigureCanvasBase):
         self._rubberband_rect = None
         self._last_seq_num = 0
 
-        # Sync the placeholder figure to match the server.
-        #
-        # The server sends back:
-        #   figure_size  -- CSS pixels (logical pixels on screen)
-        #   figure_dpi   -- *scaled* DPI  (original_dpi * device_pixel_ratio)
-        #
-        # The device_pixel_ratio was sent during the init handshake and the
-        # server used it to scale the figure's DPI via
-        # ``canvas._set_device_pixel_ratio(dpr)``, so:
-        #   original_dpi = figure_dpi / dpr
-        #   size_inches  = css_pixels / original_dpi
-        #
-        # We set the figure to the *original* (unscaled) DPI first, then
-        # call _set_device_pixel_ratio() which scales it up.  This keeps
-        # figure._original_dpi correct so that later DPR changes (e.g.
-        # moving the window to a different-DPI monitor, or Wayland
-        # delivering the real DPR after window creation) work properly.
+        # The server config carries *scaled* DPI (original_dpi * dpr) and
+        # CSS-pixel dimensions.  Recover original_dpi so that
+        # Figure._original_dpi is correct — this lets subsequent calls to
+        # _set_device_pixel_ratio() (e.g. from Wayland DPR updates) work.
         w_css, h_css = server_config.figure_size
         dpr = transport._device_pixel_ratio
-        scaled_dpi = server_config.figure_dpi
-        original_dpi = scaled_dpi / dpr
+        original_dpi = server_config.figure_dpi / dpr
 
         figure.set_dpi(original_dpi)
         figure.set_size_inches(
@@ -213,9 +199,8 @@ class FigureCanvasRemote(FigureCanvasBase):
                         "figure_size": (w_css, h_css),
                     }
                 )
-                # figure_dpi is the *scaled* DPI (original * dpr)
-                dpr = self.device_pixel_ratio
-                original_dpi = self._server_config.figure_dpi / dpr
+                # Recover original DPI and set size in inches.
+                original_dpi = self._server_config.figure_dpi / self.device_pixel_ratio
                 self.figure.set_size_inches(
                     w_css / original_dpi, h_css / original_dpi, forward=False
                 )

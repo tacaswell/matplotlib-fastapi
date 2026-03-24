@@ -328,12 +328,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
             h = event.size().height()
             dpr = self.devicePixelRatioF() or 1
 
-            # Update local figure geometry (for coordinate transforms).
-            # The figure's DPI is the *scaled* DPI (original x dpr), and
-            # w, h are CSS (logical) pixels, so:
-            #   size_inches = css_pixels / original_dpi
-            #                = css_pixels / (scaled_dpi / dpr)
-            #                = css_pixels * dpr / scaled_dpi
+            # Update local figure geometry for coordinate transforms.
             dpival = self.figure.dpi
             self.figure.set_size_inches(
                 (w * dpr) / dpival, (h * dpr) / dpival, forward=False
@@ -467,13 +462,6 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
             )._process()
             self._forward_key_event("key_release", key)
 
-    # -- rubberband (driven by server messages) -----------------------------
-
-    def drawRectangle(self, rect: list[int] | None) -> None:
-        """Draw the zoom rectangle overlay (from server rubberband messages)."""
-        # Reuse the upstream FigureCanvasQT.drawRectangle implementation
-        FigureCanvasQT.drawRectangle(self, rect)
-
     # -- cleanup ------------------------------------------------------------
 
     def close_event(self) -> None:
@@ -524,11 +512,9 @@ class NavigationToolbar2QTRemote(NavigationToolbar2QT):
 
     def pan(self, *args: Any) -> None:  # noqa: ARG002
         self.canvas._forward_toolbar_button("pan")
-        self._update_buttons_checked_from_server()
 
     def zoom(self, *args: Any) -> None:  # noqa: ARG002
         self.canvas._forward_toolbar_button("zoom")
-        self._update_buttons_checked_from_server()
 
     def download(self, *args: Any) -> None:  # noqa: ARG002
         self.canvas._forward_toolbar_button("download")
@@ -561,10 +547,6 @@ class NavigationToolbar2QTRemote(NavigationToolbar2QT):
             self._actions["pan"].setChecked(mode.lower() == "pan")
         if "zoom" in self._actions:
             self._actions["zoom"].setChecked(mode.lower() == "zoom")
-
-    def _update_buttons_checked_from_server(self) -> None:
-        """Placeholder — the actual toggle state comes from the server's
-        ``navigate_mode`` message, so we don't need to track it locally."""
 
     def draw_rubberband(
         self,
@@ -603,6 +585,10 @@ class FigureManagerQTRemote(FigureManagerQT):
 
     canvas: FigureCanvasQTRemote  # type: ignore[assignment]
     toolbar: NavigationToolbar2QTRemote | None  # type: ignore[assignment]
+
+    # Prevent FigureManagerBase.__init__ from creating a default toolbar;
+    # we create our own NavigationToolbar2QTRemote below.
+    _toolbar2_class = None
 
     def __init__(self, canvas: FigureCanvasQTRemote, num: int) -> None:
         # Create the main window
@@ -793,14 +779,9 @@ def open_remote_figure(
 
     config = result["config"]
 
-    # Create a placeholder Figure that matches the server's geometry.
-    # Use the *original* (unscaled) DPI so that Figure._original_dpi is
-    # correct.  FigureCanvasRemote.__init__ will call
-    # _set_device_pixel_ratio() to scale the DPI up.
-    w, h = config.figure_size
-    scaled_dpi = config.figure_dpi
-    original_dpi = scaled_dpi / device_pixel_ratio
-    figure = Figure(figsize=(w / original_dpi, h / original_dpi), dpi=original_dpi)
+    # FigureCanvasRemote.__init__ overwrites the figure's DPI and size
+    # from the server config, so a bare Figure() is fine here.
+    figure = Figure()
 
     # Create the canvas
     canvas = FigureCanvasQTRemote(figure, transport, config)
@@ -816,33 +797,11 @@ def open_remote_figure(
     transport._on_json = thread.json_received.emit
     transport._on_disconnect = thread.disconnected.emit
 
-    # Create the manager (which creates the window + toolbar)
+    # Create the manager (which creates the window + toolbar).
+    # Toolbar messages (navigate_mode, history_buttons, message,
+    # rubberband) are dispatched by canvas._on_json_message via
+    # canvas.toolbar, so no extra wiring is needed.
     manager = FigureManagerQTRemote(canvas, num=-1)
-
-    # Wire server push messages to the toolbar
-    def on_json_for_toolbar(msg: dict[str, Any]) -> None:
-        """Dispatch server messages that affect the toolbar."""
-        msg_type = msg.get("type")
-        if msg_type == "navigate_mode" and manager.toolbar is not None:
-            manager.toolbar._on_navigate_mode(msg.get("mode", ""))
-        elif msg_type == "history_buttons" and manager.toolbar is not None:
-            manager.toolbar._on_history_buttons(
-                back=msg.get("Back", False),
-                forward=msg.get("Forward", False),
-            )
-        elif msg_type == "message" and manager.toolbar is not None:
-            manager.toolbar.set_message(msg.get("message", ""))
-        elif msg_type == "rubberband" and manager.toolbar is not None:
-            x0 = msg.get("x0", -1)
-            y0 = msg.get("y0", -1)
-            x1 = msg.get("x1", -1)
-            y1 = msg.get("y1", -1)
-            if x0 < 0 and y0 < 0:
-                manager.toolbar.remove_rubberband()
-            else:
-                manager.toolbar.draw_rubberband(None, x0, y0, x1, y1)
-
-    thread.json_received.connect(on_json_for_toolbar)
 
     # Request initial render
     transport.send_json({"type": "refresh"})
