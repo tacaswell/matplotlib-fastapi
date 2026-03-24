@@ -81,13 +81,17 @@ def _make_diff_image_message(
     return header + png_bytes
 
 
-def _make_mock_transport(device_pixel_ratio: float = 1.0) -> MagicMock:
+def _make_mock_transport(
+    device_pixel_ratio: float = 1.0,
+    url: str = "ws://localhost:8000/ws/test-123",
+) -> MagicMock:
     """Create a mock RemoteTransport."""
     transport = MagicMock(spec=RemoteTransport)
     transport.send_json = MagicMock()
     transport.send_json_async = MagicMock()
     transport.is_connected = True
     transport._device_pixel_ratio = device_pixel_ratio
+    transport._url = url
     return transport
 
 
@@ -418,3 +422,357 @@ class TestFigureManagerRemote:
         assert manager.toolbar is not None
         assert isinstance(manager.toolbar, RemoteNavigationToolbar2)
         assert manager.canvas is canvas
+
+
+# ---------------------------------------------------------------------------
+# Save-flow tests
+# ---------------------------------------------------------------------------
+
+
+class TestForwardSaveFigure:
+    """Test the _forward_save_figure message format."""
+
+    def test_default_args(self) -> None:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        canvas._forward_save_figure()
+        transport.send_json.assert_called_once_with(
+            {
+                "type": "save_figure",
+                "format": "png",
+                "dpi": 100.0,
+                "transparent": False,
+            }
+        )
+
+    def test_custom_args(self) -> None:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        canvas._forward_save_figure(format="pdf", dpi=300.0, transparent=True)
+        transport.send_json.assert_called_once_with(
+            {
+                "type": "save_figure",
+                "format": "pdf",
+                "dpi": 300.0,
+                "transparent": True,
+            }
+        )
+
+
+class TestSaveCompleteDispatch:
+    """Test _on_json_message routing for save_complete / save_error."""
+
+    def _make_canvas_with_toolbar(
+        self,
+    ) -> tuple[FigureCanvasRemote, RemoteNavigationToolbar2, MagicMock]:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+        toolbar = RemoteNavigationToolbar2(canvas)
+        canvas.toolbar = toolbar
+        return canvas, toolbar, transport
+
+    def test_save_complete_routes_to_toolbar(self) -> None:
+        """Without a pending callback, save_complete goes to toolbar."""
+        canvas, toolbar, _ = self._make_canvas_with_toolbar()
+        toolbar._on_save_complete = MagicMock()  # type: ignore[method-assign]
+
+        msg = {"type": "save_complete", "download_url": "/download/test.png"}
+        canvas._on_json_message(msg)
+
+        toolbar._on_save_complete.assert_called_once_with(msg)
+
+    def test_save_error_routes_to_toolbar(self) -> None:
+        """Without a pending callback, save_error goes to toolbar."""
+        canvas, toolbar, _ = self._make_canvas_with_toolbar()
+        toolbar._on_save_error = MagicMock()  # type: ignore[method-assign]
+
+        msg = {"type": "save_error", "message": "format not supported"}
+        canvas._on_json_message(msg)
+
+        toolbar._on_save_error.assert_called_once_with(msg)
+
+    def test_save_complete_routes_to_pending_callback(self) -> None:
+        """With a pending callback, save_complete goes there instead."""
+        canvas, toolbar, _ = self._make_canvas_with_toolbar()
+        toolbar._on_save_complete = MagicMock()  # type: ignore[method-assign]
+        canvas._handle_print_figure_complete = MagicMock()  # type: ignore[method-assign]
+
+        received: list[dict[str, Any]] = []
+        canvas._pending_print_figure_callback = (
+            "/tmp/test.png",
+            received.append,
+        )
+
+        msg = {"type": "save_complete", "download_url": "/download/test.png"}
+        canvas._on_json_message(msg)
+
+        # Pending callback should have been called
+        assert len(received) == 1
+        assert received[0] is msg
+        # _handle_print_figure_complete should have been called
+        canvas._handle_print_figure_complete.assert_called_once_with(
+            "/tmp/test.png", msg
+        )
+        # Toolbar should NOT have been called
+        toolbar._on_save_complete.assert_not_called()
+        # Pending callback should be consumed
+        assert canvas._pending_print_figure_callback is None
+
+    def test_save_error_routes_to_pending_callback(self) -> None:
+        """With a pending callback, save_error goes there instead."""
+        canvas, toolbar, _ = self._make_canvas_with_toolbar()
+        toolbar._on_save_error = MagicMock()  # type: ignore[method-assign]
+
+        received: list[dict[str, Any]] = []
+        canvas._pending_print_figure_callback = (
+            "/tmp/test.png",
+            received.append,
+        )
+
+        msg = {"type": "save_error", "message": "bad format"}
+        canvas._on_json_message(msg)
+
+        # Pending callback should have been called
+        assert len(received) == 1
+        assert received[0] is msg
+        # Toolbar should NOT have been called
+        toolbar._on_save_error.assert_not_called()
+        # Pending callback should be consumed
+        assert canvas._pending_print_figure_callback is None
+
+
+class TestPrintFigure:
+    """Test the print_figure method (fig.savefig integration)."""
+
+    def test_sends_save_figure_with_format_from_extension(self) -> None:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        canvas.print_figure("/tmp/plot.pdf")
+
+        call_args = transport.send_json.call_args[0][0]
+        assert call_args["type"] == "save_figure"
+        assert call_args["format"] == "pdf"
+        assert canvas._pending_print_figure_callback is not None
+
+    def test_sends_save_figure_with_explicit_format(self) -> None:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        canvas.print_figure("/tmp/plot.dat", format="svg")
+
+        call_args = transport.send_json.call_args[0][0]
+        assert call_args["format"] == "svg"
+
+    def test_dpi_figure_uses_original_dpi(self) -> None:
+        """When dpi='figure', use _original_dpi if available."""
+        fig = Figure()
+        # Server sends scaled DPI with DPR=2
+        config = _make_server_config(figure_dpi=200.0)
+        transport = _make_mock_transport(device_pixel_ratio=2.0)
+        canvas = FigureCanvasRemote(fig, transport, config)
+        # _original_dpi should be 200/2 = 100
+        assert getattr(fig, "_original_dpi", None) == 100.0
+
+        canvas.print_figure("/tmp/plot.png", dpi="figure")
+
+        call_args = transport.send_json.call_args[0][0]
+        assert call_args["dpi"] == 100.0
+
+    def test_explicit_dpi(self) -> None:
+        fig = Figure()
+        config = _make_server_config(figure_dpi=100.0)
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        canvas.print_figure("/tmp/plot.png", dpi=300)
+
+        call_args = transport.send_json.call_args[0][0]
+        assert call_args["dpi"] == 300.0
+
+    def test_transparent_flag(self) -> None:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        canvas.print_figure("/tmp/plot.png", transparent=True)
+
+        call_args = transport.send_json.call_args[0][0]
+        assert call_args["transparent"] is True
+
+    def test_file_like_raises(self) -> None:
+        """print_figure should reject file-like objects."""
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        with pytest.raises(ValueError, match="file-like"):
+            canvas.print_figure(io.BytesIO())  # type: ignore[arg-type]
+
+    def test_registers_pending_callback(self) -> None:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+        assert canvas._pending_print_figure_callback is None
+
+        canvas.print_figure("/tmp/out.png")
+        assert canvas._pending_print_figure_callback is not None
+        path, cb = canvas._pending_print_figure_callback
+        assert path == "/tmp/out.png"
+        assert callable(cb)
+
+
+class TestHandlePrintFigureComplete:
+    """Test the download logic when a save_complete arrives for print_figure."""
+
+    def test_calls_download_url_to_file(self) -> None:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+        canvas._download_url_to_file = MagicMock()  # type: ignore[method-assign]
+
+        msg = {"type": "save_complete", "download_url": "/download/test.png"}
+        canvas._handle_print_figure_complete("/tmp/plot.png", msg)
+
+        canvas._download_url_to_file.assert_called_once_with(
+            "/download/test.png", "/tmp/plot.png"
+        )
+
+    def test_missing_download_url_logs_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        with caplog.at_level("ERROR"):
+            canvas._handle_print_figure_complete(
+                "/tmp/plot.png",
+                {"type": "save_complete"},
+            )
+        assert "download_url" in caplog.text
+
+    def test_download_failure_logs_exception(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+        canvas._download_url_to_file = MagicMock(  # type: ignore[method-assign]
+            side_effect=OSError("connection refused")
+        )
+
+        with caplog.at_level("ERROR"):
+            canvas._handle_print_figure_complete(
+                "/tmp/plot.png",
+                {"type": "save_complete", "download_url": "/download/x.png"},
+            )
+        assert "Failed to download" in caplog.text
+
+
+class TestDownloadUrlToFile:
+    """Test _download_url_to_file URL construction."""
+
+    def test_url_construction_ws(self) -> None:
+        """ws:// should map to http://."""
+        from unittest.mock import patch
+
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport(url="ws://host:9000/ws/fig1")
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        with patch("urllib.request.urlretrieve") as mock_retrieve:
+            canvas._download_url_to_file("/download/out.png", "/tmp/out.png")
+            mock_retrieve.assert_called_once_with(
+                "http://host:9000/download/out.png", "/tmp/out.png"
+            )
+
+    def test_url_construction_wss(self) -> None:
+        """wss:// should map to https://."""
+        from unittest.mock import patch
+
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport(url="wss://secure.host:443/ws/fig1")
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        with patch("urllib.request.urlretrieve") as mock_retrieve:
+            canvas._download_url_to_file("/download/out.pdf", "/tmp/out.pdf")
+            mock_retrieve.assert_called_once_with(
+                "https://secure.host:443/download/out.pdf", "/tmp/out.pdf"
+            )
+
+
+class TestSaveFlowEndToEnd:
+    """End-to-end test: print_figure → save_complete → download."""
+
+    def test_print_figure_then_save_complete(self) -> None:
+        """Simulate the full print_figure flow with a mock download."""
+        from unittest.mock import patch
+
+        fig = Figure()
+        config = _make_server_config(figure_dpi=100.0)
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+        FigureManagerRemote(canvas, num=-1)
+
+        # 1) Call print_figure — registers callback, sends message
+        canvas.print_figure("/tmp/end_to_end.png", dpi=150)
+        assert canvas._pending_print_figure_callback is not None
+        call_args = transport.send_json.call_args[0][0]
+        assert call_args == {
+            "type": "save_figure",
+            "format": "png",
+            "dpi": 150.0,
+            "transparent": False,
+        }
+
+        # 2) Simulate server responding with save_complete
+        with patch.object(canvas, "_download_url_to_file") as mock_dl:
+            canvas._on_json_message(
+                {"type": "save_complete", "download_url": "/download/e2e.png"}
+            )
+            mock_dl.assert_called_once_with("/download/e2e.png", "/tmp/end_to_end.png")
+
+        # 3) Callback should be consumed
+        assert canvas._pending_print_figure_callback is None
+
+    def test_print_figure_then_save_error(self) -> None:
+        """Simulate print_figure when the server returns save_error."""
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+        _ = FigureManagerRemote(canvas, num=-1)
+
+        canvas.print_figure("/tmp/will_fail.svg", format="svg")
+        assert canvas._pending_print_figure_callback is not None
+
+        # The on_complete callback raises on save_error,
+        # but _on_json_message catches nothing — the callback runs directly.
+        # Since the callback raises RuntimeError, we should see it propagate.
+        with pytest.raises(RuntimeError, match="Server save failed"):
+            canvas._on_json_message(
+                {"type": "save_error", "message": "unsupported format"}
+            )
+
+        assert canvas._pending_print_figure_callback is None
