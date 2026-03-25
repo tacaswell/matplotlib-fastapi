@@ -37,7 +37,11 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from mpl_fastapi.remote.backend_qtremote import open_remote_figure
+from mpl_fastapi.remote.backend_qtremote import (
+    open_remote_figure,
+    open_remote_figures,
+    run_qt_app,
+)
 
 
 def main() -> None:
@@ -74,10 +78,9 @@ def main() -> None:
         key, value = kv.split("=", 1)
         init_params[key] = value
 
-    # Ensure a QApplication exists
-    app = QApplication.instance() or QApplication(sys.argv)
-
-    managers = []
+    # Ensure a QApplication exists (open_remote_figure needs one for the
+    # event loop it spins while waiting for the handshake).
+    _app = QApplication.instance() or QApplication(sys.argv)
 
     if args.plot:
         # Open a single named plot
@@ -87,27 +90,16 @@ def main() -> None:
             plot_name=args.plot,
             init_params=init_params or None,
         )
-        mgr.show()
-        managers.append(mgr)
+        managers = [mgr]
     else:
         # Open several demo plots to show multi-figure support
-        demos = [
-            ("sine", {"frequency": "2.0", "amplitude": "1.5"}),
-            ("cosine", {"damping": "0.3"}),
-            ("lissajous", {"freq_x": "3", "freq_y": "2", "delta": "1.57"}),
+        specs = [
+            (args.url, "sine", {"frequency": "2.0", "amplitude": "1.5"}),
+            (args.url, "cosine", {"damping": "0.3"}),
+            (args.url, "lissajous", {"freq_x": "3", "freq_y": "2", "delta": "1.57"}),
         ]
-        for plot_name, params in demos:
-            print(f"Connecting to {args.url} / {plot_name} ...")
-            try:
-                mgr = open_remote_figure(
-                    url=args.url,
-                    plot_name=plot_name,
-                    init_params=params,
-                )
-                mgr.show()
-                managers.append(mgr)
-            except RuntimeError as exc:
-                print(f"  ⚠ Could not open {plot_name!r}: {exc}")
+        print(f"Opening {len(specs)} demo plots on {args.url} ...")
+        managers = open_remote_figures(specs)
 
     if not managers:
         print("No figures opened — is the demo server running?")
@@ -115,7 +107,7 @@ def main() -> None:
         sys.exit(1)
 
     print(f"\n{len(managers)} figure(s) opened.  Close all windows to exit.")
-    app.exec()
+    run_qt_app(managers)
 
 
 if __name__ == "__main__":

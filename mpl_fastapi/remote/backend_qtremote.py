@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
+from collections.abc import Sequence
 from typing import Any
 
 from matplotlib import cbook
@@ -71,6 +73,8 @@ __all__ = [
     "NavigationToolbar2QTRemote",
     "TransportThread",
     "open_remote_figure",
+    "open_remote_figures",
+    "run_qt_app",
 ]
 
 logger = logging.getLogger(__name__)
@@ -901,3 +905,110 @@ def open_remote_figure(
     transport.send_json({"type": "refresh"})
 
     return manager
+
+
+# ---------------------------------------------------------------------------
+# Batch helpers
+# ---------------------------------------------------------------------------
+
+
+def open_remote_figures(
+    specs: Sequence[tuple[str, str] | tuple[str, str, dict[str, Any] | None]],
+    *,
+    device_pixel_ratio: float | None = None,
+) -> list[FigureManagerQTRemote]:
+    """Batch-open multiple remote figures.
+
+    This is a thin wrapper around :func:`open_remote_figure` that opens
+    several plots in one call.  Figures may be on different servers.
+
+    Parameters
+    ----------
+    specs : list of tuples
+        Each element is either ``(url, plot_name)`` or
+        ``(url, plot_name, init_params)``.  *url* is the server base
+        WebSocket URL, *plot_name* is the name of the plot, and
+        *init_params* is an optional dict of initialisation parameters.
+    device_pixel_ratio : float, optional
+        Passed to :func:`open_remote_figure`.  If *None*, auto-detected.
+
+    Returns
+    -------
+    list of FigureManagerQTRemote
+        One manager per successfully opened figure.  Figures that fail
+        to connect are skipped with a warning.
+
+    Examples
+    --------
+    ::
+
+        managers = open_remote_figures([
+            ("ws://localhost:8000/plots", "sine", {"frequency": 2.0}),
+            ("ws://localhost:8000/plots", "cosine"),
+            ("ws://other-host:9000/plots", "heatmap"),
+        ])
+        run_qt_app(managers)
+    """
+    managers: list[FigureManagerQTRemote] = []
+    for spec in specs:
+        if len(spec) == 2:
+            url, plot_name = spec  # type: ignore[misc]
+            init_params: dict[str, Any] | None = None
+        else:
+            url, plot_name, init_params = spec  # type: ignore[misc]
+
+        try:
+            mgr = open_remote_figure(
+                url=url,
+                plot_name=plot_name,
+                init_params=init_params,
+                device_pixel_ratio=device_pixel_ratio,
+            )
+            managers.append(mgr)
+        except RuntimeError:
+            logger.warning("Could not open %r on %s — skipping", plot_name, url)
+    return managers
+
+
+def run_qt_app(
+    managers: list[FigureManagerQTRemote] | None = None,
+) -> None:
+    """Show figures and enter the Qt event loop.
+
+    A convenience helper for scripts that only need to display remote
+    plots.  Creates a :class:`QApplication` if one does not already
+    exist, calls ``manager.show()`` on every manager, and enters
+    ``app.exec()``.
+
+    Parameters
+    ----------
+    managers : list of FigureManagerQTRemote, optional
+        Managers to show.  If *None* or empty, exits immediately with
+        a message.
+
+    Examples
+    --------
+    ::
+
+        from mpl_fastapi.remote.backend_qtremote import (
+            open_remote_figure,
+            run_qt_app,
+        )
+
+        mgr = open_remote_figure(
+            "ws://localhost:8000/plots", "sine",
+        )
+        run_qt_app([mgr])
+    """
+    if not managers:
+        logger.warning("No figures to show.")
+        return
+
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication(sys.argv)
+
+    for mgr in managers:
+        mgr.show()
+
+    app.exec()

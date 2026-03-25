@@ -16,6 +16,19 @@ Usage (Qt)::
         init_params={"frequency": 2.0},
     )
     manager.show()
+
+Batch usage::
+
+    from mpl_fastapi.remote.backend_qtremote import (
+        open_remote_figures,
+        run_qt_app,
+    )
+
+    managers = open_remote_figures([
+        ("ws://localhost:8000/plots", "sine", {"frequency": 2.0}),
+        ("ws://localhost:8000/plots", "cosine"),
+    ])
+    run_qt_app(managers)
 """
 
 from mpl_fastapi.remote.transport import RemoteTransport, ServerConfig

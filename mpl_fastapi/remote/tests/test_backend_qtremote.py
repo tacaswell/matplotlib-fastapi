@@ -36,6 +36,8 @@ from mpl_fastapi.remote.backend_qtremote import (
     NavigationToolbar2QTRemote,
     TransportThread,
     open_remote_figure,
+    open_remote_figures,
+    run_qt_app,
 )
 from mpl_fastapi.remote.transport import RemoteTransport, ServerConfig
 from mpl_fastapi.ws_client import ImageFormat, ImageTypeMode
@@ -670,3 +672,109 @@ class TestOpenRemoteFigure:
                 url=server_url,
                 plot_name="nonexistent_plot_xyz",
             )
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: open_remote_figures
+# ---------------------------------------------------------------------------
+
+
+class TestOpenRemoteFigures:
+    def test_batch_open_multiple_figures(self, qtbot: Any, server_url: str) -> None:
+        """open_remote_figures opens several figures at once."""
+        specs = [
+            (server_url, "simple", {"value": 1.0}),
+            (server_url, "simple", {"value": 2.0}),
+        ]
+        managers = open_remote_figures(specs)
+
+        try:
+            assert len(managers) == 2
+            for mgr in managers:
+                qtbot.addWidget(mgr.window)
+                assert isinstance(mgr, FigureManagerQTRemote)
+                assert isinstance(mgr.canvas, FigureCanvasQTRemote)
+        finally:
+            for mgr in managers:
+                mgr.destroy()
+            QApplication.processEvents()
+
+    def test_batch_open_two_tuple_form(self, qtbot: Any, server_url: str) -> None:
+        """open_remote_figures accepts 2-tuple specs (url, plot_name)."""
+        specs = [(server_url, "simple")]
+        managers = open_remote_figures(specs)
+
+        try:
+            assert len(managers) == 1
+            qtbot.addWidget(managers[0].window)
+            assert isinstance(managers[0], FigureManagerQTRemote)
+        finally:
+            for mgr in managers:
+                mgr.destroy()
+            QApplication.processEvents()
+
+    def test_batch_open_skips_failures(
+        self,
+        qtbot: Any,
+        server_url: str,
+    ) -> None:
+        """open_remote_figures skips plots that fail to connect."""
+        specs = [
+            (server_url, "simple", {"value": 1.0}),
+            (server_url, "nonexistent_plot_xyz", None),
+        ]
+        managers = open_remote_figures(specs)
+
+        try:
+            # Only the "simple" plot should have succeeded
+            assert len(managers) == 1
+            qtbot.addWidget(managers[0].window)
+        finally:
+            for mgr in managers:
+                mgr.destroy()
+            QApplication.processEvents()
+
+    def test_batch_open_empty_specs(self) -> None:
+        """open_remote_figures with empty specs returns empty list."""
+        assert open_remote_figures([]) == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_qt_app
+# ---------------------------------------------------------------------------
+
+
+class TestRunQtApp:
+    def test_run_qt_app_with_no_managers_returns(self) -> None:
+        """run_qt_app with no managers returns immediately."""
+        # Should not block or raise
+        run_qt_app(None)
+        run_qt_app([])
+
+    def test_run_qt_app_shows_managers(self, qtbot: Any, server_url: str) -> None:
+        """run_qt_app calls show() on each manager.
+
+        We can't actually enter app.exec() in a test (it would block),
+        so we verify the show + exec machinery indirectly by patching
+        app.exec and checking that managers get shown.
+        """
+        from unittest.mock import patch
+
+        mgr = open_remote_figure(
+            url=server_url,
+            plot_name="simple",
+        )
+        qtbot.addWidget(mgr.window)
+
+        try:
+            app = QApplication.instance()
+            assert app is not None
+
+            with patch.object(app, "exec"):
+                run_qt_app([mgr])
+
+            # After run_qt_app, the window should be visible
+            assert mgr.window.isVisible()
+        finally:
+            mgr.destroy()
+            QApplication.processEvents()
