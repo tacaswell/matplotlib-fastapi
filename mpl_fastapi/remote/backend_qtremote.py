@@ -221,6 +221,15 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         self._mouse_move_timer.setSingleShot(True)
         self._mouse_move_timer.timeout.connect(self._flush_mouse_move)
 
+        # Rate-limit resize events to the server.  Only the final size
+        # matters, so we use a pure trailing-edge debounce: stash the
+        # latest size and send it after a short quiet period.
+        self._resize_interval_ms: int = 100  # ms
+        self._pending_resize: tuple[int, int] | None = None
+        self._resize_timer: QtCore.QTimer = QtCore.QTimer()
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.timeout.connect(self._flush_resize)
+
         # Now initialise via the MRO.  FigureCanvasRemote.__init__ will call
         # super().__init__(figure), which resolves to FigureCanvasQT.__init__
         # (and thence QWidget.__init__).  Since we pre-set _server_config
@@ -355,12 +364,20 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
             # Fire local resize event (for mpl_connect callbacks)
             ResizeEvent("resize_event", self)._process()
 
-            # Tell the server about the new size.
-            # The server expects CSS (logical) pixels and will multiply
-            # by the device_pixel_ratio itself to get physical pixels.
-            self._forward_resize(w, h)
+            # Debounce the resize to the server — only the final size
+            # matters, so we restart a short timer on every resize and
+            # send once the user stops dragging.
+            self._pending_resize = (w, h)
+            self._resize_timer.start(self._resize_interval_ms)
         finally:
             self._in_resize_event = False
+
+    def _flush_resize(self) -> None:
+        """Send the most recently stashed resize to the server."""
+        if self._pending_resize is not None:
+            w, h = self._pending_resize
+            self._pending_resize = None
+            self._forward_resize(w, h)
 
     def sizeHint(self) -> QtCore.QSize:
         """Return size hint from the server config."""
@@ -537,6 +554,8 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
 
     def close_event(self) -> None:
         """Handle widget close."""
+        self._resize_timer.stop()
+        self._mouse_move_timer.stop()
         if self._transport_thread is not None:
             self._transport_thread.stop()
             self._transport_thread = None

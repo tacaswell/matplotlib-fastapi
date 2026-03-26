@@ -308,6 +308,15 @@ class TestFigureCanvasQTRemoteEvents:
         canvas.resize(400, 300)
         QApplication.processEvents()
 
+        # Resize is debounced — wait for the trailing-edge timer to fire.
+        qtbot.waitUntil(
+            lambda: any(
+                c[0][0].get("type") == "resize"
+                for c in transport.send_json.call_args_list
+            ),
+            timeout=1000,
+        )
+
         calls = transport.send_json.call_args_list
         resizes = [c for c in calls if c[0][0].get("type") == "resize"]
         assert len(resizes) >= 1, f"Expected resize, got {calls}"
@@ -365,7 +374,15 @@ class TestFigureCanvasQTRemoteEvents:
         assert dpr_msgs[0][0][0]["device_pixel_ratio"] == target_dpr
         assert transport._device_pixel_ratio == target_dpr
 
-        # A resize should also have been sent
+        # A resize should also have been sent (debounced — wait for timer)
+        qtbot.waitUntil(
+            lambda: any(
+                c[0][0].get("type") == "resize"
+                for c in transport.send_json.call_args_list
+            ),
+            timeout=1000,
+        )
+        calls = transport.send_json.call_args_list
         resizes = [c for c in calls if c[0][0].get("type") == "resize"]
         assert len(resizes) >= 1
 

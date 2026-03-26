@@ -211,6 +211,9 @@ class FigureCanvasRemote(FigureCanvasBase):
                 self.figure.set_size_inches(
                     w_css / original_dpi, h_css / original_dpi, forward=False
                 )
+                # Request a re-render at the new size (mirrors JS client's
+                # handle_resize → send_render_request flow).
+                self._transport.send_json({"type": "render"})
             self.schedule_repaint()
 
         elif msg_type == "navigate_mode":
