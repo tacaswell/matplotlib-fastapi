@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -209,6 +210,15 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
 
         # Thread will be set up by the manager / factory
         self._transport_thread: TransportThread | None = None
+
+        # Rate-limit motion_notify to avoid overwhelming the server.
+        # Discrete events (press/release/scroll) are never throttled.
+        self._mouse_move_interval: float = 1.0 / 30  # 30 Hz max
+        self._last_mouse_move_time: float = 0.0
+        self._pending_mouse_move: tuple[float, float] | None = None
+        self._mouse_move_timer: QtCore.QTimer = QtCore.QTimer()
+        self._mouse_move_timer.setSingleShot(True)
+        self._mouse_move_timer.timeout.connect(self._flush_mouse_move)
 
         # Now initialise via the MRO.  FigureCanvasRemote.__init__ will call
         # super().__init__(figure), which resolves to FigureCanvasQT.__init__
@@ -433,8 +443,32 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
             modifiers=self._mpl_modifiers(),
             guiEvent=event,
         )._process()
+
+        # Throttle motion_notify to the server to avoid overwhelming it.
         wx, wy = self._wireEventCoords(event)
-        self._forward_mouse_event("motion_notify", wx, wy)
+        now = time.monotonic()
+        elapsed = now - self._last_mouse_move_time
+        if elapsed >= self._mouse_move_interval:
+            # Enough time has passed — send immediately.
+            self._pending_mouse_move = None
+            self._mouse_move_timer.stop()
+            self._last_mouse_move_time = now
+            self._forward_mouse_event("motion_notify", wx, wy)
+        else:
+            # Too soon — stash and schedule a trailing send so the
+            # server always sees the final position.
+            self._pending_mouse_move = (wx, wy)
+            if not self._mouse_move_timer.isActive():
+                remaining_ms = int((self._mouse_move_interval - elapsed) * 1000) + 1
+                self._mouse_move_timer.start(remaining_ms)
+
+    def _flush_mouse_move(self) -> None:
+        """Send the most recent throttled motion_notify."""
+        if self._pending_mouse_move is not None:
+            wx, wy = self._pending_mouse_move
+            self._pending_mouse_move = None
+            self._last_mouse_move_time = time.monotonic()
+            self._forward_mouse_event("motion_notify", wx, wy)
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         button = self.buttond.get(event.button())
