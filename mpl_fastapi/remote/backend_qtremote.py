@@ -971,6 +971,7 @@ def open_remote_figure(
     # rubberband) are dispatched by canvas._on_json_message via
     # canvas.toolbar, so no extra wiring is needed.
     manager = FigureManagerQTRemote(canvas, num=-1)
+    manager.set_window_title(plot_name)
 
     # Request initial render
     transport.send_json({"type": "refresh"})
