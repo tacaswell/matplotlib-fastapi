@@ -27,14 +27,21 @@ from matplotlib.figure import Figure
 from PIL import Image
 from pydantic import BaseModel, Field
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QLineEdit,
+)
 
-from mpl_fastapi import InitConfig, PlotConfig, create_mpl_router, install_mpl_router
+from mpl_fastapi import InitConfig, PlotConfig, UpdateConfig, create_mpl_router, install_mpl_router
 from mpl_fastapi.remote.backend_qtremote import (
     FigureCanvasQTRemote,
     FigureManagerQTRemote,
     NavigationToolbar2QTRemote,
     TransportThread,
+    UpdateParametersWidget,
     open_remote_figure,
     open_remote_figures,
     run_qt_app,
@@ -106,12 +113,28 @@ class SimpleParams(BaseModel):
     value: float = Field(default=1.0, ge=0.1, le=10.0)
 
 
+class UpdateParams(BaseModel):
+    """Update parameters for testing."""
+
+    phase: float = Field(default=0.0, ge=0.0, le=6.28, description="Phase shift")
+
+
 def _create_simple_figure(fig: Figure, params: SimpleParams) -> dict[str, object]:
     ax = fig.add_subplot(111)
     x = np.linspace(0, 10, 100)
-    ax.plot(x, np.sin(x * params.value))
+    (line,) = ax.plot(x, np.sin(x * params.value))
     ax.set_title(f"Simple (value={params.value})")
-    return {"ax": ax}
+    return {"ax": ax, "line": line, "x": x, "value": params.value}
+
+
+def _update_simple_figure(
+    state: dict[str, object], params: UpdateParams
+) -> dict[str, object]:
+    x = state["x"]
+    value = state["value"]
+    y = np.sin(np.asarray(x) * float(value) + params.phase)  # type: ignore[arg-type]
+    state["line"].set_ydata(y)  # type: ignore[union-attr]
+    return state
 
 
 def _make_test_app() -> FastAPI:
@@ -123,6 +146,17 @@ def _make_test_app() -> FastAPI:
                 init=InitConfig(
                     function=_create_simple_figure,
                     params_model=SimpleParams,
+                ),
+            ),
+            "updatable": PlotConfig(
+                description="updatable test plot",
+                init=InitConfig(
+                    function=_create_simple_figure,
+                    params_model=SimpleParams,
+                ),
+                update=UpdateConfig(
+                    function=_update_simple_figure,
+                    params_model=UpdateParams,
                 ),
             ),
         }
@@ -777,4 +811,438 @@ class TestRunQtApp:
             assert mgr.window.isVisible()
         finally:
             mgr.destroy()
+            QApplication.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Helper: example update schemas for widget tests
+# ---------------------------------------------------------------------------
+
+_SIMPLE_UPDATE_SCHEMA: dict[str, Any] = {
+    "properties": {
+        "phase": {
+            "type": "number",
+            "title": "Phase",
+            "description": "Phase shift in radians",
+            "default": 0.0,
+            "minimum": 0.0,
+            "maximum": 6.28,
+        },
+    },
+    "required": [],
+}
+
+_MULTI_TYPE_UPDATE_SCHEMA: dict[str, Any] = {
+    "properties": {
+        "frequency": {
+            "type": "number",
+            "title": "Frequency",
+            "default": 1.0,
+            "minimum": 0.1,
+            "maximum": 10.0,
+        },
+        "points": {
+            "type": "integer",
+            "title": "Points",
+            "default": 200,
+            "minimum": 50,
+            "maximum": 1000,
+        },
+        "show_grid": {
+            "type": "boolean",
+            "title": "Show Grid",
+            "default": True,
+        },
+        "style": {
+            "type": "string",
+            "title": "Style",
+            "enum": ["solid", "dashed", "dotted"],
+            "default": "solid",
+        },
+        "label": {
+            "type": "string",
+            "title": "Label",
+            "default": "My Plot",
+        },
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: UpdateParametersWidget
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateParametersWidgetConstruction:
+    """Test widget creation from JSON Schema."""
+
+    def test_creates_widget_from_simple_schema(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_SIMPLE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_SIMPLE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        assert "phase" in widget._inputs
+        assert widget.windowTitle() == "Update Parameters"
+
+    def test_creates_number_spinbox(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_SIMPLE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_SIMPLE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        phase_input = widget._inputs["phase"]
+        assert isinstance(phase_input, QDoubleSpinBox)
+        assert phase_input.value() == 0.0
+        assert phase_input.minimum() == 0.0
+        assert phase_input.maximum() == 6.28
+
+    def test_creates_integer_spinbox(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_MULTI_TYPE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_MULTI_TYPE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        points_input = widget._inputs["points"]
+        assert isinstance(points_input, QDoubleSpinBox)
+        assert points_input.value() == 200.0
+        assert points_input.decimals() == 0
+
+    def test_creates_boolean_checkbox(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_MULTI_TYPE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_MULTI_TYPE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        grid_input = widget._inputs["show_grid"]
+        assert isinstance(grid_input, QCheckBox)
+        assert grid_input.isChecked()
+
+    def test_creates_enum_combobox(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_MULTI_TYPE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_MULTI_TYPE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        style_input = widget._inputs["style"]
+        assert isinstance(style_input, QComboBox)
+        assert style_input.currentText() == "solid"
+        assert style_input.count() == 3
+
+    def test_creates_string_line_edit(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_MULTI_TYPE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_MULTI_TYPE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        label_input = widget._inputs["label"]
+        assert isinstance(label_input, QLineEdit)
+        assert label_input.text() == "My Plot"
+
+    def test_empty_schema_creates_no_inputs(self, qtbot: Any) -> None:
+        empty_schema: dict[str, Any] = {"properties": {}}
+        config = _make_server_config(update_schema=empty_schema)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(empty_schema, canvas)
+        qtbot.addWidget(widget)
+
+        assert len(widget._inputs) == 0
+
+
+class TestUpdateParametersWidgetValues:
+    """Test get_values and set_values."""
+
+    def test_get_values_returns_defaults(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_SIMPLE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_SIMPLE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        values = widget.get_values()
+        assert "phase" in values
+        assert values["phase"] == pytest.approx(0.0)
+
+    def test_get_values_multi_type(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_MULTI_TYPE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_MULTI_TYPE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        values = widget.get_values()
+        assert values["frequency"] == pytest.approx(1.0)
+        assert values["points"] == 200  # integer type
+        assert values["show_grid"] is True
+        assert values["style"] == "solid"
+        assert values["label"] == "My Plot"
+
+    def test_set_values_updates_widgets(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_SIMPLE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_SIMPLE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        widget.set_values({"phase": 3.14})
+        assert widget.get_values()["phase"] == pytest.approx(3.14)
+
+    def test_set_values_ignores_unknown_keys(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_SIMPLE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_SIMPLE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        # Should not raise
+        widget.set_values({"nonexistent": 42})
+        assert widget.get_values()["phase"] == pytest.approx(0.0)
+
+
+class TestUpdateParametersWidgetSubmit:
+    """Test form submission."""
+
+    def test_submit_sends_update_params(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_SIMPLE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_SIMPLE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        # Set a value and submit
+        widget.set_values({"phase": 1.57})
+        widget._on_submit()
+
+        transport.send_json.assert_called_with(
+            {"type": "update_params", "params": {"phase": pytest.approx(1.57)}}
+        )
+
+    def test_submit_emits_signal(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_SIMPLE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_SIMPLE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        received: list[dict[str, Any]] = []
+        widget.params_submitted.connect(received.append)
+
+        widget.set_values({"phase": 2.0})
+        widget._on_submit()
+
+        assert len(received) == 1
+        assert received[0]["phase"] == pytest.approx(2.0)
+
+    def test_reset_restores_defaults(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_SIMPLE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        widget = UpdateParametersWidget(_SIMPLE_UPDATE_SCHEMA, canvas)
+        qtbot.addWidget(widget)
+
+        widget.set_values({"phase": 5.0})
+        assert widget.get_values()["phase"] == pytest.approx(5.0)
+
+        widget._on_reset()
+        assert widget.get_values()["phase"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: FigureManagerQTRemote with update widget
+# ---------------------------------------------------------------------------
+
+
+class TestFigureManagerQTRemoteUpdateWidget:
+    def test_no_update_widget_when_schema_none(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=None)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        manager = FigureManagerQTRemote(canvas, num=1)
+        qtbot.addWidget(manager.window)
+
+        assert manager.update_widget is None
+
+    def test_update_widget_created_when_schema_present(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_SIMPLE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        manager = FigureManagerQTRemote(canvas, num=1)
+        qtbot.addWidget(manager.window)
+
+        assert manager.update_widget is not None
+        assert isinstance(manager.update_widget, UpdateParametersWidget)
+        assert "phase" in manager.update_widget._inputs
+
+    def test_update_widget_docked_in_window(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_SIMPLE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        manager = FigureManagerQTRemote(canvas, num=1)
+        qtbot.addWidget(manager.window)
+
+        manager.show()
+        qtbot.waitExposed(manager.window)
+
+        # The dock widget should be a child of the main window
+        assert manager.update_widget.parent() is manager.window
+
+    def test_destroy_cleans_up_update_widget(self, qtbot: Any) -> None:
+        config = _make_server_config(update_schema=_SIMPLE_UPDATE_SCHEMA)
+        transport = _make_mock_transport(config)
+        fig = Figure()
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+        canvas._transport_thread = MagicMock()
+
+        manager = FigureManagerQTRemote(canvas, num=1)
+        qtbot.addWidget(manager.window)
+
+        assert manager.update_widget is not None
+        manager.destroy()
+        assert manager.update_widget is None
+
+
+# ---------------------------------------------------------------------------
+# Integration test: update parameters with real server
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateParametersIntegration:
+    def test_updatable_plot_has_update_widget(
+        self, qtbot: Any, server_url: str
+    ) -> None:
+        """open_remote_figure for an updatable plot creates the dock widget."""
+        manager = open_remote_figure(
+            url=server_url,
+            plot_name="updatable",
+            init_params={"value": 1.0},
+        )
+        qtbot.addWidget(manager.window)
+
+        try:
+            assert manager.update_widget is not None
+            assert isinstance(manager.update_widget, UpdateParametersWidget)
+
+            # The schema should have a "phase" property
+            assert "phase" in manager.update_widget._inputs
+        finally:
+            manager.destroy()
+            QApplication.processEvents()
+
+    def test_non_updatable_plot_has_no_update_widget(
+        self, qtbot: Any, server_url: str
+    ) -> None:
+        """open_remote_figure for a non-updatable plot has no dock widget."""
+        manager = open_remote_figure(
+            url=server_url,
+            plot_name="simple",
+            init_params={"value": 1.0},
+        )
+        qtbot.addWidget(manager.window)
+
+        try:
+            assert manager.update_widget is None
+        finally:
+            manager.destroy()
+            QApplication.processEvents()
+
+    def test_submit_update_params_triggers_redraw(
+        self, qtbot: Any, server_url: str
+    ) -> None:
+        """Submitting parameters sends update_params and gets a new image."""
+        manager = open_remote_figure(
+            url=server_url,
+            plot_name="updatable",
+            init_params={"value": 1.0},
+        )
+        qtbot.addWidget(manager.window)
+
+        try:
+            manager.show()
+            qtbot.waitExposed(manager.window)
+
+            # Wait for initial image
+            for _ in range(100):
+                QApplication.processEvents()
+                if manager.canvas._remote_image is not None:
+                    break
+                time.sleep(0.05)
+            assert manager.canvas._remote_image is not None
+
+            # Remember the initial sequence number
+            initial_seq = manager.canvas._last_seq_num
+
+            # Submit an update
+            assert manager.update_widget is not None
+            manager.update_widget.set_values({"phase": 1.57})
+            manager.update_widget._on_submit()
+
+            # Wait for new image (sequence number should advance)
+            for _ in range(100):
+                QApplication.processEvents()
+                if manager.canvas._last_seq_num > initial_seq:
+                    break
+                time.sleep(0.05)
+
+            assert manager.canvas._last_seq_num > initial_seq
+        finally:
+            manager.destroy()
             QApplication.processEvents()

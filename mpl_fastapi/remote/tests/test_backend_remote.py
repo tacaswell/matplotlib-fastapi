@@ -807,3 +807,83 @@ class TestSaveFlowEndToEnd:
             )
 
         assert canvas._pending_print_figure_callback is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: Update Parameters
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateParams:
+    """Test _forward_update_params and has_update_params."""
+
+    def test_forward_update_params_sends_message(self) -> None:
+        """_forward_update_params sends update_params via transport."""
+        fig = Figure()
+        config = _make_server_config(
+            update_schema={"properties": {"phase": {"type": "number", "default": 0.0}}}
+        )
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        canvas._forward_update_params({"phase": 1.57})
+        transport.send_json.assert_called_with(
+            {"type": "update_params", "params": {"phase": 1.57}}
+        )
+
+    def test_forward_update_params_multiple_values(self) -> None:
+        """_forward_update_params sends all parameter values."""
+        fig = Figure()
+        config = _make_server_config(
+            update_schema={
+                "properties": {
+                    "phase": {"type": "number"},
+                    "amplitude": {"type": "number"},
+                }
+            }
+        )
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        canvas._forward_update_params({"phase": 1.0, "amplitude": 2.5})
+        transport.send_json.assert_called_with(
+            {"type": "update_params", "params": {"phase": 1.0, "amplitude": 2.5}}
+        )
+
+    def test_has_update_params_true_when_schema_present(self) -> None:
+        """has_update_params is True when update_schema is non-null."""
+        fig = Figure()
+        config = _make_server_config(
+            update_schema={"properties": {"phase": {"type": "number"}}}
+        )
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        assert canvas.has_update_params is True
+
+    def test_has_update_params_false_when_schema_none(self) -> None:
+        """has_update_params is False when update_schema is None."""
+        fig = Figure()
+        config = _make_server_config(update_schema=None)
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        assert canvas.has_update_params is False
+
+
+class TestRemoteNavigationToolbar2UpdateParams:
+    """Test _on_update_params_submitted on the agnostic toolbar."""
+
+    def test_on_update_params_submitted_forwards_to_canvas(self) -> None:
+        fig = Figure()
+        config = _make_server_config(
+            update_schema={"properties": {"phase": {"type": "number"}}}
+        )
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+        toolbar = RemoteNavigationToolbar2(canvas)
+
+        toolbar._on_update_params_submitted({"phase": 3.14})
+        transport.send_json.assert_called_with(
+            {"type": "update_params", "params": {"phase": 3.14}}
+        )

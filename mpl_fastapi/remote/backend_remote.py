@@ -106,6 +106,11 @@ class FigureCanvasRemote(FigureCanvasBase):
         """The most recent composited image from the server, or ``None``."""
         return self._remote_image
 
+    @property
+    def has_update_params(self) -> bool:
+        """Whether the server supports update parameters for this plot."""
+        return self._server_config.update_schema is not None
+
     # -- rendering (main thread, blit only) ---------------------------------
 
     def draw(self) -> None:
@@ -374,6 +379,21 @@ class FigureCanvasRemote(FigureCanvasBase):
             }
         )
 
+    def _forward_update_params(self, params: dict[str, Any]) -> None:
+        """Send an ``update_params`` message to the server.
+
+        The server validates the parameters against the ``update_schema``,
+        calls the update function, and triggers an ``invalidate`` → re-render
+        cycle.  If the parameters are invalid, the server sends an ``error``
+        message (dispatched by :meth:`_on_json_message`).
+
+        Parameters
+        ----------
+        params : dict
+            Parameter names and values matching the server's ``update_schema``.
+        """
+        self._transport.send_json({"type": "update_params", "params": params})
+
     # -- save (programmatic fig.savefig) ------------------------------------
 
     # Pending save callback: set by print_figure, consumed by _on_json_message
@@ -614,6 +634,21 @@ class RemoteNavigationToolbar2(NavigationToolbar2):
     def _on_save_error(self, msg: dict[str, Any]) -> None:
         """Handle a ``save_error`` message from the server."""
         logger.error("save_error: %s", msg.get("message", "unknown"))
+
+    def _on_update_params_submitted(self, params: dict[str, Any]) -> None:
+        """Handle an update-parameters submission from the UI.
+
+        The default implementation forwards the params to the server
+        via the canvas.  Toolkit subclasses may override this to add
+        feedback (e.g. disable the submit button until the invalidate
+        response arrives).
+
+        Parameters
+        ----------
+        params : dict
+            Parameter names and values from the update form.
+        """
+        self.canvas._forward_update_params(params)
 
     def draw_rubberband(
         self,

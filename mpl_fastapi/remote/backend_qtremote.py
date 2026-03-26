@@ -73,6 +73,7 @@ __all__ = [
     "FigureManagerQTRemote",
     "NavigationToolbar2QTRemote",
     "TransportThread",
+    "UpdateParametersWidget",
     "open_remote_figure",
     "open_remote_figures",
     "run_qt_app",
@@ -737,6 +738,251 @@ class NavigationToolbar2QTRemote(NavigationToolbar2QT):
 
 
 # ---------------------------------------------------------------------------
+# Update parameters widget
+# ---------------------------------------------------------------------------
+
+
+class UpdateParametersWidget(QtWidgets.QDockWidget):
+    """Dockable parameter editor driven by a JSON Schema.
+
+    When the server's ``update_schema`` is non-null, this widget provides
+    a form with one input per parameter.  Submitting the form sends an
+    ``update_params`` message to the server, which re-renders the figure.
+
+    The widget is auto-generated from the JSON Schema included in the
+    server's ``config`` handshake message.
+
+    Parameters
+    ----------
+    schema : dict
+        JSON Schema for the update parameters (from ``ServerConfig.update_schema``).
+    canvas : FigureCanvasQTRemote
+        Canvas to send update messages through.
+    parent : QWidget, optional
+        Parent widget.
+    """
+
+    # Emitted when the user submits new parameters.
+    params_submitted = QtCore.Signal(dict)
+
+    def __init__(
+        self,
+        schema: dict[str, Any],
+        canvas: FigureCanvasQTRemote,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__("Update Parameters", parent)
+        self._schema = schema
+        self._canvas = canvas
+        self._inputs: dict[str, QtWidgets.QWidget] = {}
+
+        self.setAllowedAreas(
+            QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
+            | QtCore.Qt.DockWidgetArea.RightDockWidgetArea
+            | QtCore.Qt.DockWidgetArea.BottomDockWidgetArea
+        )
+        self.setFeatures(
+            QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+
+        self._build_form()
+
+    # -- form construction --------------------------------------------------
+
+    def _build_form(self) -> None:
+        """Build the form widgets from the JSON Schema."""
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(container)
+        layout.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+        )
+
+        properties = self._schema["properties"]
+        required_fields = set(self._schema.get("required", []))
+
+        for name, prop in properties.items():
+            widget = self._create_input_widget(name, prop, name in required_fields)
+            if widget is not None:
+                label_text = prop.get("title", name)
+                description = prop.get("description", "")
+                if description:
+                    label_text += f"  ({description})"
+                layout.addRow(label_text, widget)
+                self._inputs[name] = widget
+
+        # Submit button
+        button_row = QtWidgets.QHBoxLayout()
+        self._submit_button = QtWidgets.QPushButton("Update")
+        self._submit_button.clicked.connect(self._on_submit)
+        self._reset_button = QtWidgets.QPushButton("Reset")
+        self._reset_button.clicked.connect(self._on_reset)
+        button_row.addWidget(self._submit_button)
+        button_row.addWidget(self._reset_button)
+        button_row.addStretch()
+        layout.addRow(button_row)
+
+        # Wrap in a scroll area for schemas with many parameters
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(container)
+        self.setWidget(scroll)
+
+    def _create_input_widget(
+        self,
+        name: str,
+        prop: dict[str, Any],
+        required: bool,  # noqa: ARG002
+    ) -> QtWidgets.QWidget | None:
+        """Create an appropriate input widget for a JSON Schema property.
+
+        Parameters
+        ----------
+        name : str
+            Property name.
+        prop : dict
+            JSON Schema property descriptor.
+        required : bool
+            Whether the field is required by the schema.
+
+        Returns
+        -------
+        QWidget or None
+            The input widget, or ``None`` if the type is unsupported.
+        """
+        prop_type = prop["type"]
+        default = prop.get("default")
+
+        if prop_type in ("number", "integer"):
+            widget = QtWidgets.QDoubleSpinBox()
+            widget.setObjectName(name)
+            widget.setDecimals(4 if prop_type == "number" else 0)
+
+            # Range
+            minimum = prop.get("minimum", prop.get("exclusiveMinimum"))
+            maximum = prop.get("maximum", prop.get("exclusiveMaximum"))
+            if minimum is not None:
+                widget.setMinimum(float(minimum))
+            else:
+                widget.setMinimum(-1e9)
+            if maximum is not None:
+                widget.setMaximum(float(maximum))
+            else:
+                widget.setMaximum(1e9)
+
+            # Step — pick a sensible default based on range
+            if minimum is not None and maximum is not None:
+                span = float(maximum) - float(minimum)
+                widget.setSingleStep(span / 100)
+            else:
+                widget.setSingleStep(0.1 if prop_type == "number" else 1)
+
+            if default is not None:
+                widget.setValue(float(default))
+
+            return widget
+
+        if prop_type == "boolean":
+            widget = QtWidgets.QCheckBox()
+            widget.setObjectName(name)
+            if default is not None:
+                widget.setChecked(bool(default))
+            return widget
+
+        if prop_type == "string":
+            # Handle enums as combo boxes
+            enum_values = prop.get("enum")
+            if enum_values is not None:
+                widget = QtWidgets.QComboBox()
+                widget.setObjectName(name)
+                for val in enum_values:
+                    widget.addItem(str(val))
+                if default is not None:
+                    idx = widget.findText(str(default))
+                    if idx >= 0:
+                        widget.setCurrentIndex(idx)
+                return widget
+            # Plain string → line edit
+            widget = QtWidgets.QLineEdit()
+            widget.setObjectName(name)
+            if default is not None:
+                widget.setText(str(default))
+            return widget
+
+        logger.warning("Unsupported schema type %r for parameter %r", prop_type, name)
+        return None
+
+    # -- value extraction ---------------------------------------------------
+
+    def get_values(self) -> dict[str, Any]:
+        """Read current form values and return as a dict.
+
+        Returns
+        -------
+        dict
+            Parameter name → value, with types matching the schema.
+        """
+        values: dict[str, Any] = {}
+        properties = self._schema["properties"]
+        for name, widget in self._inputs.items():
+            prop_type = properties[name]["type"]
+            if isinstance(widget, QtWidgets.QDoubleSpinBox):
+                val = widget.value()
+                if prop_type == "integer":
+                    val = int(val)
+                values[name] = val
+            elif isinstance(widget, QtWidgets.QCheckBox):
+                values[name] = widget.isChecked()
+            elif isinstance(widget, QtWidgets.QComboBox):
+                values[name] = widget.currentText()
+            elif isinstance(widget, QtWidgets.QLineEdit):
+                values[name] = widget.text()
+        return values
+
+    def set_values(self, params: dict[str, Any]) -> None:
+        """Programmatically set form values.
+
+        Parameters
+        ----------
+        params : dict
+            Parameter name → value.  Unknown names are silently ignored.
+        """
+        for name, value in params.items():
+            widget = self._inputs.get(name)
+            if widget is None:
+                continue
+            if isinstance(widget, QtWidgets.QDoubleSpinBox):
+                widget.setValue(float(value))
+            elif isinstance(widget, QtWidgets.QCheckBox):
+                widget.setChecked(bool(value))
+            elif isinstance(widget, QtWidgets.QComboBox):
+                idx = widget.findText(str(value))
+                if idx >= 0:
+                    widget.setCurrentIndex(idx)
+            elif isinstance(widget, QtWidgets.QLineEdit):
+                widget.setText(str(value))
+
+    # -- slots --------------------------------------------------------------
+
+    def _on_submit(self) -> None:
+        """Read form values and send an ``update_params`` message."""
+        params = self.get_values()
+        logger.debug("Submitting update params: %s", params)
+        self._canvas._forward_update_params(params)
+        self.params_submitted.emit(params)
+
+    def _on_reset(self) -> None:
+        """Reset all inputs to their schema default values."""
+        properties = self._schema["properties"]
+        defaults = {
+            name: prop["default"]
+            for name, prop in properties.items()
+            if "default" in prop
+        }
+        self.set_values(defaults)
+
+
+# ---------------------------------------------------------------------------
 # Figure manager
 # ---------------------------------------------------------------------------
 
@@ -779,6 +1025,19 @@ class FigureManagerQTRemote(FigureManagerQT):
         self.window.resize(cs.width(), cs.height() + tbs_height)
         self.window.setCentralWidget(self.canvas)
 
+        # Create update parameters dock widget (if the server supports it)
+        self.update_widget: UpdateParametersWidget | None = None
+        if canvas._server_config.update_schema is not None:
+            self.update_widget = UpdateParametersWidget(
+                canvas._server_config.update_schema,
+                canvas,
+                self.window,
+            )
+            self.window.addDockWidget(
+                QtCore.Qt.DockWidgetArea.BottomDockWidgetArea,
+                self.update_widget,
+            )
+
         # Focus policy
         self.canvas.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.canvas.setFocus()
@@ -818,6 +1077,9 @@ class FigureManagerQTRemote(FigureManagerQT):
             self.canvas._transport_thread.stop()
             self.canvas._transport_thread = None
 
+        if self.update_widget is not None:
+            self.update_widget.close()
+            self.update_widget = None
         if self.toolbar:
             self.toolbar.destroy()
         self.window.close()

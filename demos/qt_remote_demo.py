@@ -95,6 +95,7 @@ def main() -> None:
         # Open several demo plots to show multi-figure support
         specs = [
             (args.url, "sine", {"frequency": "2.0", "amplitude": "1.5"}),
+            (args.url, "interactive_sine", {"frequency": "2.0", "amplitude": "1.5"}),
             (args.url, "cosine", {"damping": "0.3"}),
             (args.url, "lissajous", {"freq_x": "3", "freq_y": "2", "delta": "1.57"}),
         ]
