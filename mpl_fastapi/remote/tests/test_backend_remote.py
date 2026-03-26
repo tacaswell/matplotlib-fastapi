@@ -261,6 +261,37 @@ class TestFigureCanvasRemoteJsonMessages:
         )
         assert canvas._rubberband_rect is None
 
+    def test_rubberband_dispatches_to_toolbar_draw(self) -> None:
+        """Rubberband message calls toolbar.draw_rubberband when toolbar exists."""
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+        toolbar = RemoteNavigationToolbar2(canvas)
+        canvas.toolbar = toolbar
+        toolbar.draw_rubberband = MagicMock()  # type: ignore[method-assign]
+
+        canvas._on_json_message(
+            {"type": "rubberband", "x0": 10, "y0": 20, "x1": 100, "y1": 200}
+        )
+        toolbar.draw_rubberband.assert_called_once_with(None, 10, 20, 100, 200)
+
+    def test_rubberband_dispatches_to_toolbar_remove(self) -> None:
+        """Clear-rubberband message calls toolbar.remove_rubberband."""
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+        toolbar = RemoteNavigationToolbar2(canvas)
+        canvas.toolbar = toolbar
+        toolbar.remove_rubberband = MagicMock()  # type: ignore[method-assign]
+
+        canvas._rubberband_rect = (10, 20, 100, 200)
+        canvas._on_json_message(
+            {"type": "rubberband", "x0": -1, "y0": -1, "x1": -1, "y1": -1}
+        )
+        toolbar.remove_rubberband.assert_called_once()
+
     def test_error_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         fig = Figure()
         config = _make_server_config()

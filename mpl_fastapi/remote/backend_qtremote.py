@@ -356,72 +356,101 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         w, h = self.get_width_height()
         return QtCore.QSize(w, h)
 
+    # -- coordinate helpers -------------------------------------------------
+
+    def _wireEventCoords(
+        self,
+        pos: QtCore.QPointF | QtGui.QMouseEvent | None = None,
+    ) -> tuple[float, float]:
+        """Return physical-pixel coordinates in wire-protocol convention.
+
+        Returns ``(x, y)`` with x from the left edge and y from the
+        **top** edge, both in device pixels.  This matches the
+        coordinate convention of the JavaScript client; the server
+        flips y internally.
+
+        Compare :meth:`~FigureCanvasQT.mouseEventCoords` which returns
+        matplotlib convention (y from bottom) for local event handling.
+        """
+        if pos is None:
+            pos = self.mapFromGlobal(QtGui.QCursor.pos())
+        elif hasattr(pos, "position"):  # Qt 6 QMouseEvent / QWheelEvent
+            pos = pos.position()
+        elif hasattr(pos, "pos"):  # Qt 5 QMouseEvent
+            pos = pos.pos()
+        dpr = self.devicePixelRatioF() or 1
+        return pos.x() * dpr, pos.y() * dpr
+
     # -- mouse / key event overrides ----------------------------------------
     # The base FigureCanvasQT handlers fire local Matplotlib events.
     # We override them to *also* forward events to the server.
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
-        x, y = self.mouseEventCoords(event)
+        x_mpl, y_mpl = self.mouseEventCoords(event)
         button = self.buttond.get(event.button())
         if button is not None and self.figure is not None:
             MouseEvent(
                 "button_press_event",
                 self,
-                x,
-                y,
+                x_mpl,
+                y_mpl,
                 button,
                 modifiers=self._mpl_modifiers(),
                 guiEvent=event,
             )._process()
             # Wire protocol uses 0-indexed buttons (JS convention);
             # the server adds +1 to get matplotlib MouseButton values.
-            self._forward_mouse_event("button_press", x, y, button=int(button) - 1)
+            wx, wy = self._wireEventCoords(event)
+            self._forward_mouse_event("button_press", wx, wy, button=int(button) - 1)
 
     def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
-        x, y = self.mouseEventCoords(event)
+        x_mpl, y_mpl = self.mouseEventCoords(event)
         button = self.buttond.get(event.button())
         if button is not None and self.figure is not None:
             MouseEvent(
                 "button_press_event",
                 self,
-                x,
-                y,
+                x_mpl,
+                y_mpl,
                 button,
                 dblclick=True,
                 modifiers=self._mpl_modifiers(),
                 guiEvent=event,
             )._process()
-            self._forward_mouse_event("button_press", x, y, button=int(button) - 1)
+            wx, wy = self._wireEventCoords(event)
+            self._forward_mouse_event("button_press", wx, wy, button=int(button) - 1)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         if self.figure is None:
             return
-        x, y = self.mouseEventCoords(event)
+        x_mpl, y_mpl = self.mouseEventCoords(event)
         MouseEvent(
             "motion_notify_event",
             self,
-            x,
-            y,
+            x_mpl,
+            y_mpl,
             buttons=self._mpl_buttons(event.buttons()),
             modifiers=self._mpl_modifiers(),
             guiEvent=event,
         )._process()
-        self._forward_mouse_event("motion_notify", x, y)
+        wx, wy = self._wireEventCoords(event)
+        self._forward_mouse_event("motion_notify", wx, wy)
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         button = self.buttond.get(event.button())
         if button is not None and self.figure is not None:
-            x, y = self.mouseEventCoords(event)
+            x_mpl, y_mpl = self.mouseEventCoords(event)
             MouseEvent(
                 "button_release_event",
                 self,
-                x,
-                y,
+                x_mpl,
+                y_mpl,
                 button,
                 modifiers=self._mpl_modifiers(),
                 guiEvent=event,
             )._process()
-            self._forward_mouse_event("button_release", x, y, button=int(button) - 1)
+            wx, wy = self._wireEventCoords(event)
+            self._forward_mouse_event("button_release", wx, wy, button=int(button) - 1)
 
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
         if (
@@ -432,17 +461,18 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         else:
             steps = event.pixelDelta().y()
         if steps and self.figure is not None:
-            x, y = self.mouseEventCoords(event)
+            x_mpl, y_mpl = self.mouseEventCoords(event)
             MouseEvent(
                 "scroll_event",
                 self,
-                x,
-                y,
+                x_mpl,
+                y_mpl,
                 step=steps,
                 modifiers=self._mpl_modifiers(),
                 guiEvent=event,
             )._process()
-            self._forward_mouse_event("scroll", x, y, step=steps)
+            wx, wy = self._wireEventCoords(event)
+            self._forward_mouse_event("scroll", wx, wy, step=steps)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         key = self._get_key(event)
@@ -654,8 +684,15 @@ class NavigationToolbar2QTRemote(NavigationToolbar2QT):
         x1: float,
         y1: float,
     ) -> None:
-        """Draw rubberband overlay via the canvas."""
-        height = self.canvas.figure.bbox.height
+        """Draw rubberband overlay via the canvas.
+
+        The server sends coordinates in matplotlib figure space
+        (physical pixels, y from bottom).  Flip y using the widget's
+        actual physical-pixel height (matching the JS client's use of
+        ``canvas.height``) and pass to ``drawRectangle``.
+        """
+        dpr = self.canvas.devicePixelRatioF() or 1
+        height = self.canvas.height() * dpr
         y1 = height - y1
         y0 = height - y0
         rect = [int(val) for val in (x0, y0, x1 - x0, y1 - y0)]

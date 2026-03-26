@@ -225,9 +225,16 @@ class FigureCanvasRemote(FigureCanvasBase):
             y1 = msg.get("y1", -1)
             if x0 < 0 and y0 < 0:
                 self._rubberband_rect = None
+                if self.toolbar is not None:
+                    self.toolbar.remove_rubberband()
+                else:
+                    self.schedule_repaint()
             else:
                 self._rubberband_rect = (x0, y0, x1, y1)
-            self.schedule_repaint()
+                if self.toolbar is not None:
+                    self.toolbar.draw_rubberband(None, x0, y0, x1, y1)
+                else:
+                    self.schedule_repaint()
 
         elif msg_type == "history_buttons":
             if self.toolbar is not None:
@@ -283,7 +290,10 @@ class FigureCanvasRemote(FigureCanvasBase):
         event_type : str
             E.g. ``"button_press"``, ``"button_release"``, ``"motion_notify"``.
         x, y : float
-            Pixel coordinates (matplotlib convention: origin at bottom-left).
+            Physical (device) pixel coordinates in wire-protocol
+            convention (x from left, y from **top**).  The server
+            flips y internally to obtain matplotlib figure
+            coordinates.
         button : int
             Mouse button, **0-indexed** (wire protocol / JS convention:
             0 = left, 1 = middle, 2 = right).  The server adds 1 to
