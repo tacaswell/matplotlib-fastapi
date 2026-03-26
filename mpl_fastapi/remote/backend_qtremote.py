@@ -107,6 +107,8 @@ class TransportThread(QtCore.QThread):
     json_received = QtCore.Signal(object)  # dict
     disconnected = QtCore.Signal()
     connected = QtCore.Signal(object)  # ServerConfig
+    reconnecting = QtCore.Signal(int, int)  # (attempt, max_attempts)
+    reconnected = QtCore.Signal(object)  # ServerConfig
     connection_error = QtCore.Signal(str)
 
     def __init__(
@@ -131,7 +133,13 @@ class TransportThread(QtCore.QThread):
             logger.exception("TransportThread crashed")
 
     async def _async_main(self) -> None:
-        """Connect, emit ``connected``, then run the receive loop."""
+        """Connect, emit ``connected``, then run the receive loop.
+
+        After the initial connection, this loops through reconnect
+        cycles (receive-loop drop → reconnect → new receive-loop)
+        until the transport is explicitly disconnected or reconnection
+        is permanently exhausted.
+        """
         try:
             config = await self._transport.connect()
         except Exception as exc:
@@ -141,12 +149,29 @@ class TransportThread(QtCore.QThread):
         self.connected.emit(config)
         await self._transport.start_receive_loop()
 
-        # Wait for the receive loop to complete (disconnect or error)
-        if self._transport._receive_task is not None:
+        # Loop through receive/reconnect cycles until done.
+        while True:
+            # Wait for the current receive loop to finish
+            if self._transport._receive_task is not None:
+                try:
+                    await self._transport._receive_task
+                except asyncio.CancelledError:
+                    return
+
+            # If no reconnect was started, we're done
+            if self._transport._reconnect_task is None:
+                return
+
+            # Wait for the reconnect loop to finish
             try:
-                await self._transport._receive_task
+                await self._transport._reconnect_task
             except asyncio.CancelledError:
-                pass
+                return
+
+            # After reconnect, a new _receive_task should exist.
+            # If it doesn't, reconnection failed permanently — exit.
+            if self._transport._receive_task is None:
+                return
 
     # -- public helpers (called from the main thread) -----------------------
 
@@ -243,6 +268,20 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         palette = QtGui.QPalette(QtGui.QColor("white"))
         self.setPalette(palette)
 
+        # "Reconnecting…" overlay — a child QLabel shown during reconnect
+        self._reconnect_overlay = QtWidgets.QLabel(self)
+        self._reconnect_overlay.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignCenter
+        )
+        self._reconnect_overlay.setStyleSheet(
+            "background-color: rgba(0, 0, 0, 160);"
+            "color: white;"
+            "font-size: 16px;"
+            "padding: 12px;"
+            "border-radius: 8px;"
+        )
+        self._reconnect_overlay.hide()
+
     # -- painting -----------------------------------------------------------
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: ARG002
@@ -286,6 +325,67 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         """Post a paint event to the Qt event loop."""
         self._update_qpixmap()
         self.update()
+
+    # -- reconnection overlay -----------------------------------------------
+
+    def _show_reconnect_overlay(self, attempt: int, max_attempts: int) -> None:
+        """Show the reconnecting overlay with attempt info."""
+        self._reconnect_overlay.setText(
+            f"Reconnecting\u2026  ({attempt}/{max_attempts})"
+        )
+        self._reconnect_overlay.adjustSize()
+        # Centre on the canvas
+        ow = self._reconnect_overlay.width()
+        oh = self._reconnect_overlay.height()
+        self._reconnect_overlay.move(
+            (self.width() - ow) // 2,
+            (self.height() - oh) // 2,
+        )
+        self._reconnect_overlay.show()
+        self._reconnect_overlay.raise_()
+
+    def _hide_reconnect_overlay(self) -> None:
+        """Hide the reconnecting overlay."""
+        self._reconnect_overlay.hide()
+
+    def _show_disconnected_overlay(self) -> None:
+        """Show a permanent 'Disconnected' overlay."""
+        self._reconnect_overlay.setText("Disconnected")
+        self._reconnect_overlay.adjustSize()
+        ow = self._reconnect_overlay.width()
+        oh = self._reconnect_overlay.height()
+        self._reconnect_overlay.move(
+            (self.width() - ow) // 2,
+            (self.height() - oh) // 2,
+        )
+        self._reconnect_overlay.show()
+        self._reconnect_overlay.raise_()
+
+    def _on_reconnected(self, config: ServerConfig) -> None:
+        """Reset Qt canvas state after a successful reconnection.
+
+        The server creates a fresh default-sized figure, but the Qt
+        window may be a different size.  We stamp the *actual widget
+        size* into ``_server_config`` before the base-class handler
+        runs, so the resize message it sends carries the real client
+        dimensions — not the old ``_server_config.figure_size`` which
+        may be stale if the user resized the window while disconnected.
+        """
+        self._remote_qpixmap = None
+        self._hide_reconnect_overlay()
+
+        # Use the actual Qt widget size as the authoritative size.
+        # This is in CSS (logical) pixels — the base class sends it
+        # as a resize message and the server applies DPR internally.
+        w = self.width()
+        h = self.height()
+        self._server_config = ServerConfig(
+            **{**self._server_config.__dict__, "figure_size": (w, h)}
+        )
+
+        # Delegate to the toolkit-agnostic reset (clears _remote_image,
+        # _rubberband_rect, sends resize + refresh, etc.)
+        super()._on_reconnected(config)
 
     def draw(self) -> None:
         """Blit-only draw — no server IO."""
@@ -1196,6 +1296,8 @@ def open_remote_figure(
         on_binary=on_binary,
         on_json=on_json,
         on_disconnect=on_disconnect,
+        on_reconnect=lambda config: None,  # Rewired to signal below
+        on_reconnecting=lambda a, m: None,  # Rewired to signal below
         device_pixel_ratio=device_pixel_ratio,
     )
 
@@ -1242,10 +1344,17 @@ def open_remote_figure(
     thread.binary_received.connect(canvas._on_binary_message)
     thread.json_received.connect(canvas._on_json_message)
 
+    # Reconnection signals → canvas overlay and state reset
+    thread.reconnecting.connect(canvas._show_reconnect_overlay)
+    thread.reconnected.connect(canvas._on_reconnected)
+    thread.disconnected.connect(canvas._show_disconnected_overlay)
+
     # Also rewire the transport's raw callbacks to emit signals
     transport._on_binary = thread.binary_received.emit
     transport._on_json = thread.json_received.emit
     transport._on_disconnect = thread.disconnected.emit
+    transport._on_reconnect = thread.reconnected.emit
+    transport._on_reconnecting = thread.reconnecting.emit
 
     # Create the manager (which creates the window + toolbar).
     # Toolbar messages (navigate_mode, history_buttons, message,

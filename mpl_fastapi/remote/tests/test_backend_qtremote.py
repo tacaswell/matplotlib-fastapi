@@ -1263,3 +1263,86 @@ class TestUpdateParametersIntegration:
         finally:
             manager.destroy()
             QApplication.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Reconnection tests (unit, mocked transport)
+# ---------------------------------------------------------------------------
+
+
+class TestFigureCanvasQTRemoteReconnectOverlay:
+    """Tests for the reconnect overlay on FigureCanvasQTRemote."""
+
+    def test_overlay_initially_hidden(self, qtbot: Any) -> None:
+        config = _make_server_config()
+        transport = _make_mock_transport(config)
+        fig = Figure(figsize=(6.4, 4.8), dpi=100)
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        assert canvas._reconnect_overlay.isHidden()
+
+    def test_show_reconnect_overlay(self, qtbot: Any) -> None:
+        config = _make_server_config()
+        transport = _make_mock_transport(config)
+        fig = Figure(figsize=(6.4, 4.8), dpi=100)
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+        canvas.show()
+        qtbot.waitExposed(canvas)
+
+        canvas._show_reconnect_overlay(2, 10)
+
+        assert canvas._reconnect_overlay.isVisible()
+        assert "2/10" in canvas._reconnect_overlay.text()
+
+    def test_hide_reconnect_overlay(self, qtbot: Any) -> None:
+        config = _make_server_config()
+        transport = _make_mock_transport(config)
+        fig = Figure(figsize=(6.4, 4.8), dpi=100)
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        canvas._show_reconnect_overlay(1, 5)
+        assert not canvas._reconnect_overlay.isHidden()
+
+        canvas._hide_reconnect_overlay()
+        assert canvas._reconnect_overlay.isHidden()
+
+    def test_show_disconnected_overlay(self, qtbot: Any) -> None:
+        config = _make_server_config()
+        transport = _make_mock_transport(config)
+        fig = Figure(figsize=(6.4, 4.8), dpi=100)
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+        canvas.show()
+        qtbot.waitExposed(canvas)
+
+        canvas._show_disconnected_overlay()
+
+        assert canvas._reconnect_overlay.isVisible()
+        assert "Disconnected" in canvas._reconnect_overlay.text()
+
+    def test_on_reconnected_hides_overlay(self, qtbot: Any) -> None:
+        config = _make_server_config()
+        transport = _make_mock_transport(config)
+        fig = Figure(figsize=(6.4, 4.8), dpi=100)
+        canvas = FigureCanvasQTRemote(fig, transport, config)
+        qtbot.addWidget(canvas)
+
+        # Show the overlay
+        canvas._show_reconnect_overlay(1, 3)
+        assert not canvas._reconnect_overlay.isHidden()
+
+        # Reconnect
+        new_config = _make_server_config(connection_id="reconnected-1")
+        canvas._on_reconnected(new_config)
+
+        assert canvas._reconnect_overlay.isHidden()
+        assert canvas._server_config.connection_id == "reconnected-1"
+        assert canvas._remote_image is None
+        assert canvas._remote_qpixmap is None
+        # Should send resize (to current widget size) then refresh
+        calls = transport.send_json.call_args_list
+        assert any(c.args[0].get("type") == "resize" for c in calls)
+        assert calls[-1].args[0] == {"type": "refresh"}

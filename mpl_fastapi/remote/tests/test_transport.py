@@ -302,3 +302,187 @@ class TestTransportMessaging:
         # Give the receive loop a moment to fire the callback
         await asyncio.sleep(0.2)
         assert len(disconnects) >= 1
+
+
+class TestTransportReconnect:
+    """Tests for the reconnection logic."""
+
+    @pytest.mark.asyncio
+    async def test_reconnects_after_server_closes_ws(self, server_url: str) -> None:
+        """Transport reconnects when the server closes the WebSocket."""
+        binaries: list[bytes] = []
+        jsons: list[dict[str, Any]] = []
+        disconnects: list[None] = []
+        reconnects: list[ServerConfig] = []
+        url = build_ws_url(server_url, "simple")
+        transport = RemoteTransport(
+            url,
+            on_binary=binaries.append,
+            on_json=jsons.append,
+            on_disconnect=lambda: disconnects.append(None),
+            on_reconnect=reconnects.append,
+            reconnect_max_attempts=3,
+            reconnect_initial_delay=0.1,
+            reconnect_max_delay=0.5,
+        )
+        await transport.connect()
+        await transport.start_receive_loop()
+
+        # Forcibly close the underlying WS to simulate a drop
+        assert transport._ws is not None
+        await transport._ws.close()
+
+        # Wait for the reconnect to complete
+        for _ in range(100):
+            if reconnects:
+                break
+            await asyncio.sleep(0.1)
+
+        try:
+            assert len(reconnects) == 1
+            assert isinstance(reconnects[0], ServerConfig)
+            assert transport.is_connected
+            assert len(disconnects) == 0  # Reconnected, so no disconnect
+        finally:
+            await transport.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_reconnect_disabled_when_zero_attempts(
+        self, server_url: str
+    ) -> None:
+        """No reconnect when reconnect_max_attempts=0."""
+        disconnects: list[None] = []
+        reconnects: list[ServerConfig] = []
+        url = build_ws_url(server_url, "simple")
+        transport = RemoteTransport(
+            url,
+            on_binary=lambda _: None,
+            on_json=lambda _: None,
+            on_disconnect=lambda: disconnects.append(None),
+            on_reconnect=reconnects.append,
+            reconnect_max_attempts=0,
+        )
+        await transport.connect()
+        await transport.start_receive_loop()
+
+        assert transport._ws is not None
+        await transport._ws.close()
+
+        # Wait for disconnect callback
+        for _ in range(50):
+            if disconnects:
+                break
+            await asyncio.sleep(0.05)
+
+        assert len(disconnects) == 1
+        assert len(reconnects) == 0
+
+    @pytest.mark.asyncio
+    async def test_explicit_disconnect_does_not_reconnect(
+        self, server_url: str
+    ) -> None:
+        """Calling disconnect() should not trigger reconnection."""
+        reconnects: list[ServerConfig] = []
+        url = build_ws_url(server_url, "simple")
+        transport = RemoteTransport(
+            url,
+            on_binary=lambda _: None,
+            on_json=lambda _: None,
+            on_disconnect=lambda: None,
+            on_reconnect=reconnects.append,
+            reconnect_max_attempts=3,
+            reconnect_initial_delay=0.1,
+        )
+        await transport.connect()
+        await transport.start_receive_loop()
+        await transport.disconnect()
+
+        # Give time for any spurious reconnect to start
+        await asyncio.sleep(0.5)
+        assert len(reconnects) == 0
+
+    @pytest.mark.asyncio
+    async def test_reconnect_exhausted_calls_on_disconnect(
+        self, server_url: str
+    ) -> None:
+        """After all attempts fail, on_disconnect is called."""
+        disconnects: list[None] = []
+        reconnects: list[ServerConfig] = []
+        # Use a URL that will fail to connect (bad plot name)
+        url = build_ws_url(server_url, "simple")
+        transport = RemoteTransport(
+            url,
+            on_binary=lambda _: None,
+            on_json=lambda _: None,
+            on_disconnect=lambda: disconnects.append(None),
+            on_reconnect=reconnects.append,
+            reconnect_max_attempts=2,
+            reconnect_initial_delay=0.05,
+            reconnect_max_delay=0.1,
+        )
+        await transport.connect()
+        await transport.start_receive_loop()
+
+        # Forcibly close, then change URL so reconnect fails
+        assert transport._ws is not None
+        await transport._ws.close()
+        transport._url = build_ws_url(server_url, "nonexistent_plot_xyz")
+
+        # Wait for all attempts to be exhausted
+        for _ in range(100):
+            if disconnects:
+                break
+            await asyncio.sleep(0.1)
+
+        assert len(disconnects) == 1
+        assert len(reconnects) == 0
+
+    @pytest.mark.asyncio
+    async def test_reconnect_resumes_message_flow(self, server_url: str) -> None:
+        """After reconnect, messages flow again."""
+        binaries: list[bytes] = []
+        reconnects: list[ServerConfig] = []
+        url = build_ws_url(server_url, "simple")
+        transport = RemoteTransport(
+            url,
+            on_binary=binaries.append,
+            on_json=lambda _: None,
+            on_disconnect=lambda: None,
+            on_reconnect=reconnects.append,
+            reconnect_max_attempts=3,
+            reconnect_initial_delay=0.1,
+        )
+        await transport.connect()
+        await transport.start_receive_loop()
+
+        # Get initial image
+        transport.send_json({"type": "refresh"})
+        for _ in range(50):
+            if binaries:
+                break
+            await asyncio.sleep(0.05)
+        assert len(binaries) >= 1
+        initial_count = len(binaries)
+
+        # Force-close WS
+        assert transport._ws is not None
+        await transport._ws.close()
+
+        # Wait for reconnect
+        for _ in range(100):
+            if reconnects:
+                break
+            await asyncio.sleep(0.1)
+        assert len(reconnects) == 1
+
+        # Request a new image after reconnect
+        transport.send_json({"type": "refresh"})
+        for _ in range(50):
+            if len(binaries) > initial_count:
+                break
+            await asyncio.sleep(0.05)
+
+        try:
+            assert len(binaries) > initial_count
+        finally:
+            await transport.disconnect()

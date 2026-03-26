@@ -136,6 +136,54 @@ class FigureCanvasRemote(FigureCanvasBase):
         """Return the canvas size in pixels, from the server config."""
         return self._server_config.figure_size
 
+    # -- reconnection (called on main thread) -------------------------------
+
+    def _on_reconnected(self, config: ServerConfig) -> None:
+        """Reset canvas state after a successful reconnection.
+
+        Called by the transport (via the toolkit layer's signal/callback
+        mechanism) when a WebSocket reconnection succeeds.  Resets the
+        composited image and server config, then tells the new
+        server-side figure to match the client's current geometry.
+
+        The server always creates a fresh default-sized figure on
+        reconnect.  Rather than adopting that default, we keep the
+        client's existing figure geometry and send a ``resize`` so the
+        server figure matches the client window.  This avoids the
+        window shrinking back to the default on every reconnect.
+
+        Parameters
+        ----------
+        config : ServerConfig
+            The new server config from the reconnection handshake.
+        """
+        # Preserve the client's current CSS-pixel size *before*
+        # overwriting _server_config (which carries figure_size).
+        old_w, old_h = self._server_config.figure_size
+
+        self._server_config = config
+        self._remote_image = None
+        self._rubberband_rect = None
+        self._last_seq_num = 0
+
+        if config.figure_label:
+            self.figure.set_label(config.figure_label)
+
+        # Tell the new server-side figure to use the client's current
+        # size, not the default it was created with.  The resize message
+        # is in CSS pixels; the server multiplies by DPR internally.
+        self._transport.send_json(
+            {"type": "resize", "width": old_w, "height": old_h}
+        )
+        # Update _server_config to reflect the size we just requested
+        self._server_config = ServerConfig(
+            **{**self._server_config.__dict__, "figure_size": (old_w, old_h)}
+        )
+
+        # Request a full render at the correct size
+        self._transport.send_json({"type": "refresh"})
+        self.schedule_repaint()
+
     # -- incoming message handlers (called on main thread) ------------------
 
     def _on_binary_message(self, data: bytes) -> None:

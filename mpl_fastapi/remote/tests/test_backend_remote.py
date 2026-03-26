@@ -887,3 +887,100 @@ class TestRemoteNavigationToolbar2UpdateParams:
         transport.send_json.assert_called_with(
             {"type": "update_params", "params": {"phase": 3.14}}
         )
+
+
+class TestReconnection:
+    """Tests for FigureCanvasRemote._on_reconnected."""
+
+    def test_on_reconnected_clears_image(self) -> None:
+        """_on_reconnected clears _remote_image."""
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        # Simulate having an image
+        canvas._remote_image = Image.new("RGBA", (64, 48), (255, 0, 0, 255))
+        assert canvas._remote_image is not None
+
+        new_config = _make_server_config(connection_id="reconnected-456")
+        canvas._on_reconnected(new_config)
+
+        assert canvas._remote_image is None
+        assert canvas._server_config.connection_id == "reconnected-456"
+
+    def test_on_reconnected_clears_rubberband(self) -> None:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        canvas._rubberband_rect = (10, 20, 30, 40)
+        new_config = _make_server_config(connection_id="reconnected-789")
+        canvas._on_reconnected(new_config)
+
+        assert canvas._rubberband_rect is None
+
+    def test_on_reconnected_sends_resize_then_refresh(self) -> None:
+        """_on_reconnected sends a resize (to client size) then refresh."""
+        fig = Figure()
+        config = _make_server_config(figure_size=(800, 600))
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        # Server reconnects with default 640×480, but client was at 800×600
+        new_config = _make_server_config(
+            connection_id="new-conn", figure_size=(640, 480)
+        )
+        canvas._on_reconnected(new_config)
+
+        # Should send resize to the *client's* old size, then refresh
+        calls = transport.send_json.call_args_list
+        assert len(calls) == 2
+        assert calls[0].args[0] == {
+            "type": "resize",
+            "width": 800,
+            "height": 600,
+        }
+        assert calls[1].args[0] == {"type": "refresh"}
+
+    def test_on_reconnected_resets_seq_num(self) -> None:
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport()
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        canvas._last_seq_num = 42
+        new_config = _make_server_config(connection_id="new-conn")
+        canvas._on_reconnected(new_config)
+
+        assert canvas._last_seq_num == 0
+
+    def test_on_reconnected_preserves_client_geometry(self) -> None:
+        """_on_reconnected keeps the client's figure size, not the server default."""
+        fig = Figure()
+        config = _make_server_config(figure_size=(800, 600), figure_dpi=200.0)
+        transport = _make_mock_transport(device_pixel_ratio=2.0)
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        # Record the figure geometry after initial setup
+        orig_dpi = fig.dpi
+        orig_w, orig_h = fig.get_size_inches()
+
+        # Server reconnects with a different default size/dpi
+        new_config = _make_server_config(
+            connection_id="new",
+            figure_size=(640, 480),
+            figure_dpi=100.0,
+        )
+        canvas._on_reconnected(new_config)
+
+        # The client's figure geometry should be unchanged — we keep
+        # the client's size and tell the server to match it.
+        assert fig.dpi == pytest.approx(orig_dpi)
+        w, h = fig.get_size_inches()
+        assert w == pytest.approx(orig_w)
+        assert h == pytest.approx(orig_h)
+
+        # _server_config.figure_size should reflect the client size
+        assert canvas._server_config.figure_size == (800, 600)

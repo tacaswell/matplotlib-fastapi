@@ -26,6 +26,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -169,9 +170,28 @@ class RemoteTransport:
     on_json : callable
         ``on_json(msg: dict)`` — called when a JSON message arrives.
     on_disconnect : callable
-        ``on_disconnect()`` — called when the WebSocket closes.
+        ``on_disconnect()`` — called when the WebSocket closes unexpectedly
+        and no reconnect will be attempted (either reconnect is disabled or
+        all attempts have been exhausted).
+    on_reconnect : callable, optional
+        ``on_reconnect(config: ServerConfig)`` — called after a successful
+        reconnection.  The new :class:`ServerConfig` is passed so the
+        canvas can reset its state.
+    on_reconnecting : callable, optional
+        ``on_reconnecting(attempt: int, max_attempts: int)`` — called at
+        the start of each reconnection attempt, before the backoff sleep.
+        Useful for updating a UI overlay.
     device_pixel_ratio : float
         Device pixel ratio sent in the ``init`` handshake message.
+    reconnect_max_attempts : int
+        Maximum number of reconnection attempts before giving up.
+        Set to ``0`` to disable automatic reconnection.
+    reconnect_initial_delay : float
+        Backoff delay (seconds) before the first reconnection attempt.
+    reconnect_max_delay : float
+        Cap on the exponential backoff delay.
+    reconnect_backoff_base : float
+        Exponential base for backoff growth.
     """
 
     def __init__(
@@ -181,12 +201,20 @@ class RemoteTransport:
         on_binary: Callable[[bytes], None],
         on_json: Callable[[dict[str, Any]], None],
         on_disconnect: Callable[[], None],
+        on_reconnect: Callable[[ServerConfig], None] | None = None,
+        on_reconnecting: Callable[[int, int], None] | None = None,
         device_pixel_ratio: float = 1.0,
+        reconnect_max_attempts: int = 10,
+        reconnect_initial_delay: float = 0.5,
+        reconnect_max_delay: float = 15.0,
+        reconnect_backoff_base: float = 2.0,
     ) -> None:
         self._url = url
         self._on_binary = on_binary
         self._on_json = on_json
         self._on_disconnect = on_disconnect
+        self._on_reconnect = on_reconnect
+        self._on_reconnecting = on_reconnecting
         self._device_pixel_ratio = device_pixel_ratio
 
         self._ws: ClientConnection | None = None
@@ -194,6 +222,14 @@ class RemoteTransport:
         self._receive_task: asyncio.Task[None] | None = None
         self._server_config: ServerConfig | None = None
         self._explicitly_disconnecting = False
+
+        # Reconnection parameters
+        self._reconnect_max_attempts = reconnect_max_attempts
+        self._reconnect_initial_delay = reconnect_initial_delay
+        self._reconnect_max_delay = reconnect_max_delay
+        self._reconnect_backoff_base = reconnect_backoff_base
+        self._reconnect_task: asyncio.Task[None] | None = None
+        self._reconnect_attempt = 0
 
     # -- properties ----------------------------------------------------------
 
@@ -271,6 +307,15 @@ class RemoteTransport:
     async def disconnect(self) -> None:
         """Close the WebSocket connection cleanly."""
         self._explicitly_disconnecting = True
+
+        # Cancel any pending reconnection attempt
+        if self._reconnect_task is not None:
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+            self._reconnect_task = None
 
         if self._receive_task is not None:
             self._receive_task.cancel()
@@ -367,8 +412,82 @@ class RemoteTransport:
         except Exception:
             logger.exception("Unexpected error in receive loop")
         finally:
+            self._ws = None
+            self._receive_task = None
             if not self._explicitly_disconnecting:
-                self._on_disconnect()
+                if self._reconnect_max_attempts > 0:
+                    self._reconnect_task = asyncio.ensure_future(
+                        self._reconnect_loop()
+                    )
+                else:
+                    self._on_disconnect()
+
+    # -- reconnection -------------------------------------------------------
+
+    async def _reconnect_loop(self) -> None:
+        """Attempt to reconnect with exponential backoff.
+
+        On success, restarts the receive loop and invokes
+        ``on_reconnect(config)``.  On failure (all attempts exhausted
+        or cancelled), invokes ``on_disconnect()``.
+        """
+        for attempt in range(1, self._reconnect_max_attempts + 1):
+            self._reconnect_attempt = attempt
+
+            if self._on_reconnecting is not None:
+                self._on_reconnecting(attempt, self._reconnect_max_attempts)
+
+            delay = min(
+                self._reconnect_initial_delay
+                * self._reconnect_backoff_base ** (attempt - 1),
+                self._reconnect_max_delay,
+            )
+            # Add ±25 % jitter
+            delay *= 1.0 + 0.25 * (2.0 * random.random() - 1.0)
+
+            logger.info(
+                "Reconnect attempt %d/%d in %.1f s",
+                attempt,
+                self._reconnect_max_attempts,
+                delay,
+            )
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                logger.debug("Reconnect cancelled during backoff")
+                return
+
+            try:
+                config = await self.connect()
+            except asyncio.CancelledError:
+                logger.debug("Reconnect cancelled during connect")
+                return
+            except Exception:
+                logger.debug(
+                    "Reconnect attempt %d/%d failed",
+                    attempt,
+                    self._reconnect_max_attempts,
+                    exc_info=True,
+                )
+                continue
+
+            # Success — restart the receive loop
+            logger.info("Reconnected on attempt %d", attempt)
+            self._reconnect_attempt = 0
+            self._reconnect_task = None
+            await self.start_receive_loop()
+
+            if self._on_reconnect is not None:
+                self._on_reconnect(config)
+            return
+
+        # All attempts exhausted
+        logger.warning(
+            "Reconnect failed after %d attempts", self._reconnect_max_attempts
+        )
+        self._reconnect_attempt = 0
+        self._reconnect_task = None
+        self._on_disconnect()
 
     # -- combined run (for use on a dedicated thread) -----------------------
 
@@ -377,10 +496,32 @@ class RemoteTransport:
 
         Intended for ``asyncio.run(transport._run())`` on a background
         thread.  Returns when the connection closes or ``disconnect()``
-        is called.
+        is called.  If reconnection is enabled, this will keep running
+        through reconnect cycles until the transport is explicitly
+        disconnected or reconnection fails permanently.
         """
         await self.connect()
         await self.start_receive_loop()
-        # Wait for the receive loop to finish
-        assert self._receive_task is not None
-        await self._receive_task
+
+        # Loop through receive/reconnect cycles until done.
+        while True:
+            if self._receive_task is not None:
+                try:
+                    await self._receive_task
+                except asyncio.CancelledError:
+                    return
+
+            # If no reconnect was started, we're done
+            if self._reconnect_task is None:
+                return
+
+            # Wait for the reconnect loop to finish
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                return
+
+            # After reconnect, a new _receive_task should exist.
+            # If it doesn't, reconnection failed permanently — exit.
+            if self._receive_task is None:
+                return
