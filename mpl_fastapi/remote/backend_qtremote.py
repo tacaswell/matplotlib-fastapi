@@ -37,14 +37,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-import time
 from collections.abc import Sequence
 from typing import Any
 
 from matplotlib.backend_bases import (
     CloseEvent,
-    KeyEvent,
-    MouseEvent,
     ResizeEvent,
 )
 from matplotlib.backends.backend_qt import (  # type: ignore[import-untyped]
@@ -235,15 +232,6 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
 
         # Thread will be set up by the manager / factory
         self._transport_thread: TransportThread | None = None
-
-        # Rate-limit motion_notify to avoid overwhelming the server.
-        # Discrete events (press/release/scroll) are never throttled.
-        self._mouse_move_interval: float = 1.0 / 30  # 30 Hz max
-        self._last_mouse_move_time: float = 0.0
-        self._pending_mouse_move: tuple[float, float] | None = None
-        self._mouse_move_timer: QtCore.QTimer = QtCore.QTimer()
-        self._mouse_move_timer.setSingleShot(True)
-        self._mouse_move_timer.timeout.connect(self._flush_mouse_move)
 
         # Rate-limit resize events to the server.  Only the final size
         # matters, so we use a pure trailing-edge debounce: stash the
@@ -472,179 +460,11 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         w, h = self.get_width_height()
         return QtCore.QSize(w, h)
 
-    # -- coordinate helpers -------------------------------------------------
-
-    def _wireEventCoords(
-        self,
-        pos: QtCore.QPointF | QtGui.QMouseEvent | None = None,
-    ) -> tuple[float, float]:
-        """Return physical-pixel coordinates in wire-protocol convention.
-
-        Returns ``(x, y)`` with x from the left edge and y from the
-        **top** edge, both in device pixels.  This matches the
-        coordinate convention of the JavaScript client; the server
-        flips y internally.
-
-        Compare :meth:`~FigureCanvasQT.mouseEventCoords` which returns
-        matplotlib convention (y from bottom) for local event handling.
-        """
-        if pos is None:
-            pos = QtCore.QPointF(self.mapFromGlobal(QtGui.QCursor.pos()))
-        elif hasattr(pos, "position"):  # Qt 6 QMouseEvent / QWheelEvent
-            pos = pos.position()
-        elif hasattr(pos, "pos"):  # Qt 5 QMouseEvent
-            pos = pos.pos()
-        assert pos is not None  # .position()/.pos() always return a value
-        dpr = self.devicePixelRatioF() or 1
-        return pos.x() * dpr, pos.y() * dpr
-
-    # -- mouse / key event overrides ----------------------------------------
-    # The base FigureCanvasQT handlers fire local Matplotlib events.
-    # We override them to *also* forward events to the server.
-
-    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
-        x_mpl, y_mpl = self.mouseEventCoords(event)
-        button = self.buttond.get(event.button())
-        if button is not None and self.figure is not None:
-            MouseEvent(
-                "button_press_event",
-                self,
-                x_mpl,
-                y_mpl,
-                button,
-                modifiers=self._mpl_modifiers(),
-                guiEvent=event,
-            )._process()  # type: ignore[attr-defined]
-            # Wire protocol uses 0-indexed buttons (JS convention);
-            # the server adds +1 to get matplotlib MouseButton values.
-            wx, wy = self._wireEventCoords(event)
-            self._forward_mouse_event("button_press", wx, wy, button=int(button) - 1)
-
-    def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
-        x_mpl, y_mpl = self.mouseEventCoords(event)
-        button = self.buttond.get(event.button())
-        if button is not None and self.figure is not None:
-            MouseEvent(
-                "button_press_event",
-                self,
-                x_mpl,
-                y_mpl,
-                button,
-                dblclick=True,
-                modifiers=self._mpl_modifiers(),
-                guiEvent=event,
-            )._process()  # type: ignore[attr-defined]
-            wx, wy = self._wireEventCoords(event)
-            self._forward_mouse_event("button_press", wx, wy, button=int(button) - 1)
-
-    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
-        if self.figure is None:
-            return
-        x_mpl, y_mpl = self.mouseEventCoords(event)
-        MouseEvent(
-            "motion_notify_event",
-            self,
-            x_mpl,
-            y_mpl,
-            buttons=self._mpl_buttons(event.buttons()),
-            modifiers=self._mpl_modifiers(),
-            guiEvent=event,
-        )._process()  # type: ignore[attr-defined]
-
-        # Throttle motion_notify to the server to avoid overwhelming it.
-        wx, wy = self._wireEventCoords(event)
-        now = time.monotonic()
-        elapsed = now - self._last_mouse_move_time
-        if elapsed >= self._mouse_move_interval:
-            # Enough time has passed — send immediately.
-            self._pending_mouse_move = None
-            self._mouse_move_timer.stop()
-            self._last_mouse_move_time = now
-            self._forward_mouse_event("motion_notify", wx, wy)
-        else:
-            # Too soon — stash and schedule a trailing send so the
-            # server always sees the final position.
-            self._pending_mouse_move = (wx, wy)
-            if not self._mouse_move_timer.isActive():
-                remaining_ms = int((self._mouse_move_interval - elapsed) * 1000) + 1
-                self._mouse_move_timer.start(remaining_ms)
-
-    def _flush_mouse_move(self) -> None:
-        """Send the most recent throttled motion_notify."""
-        if self._pending_mouse_move is not None:
-            wx, wy = self._pending_mouse_move
-            self._pending_mouse_move = None
-            self._last_mouse_move_time = time.monotonic()
-            self._forward_mouse_event("motion_notify", wx, wy)
-
-    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
-        button = self.buttond.get(event.button())
-        if button is not None and self.figure is not None:
-            x_mpl, y_mpl = self.mouseEventCoords(event)
-            MouseEvent(
-                "button_release_event",
-                self,
-                x_mpl,
-                y_mpl,
-                button,
-                modifiers=self._mpl_modifiers(),
-                guiEvent=event,
-            )._process()  # type: ignore[attr-defined]
-            wx, wy = self._wireEventCoords(event)
-            self._forward_mouse_event("button_release", wx, wy, button=int(button) - 1)
-
-    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
-        if (
-            event.pixelDelta().isNull()
-            or QtWidgets.QApplication.instance().platformName() == "xcb"
-        ):
-            steps = event.angleDelta().y() / 120
-        else:
-            steps = event.pixelDelta().y()
-        if steps and self.figure is not None:
-            x_mpl, y_mpl = self.mouseEventCoords(event)
-            MouseEvent(
-                "scroll_event",
-                self,
-                x_mpl,
-                y_mpl,
-                step=steps,
-                modifiers=self._mpl_modifiers(),
-                guiEvent=event,
-            )._process()  # type: ignore[attr-defined]
-            wx, wy = self._wireEventCoords(event)
-            self._forward_mouse_event("scroll", wx, wy, step=steps)
-
-    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
-        key = self._get_key(event)
-        if key is not None and self.figure is not None:
-            KeyEvent(
-                "key_press_event",
-                self,
-                key,
-                *self.mouseEventCoords(),
-                guiEvent=event,
-            )._process()  # type: ignore[attr-defined]
-            self._forward_key_event("key_press", key)
-
-    def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
-        key = self._get_key(event)
-        if key is not None and self.figure is not None:
-            KeyEvent(
-                "key_release_event",
-                self,
-                key,
-                *self.mouseEventCoords(),
-                guiEvent=event,
-            )._process()  # type: ignore[attr-defined]
-            self._forward_key_event("key_release", key)
-
     # -- cleanup ------------------------------------------------------------
 
     def close_event(self) -> None:
         """Handle widget close."""
         self._resize_timer.stop()
-        self._mouse_move_timer.stop()
         if self._transport_thread is not None:
             self._transport_thread.stop()
             self._transport_thread = None

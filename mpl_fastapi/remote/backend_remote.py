@@ -13,13 +13,20 @@ from __future__ import annotations
 import io
 import logging
 import os
+import threading
+import time
 from collections.abc import Callable
-from typing import IO, Any
+from pathlib import Path
+from typing import IO, Any, ClassVar, cast
 
+import matplotlib as mpl
 from matplotlib import cbook
+from matplotlib.backend_bases import Event as _MplEvent
 from matplotlib.backend_bases import (
     FigureCanvasBase,
     FigureManagerBase,
+    KeyEvent,
+    MouseEvent,
     NavigationToolbar2,
 )
 from matplotlib.figure import Figure
@@ -67,6 +74,12 @@ class FigureCanvasRemote(FigureCanvasBase):
     # Rubberband state (set by server "rubberband" messages)
     _rubberband_rect: tuple[float, float, float, float] | None
 
+    # Motion-notify throttle state
+    _mouse_move_interval: float = 1.0 / 30  # 30 Hz max
+    _last_mouse_move_time: float = 0.0
+    _pending_mouse_move: tuple[float, float] | None = None
+    _mouse_move_timer: threading.Timer | None = None
+
     def __init__(
         self,
         figure: Figure,
@@ -97,6 +110,18 @@ class FigureCanvasRemote(FigureCanvasBase):
         if server_config.figure_label:
             figure.set_label(server_config.figure_label)
 
+        # Subscribe to mpl events so that *any* toolkit backend that fires
+        # them (Qt, GTK, Tk, …) automatically gets wire-protocol forwarding
+        # without needing per-toolkit overrides.
+        _mouse = cast("Callable[[_MplEvent], Any]", self._on_mpl_mouse_event)
+        self.mpl_connect("button_press_event", _mouse)
+        self.mpl_connect("button_release_event", _mouse)
+        self.mpl_connect("motion_notify_event", _mouse)
+        self.mpl_connect("scroll_event", _mouse)
+        _key = cast("Callable[[_MplEvent], Any]", self._on_mpl_key_event)
+        self.mpl_connect("key_press_event", _key)
+        self.mpl_connect("key_release_event", _key)
+
     # -- properties ---------------------------------------------------------
 
     @property
@@ -123,7 +148,7 @@ class FigureCanvasRemote(FigureCanvasBase):
             return
         with cbook._setattr_cm(self, _is_drawing=True):
             self._transport.send_json({"type": "render"})
-        self.update()
+        self.schedule_repaint()
 
     def draw_idle(self) -> None:
         """Schedule a ``draw()`` on the toolkit event loop.
@@ -335,6 +360,100 @@ class FigureCanvasRemote(FigureCanvasBase):
         else:
             logger.debug("Unhandled server message type: %s", msg_type)
 
+    # -- mpl event callbacks (subscribed to via mpl_connect) -----------------
+    #
+    # These translate toolkit-agnostic matplotlib events into wire-protocol
+    # messages.  Because every GUI backend (Qt, GTK, Tk, …) already creates
+    # these events from its native UI handling, no per-toolkit forwarding
+    # code is needed.
+
+    # Map from mpl callback event names to wire-protocol type strings.
+    _MPL_TO_WIRE_EVENT: ClassVar[dict[str, str]] = {
+        "button_press_event": "button_press",
+        "button_release_event": "button_release",
+        "motion_notify_event": "motion_notify",
+        "scroll_event": "scroll",
+        "key_press_event": "key_press",
+        "key_release_event": "key_release",
+    }
+
+    def _on_mpl_mouse_event(self, event: MouseEvent) -> None:
+        """Translate an mpl MouseEvent → wire-protocol mouse message.
+
+        Converts from matplotlib figure coordinates (y from bottom,
+        physical pixels) to wire-protocol coordinates (y from top,
+        physical pixels) and forwards to the server.
+
+        Subclasses may override this to add throttling (e.g. for
+        ``motion_notify`` events).
+        """
+        wire_type = self._MPL_TO_WIRE_EVENT.get(event.name)
+        if wire_type is None:
+            return
+        # mpl coords: physical pixels, y=0 at bottom.
+        # wire coords: physical pixels, y=0 at top.
+        wire_x = event.x
+        wire_y = self.figure.bbox.height - event.y
+
+        if event.name == "motion_notify_event":
+            self._forward_motion_notify(wire_x, wire_y)
+        elif event.name == "scroll_event":
+            self._forward_mouse_event(
+                wire_type, wire_x, wire_y, step=event.step
+            )
+        else:
+            # button_press / button_release
+            button = int(event.button) - 1 if event.button is not None else 0
+            self._forward_mouse_event(
+                wire_type, wire_x, wire_y, button=button
+            )
+
+    def _forward_motion_notify(self, x: float, y: float) -> None:
+        """Rate-limited motion_notify forwarding.
+
+        Discrete events (press, release, scroll) are forwarded
+        immediately.  Motion events are throttled to
+        ``_mouse_move_interval`` Hz with a trailing-edge send so the
+        server always sees the final pointer position.
+        """
+        now = time.monotonic()
+        elapsed = now - self._last_mouse_move_time
+        if elapsed >= self._mouse_move_interval:
+            # Enough time has passed — send immediately.
+            self._pending_mouse_move = None
+            if self._mouse_move_timer is not None:
+                self._mouse_move_timer.cancel()
+                self._mouse_move_timer = None
+            self._last_mouse_move_time = now
+            self._forward_mouse_event("motion_notify", x, y)
+        else:
+            # Too soon — stash and schedule a trailing send so the
+            # server always sees the final position.
+            self._pending_mouse_move = (x, y)
+            if self._mouse_move_timer is None:
+                remaining = self._mouse_move_interval - elapsed
+                self._mouse_move_timer = threading.Timer(
+                    remaining, self._flush_mouse_move
+                )
+                self._mouse_move_timer.daemon = True
+                self._mouse_move_timer.start()
+
+    def _flush_mouse_move(self) -> None:
+        """Send the most recent throttled motion_notify."""
+        self._mouse_move_timer = None
+        if self._pending_mouse_move is not None:
+            wx, wy = self._pending_mouse_move
+            self._pending_mouse_move = None
+            self._last_mouse_move_time = time.monotonic()
+            self._forward_mouse_event("motion_notify", wx, wy)
+
+    def _on_mpl_key_event(self, event: KeyEvent) -> None:
+        """Translate an mpl KeyEvent → wire-protocol key message."""
+        wire_type = self._MPL_TO_WIRE_EVENT.get(event.name)
+        if wire_type is None or event.key is None:
+            return
+        self._forward_key_event(wire_type, event.key)
+
     # -- event forwarding (main thread → transport) -------------------------
 
     def _forward_mouse_event(
@@ -504,9 +623,7 @@ class FigureCanvasRemote(FigureCanvasBase):
         **kwargs
             Absorbed for compatibility with ``Figure.savefig``.
         """
-        from pathlib import Path
 
-        import matplotlib as mpl
 
         if hasattr(filename, "write"):
             raise ValueError(
