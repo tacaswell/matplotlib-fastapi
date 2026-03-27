@@ -61,6 +61,7 @@ class FigureCanvasRemote(FigureCanvasBase):
     _remote_image: Image.Image | None
     _transport: RemoteTransport
     _server_config: ServerConfig
+    toolbar: RemoteNavigationToolbar2 | None  # type: ignore[assignment]
 
     # Rubberband state (set by server "rubberband" messages)
     _rubberband_rect: tuple[float, float, float, float] | None
@@ -731,7 +732,7 @@ class FigureManagerRemote(FigureManagerBase):
     """
 
     canvas: FigureCanvasRemote  # type: ignore[assignment]
-    toolbar: RemoteNavigationToolbar2 | None  # type: ignore[assignment]
+    toolbar: RemoteNavigationToolbar2 # type: ignore[assignment]
 
     def __init__(self, canvas: FigureCanvasRemote, num: int) -> None:
         super().__init__(canvas, num)

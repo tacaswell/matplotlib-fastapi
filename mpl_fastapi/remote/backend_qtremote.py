@@ -48,14 +48,14 @@ from matplotlib.backend_bases import (
     MouseEvent,
     ResizeEvent,
 )
-from matplotlib.backends.backend_qt import (
+from matplotlib.backends.backend_qt import (  # type: ignore[import-untyped]
     FigureCanvasQT,
     FigureManagerQT,
     MainWindow,
     NavigationToolbar2QT,
     _create_qApp,
 )
-from matplotlib.backends.qt_compat import QtCore, QtGui, QtWidgets
+from matplotlib.backends.qt_compat import QtCore, QtGui, QtWidgets  # type: ignore[import-untyped]
 from matplotlib.figure import Figure
 
 from mpl_fastapi.remote.backend_remote import (
@@ -206,6 +206,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
       thread via ``run_coroutine_threadsafe``.
     """
 
+    toolbar: NavigationToolbar2QTRemote # type: ignore[assignment]
     manager_class = property(lambda self: FigureManagerQTRemote)  # noqa: ARG005
 
     def __init__(
@@ -501,11 +502,12 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         matplotlib convention (y from bottom) for local event handling.
         """
         if pos is None:
-            pos = self.mapFromGlobal(QtGui.QCursor.pos())
+            pos = QtCore.QPointF(self.mapFromGlobal(QtGui.QCursor.pos()))
         elif hasattr(pos, "position"):  # Qt 6 QMouseEvent / QWheelEvent
             pos = pos.position()
         elif hasattr(pos, "pos"):  # Qt 5 QMouseEvent
             pos = pos.pos()
+        assert pos is not None  # .position()/.pos() always return a value
         dpr = self.devicePixelRatioF() or 1
         return pos.x() * dpr, pos.y() * dpr
 
@@ -679,6 +681,8 @@ class NavigationToolbar2QTRemote(RemoteNavigationToolbar2, NavigationToolbar2QT)
     ``pan``, ``zoom``) come from the remote base; Qt-specific overrides
     (rubberband drawing, status label, save dialogs) are defined here.
     """
+
+    canvas: FigureCanvasQTRemote  # type: ignore[assignment]
 
     def __init__(
         self,
@@ -1105,7 +1109,7 @@ class FigureManagerQTRemote(FigureManagerQT):
     """
 
     canvas: FigureCanvasQTRemote  # type: ignore[assignment]
-    toolbar: NavigationToolbar2QTRemote | None  # type: ignore[assignment]
+    toolbar: NavigationToolbar2QTRemote  # type: ignore[assignment]
 
     # Prevent FigureManagerBase.__init__ from creating a default toolbar;
     # we create our own NavigationToolbar2QTRemote below.
@@ -1122,9 +1126,12 @@ class FigureManagerQTRemote(FigureManagerQT):
         self.window.closing.connect(self._widgetclosed)
 
         # Create our custom toolbar
-        self.toolbar = NavigationToolbar2QTRemote(canvas, self.window)
+        self.toolbar = NavigationToolbar2QTRemote(canvas, self.window)  # type: ignore[assignment]
         self.window.addToolBar(self.toolbar)
-        tbs_height = self.toolbar.sizeHint().height()
+        if self.toolbar is not None:
+            tbs_height = self.toolbar.sizeHint().height()
+        else:
+            tbs_height = 0
 
         # Size the window to fit canvas + toolbar
         cs = canvas.sizeHint()
