@@ -132,9 +132,13 @@ class FigureCanvasRemote(FigureCanvasBase):
         # Default: call draw immediately (sufficient for non-GUI testing)
         self.draw()
 
-    def get_width_height(self) -> tuple[int, int]:
-        """Return the canvas size in pixels, from the server config."""
-        return self._server_config.figure_size
+    def get_width_height(self, *, physical: bool = False) -> tuple[int, int]:
+        # docstring inherited
+        w, h = self._server_config.figure_size
+        if physical:
+            dpr = self.device_pixel_ratio
+            return int(w * dpr), int(h * dpr)
+        return w, h
 
     # -- reconnection (called on main thread) -------------------------------
 
