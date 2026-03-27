@@ -666,16 +666,19 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
 # ---------------------------------------------------------------------------
 
 
-class NavigationToolbar2QTRemote(NavigationToolbar2QT):
+class NavigationToolbar2QTRemote(RemoteNavigationToolbar2, NavigationToolbar2QT):
     """Qt toolbar that sends navigation commands to the remote server.
 
     Button presses (pan, zoom, home, …) are forwarded to the server via
     the canvas's transport.  UI state (message, history buttons, toggle
     states) is driven by server push messages.
-    """
 
-    # Use the remote toolbar's items (no Subplots / Customize)
-    toolitems = RemoteNavigationToolbar2.toolitems
+    Inherits from both :class:`RemoteNavigationToolbar2` (protocol logic,
+    toolbar-button forwarding) and :class:`NavigationToolbar2QT` (Qt widget
+    integration).  The forwarding methods (``home``, ``back``, ``forward``,
+    ``pan``, ``zoom``) come from the remote base; Qt-specific overrides
+    (rubberband drawing, status label, save dialogs) are defined here.
+    """
 
     def __init__(
         self,
@@ -683,28 +686,12 @@ class NavigationToolbar2QTRemote(NavigationToolbar2QT):
         parent: QtWidgets.QWidget | None = None,
         coordinates: bool = True,
     ) -> None:
-        # NavigationToolbar2QT.__init__ sets up the QToolBar and calls
-        # NavigationToolbar2.__init__ which calls set_history_buttons
-        self._initializing = True
-        super().__init__(canvas, parent, coordinates)
-        self._initializing = False
+        super().__init__(canvas, parent=parent, coordinates=coordinates)
 
     # -- toolbar actions → server -------------------------------------------
-
-    def home(self, *args: Any) -> None:  # noqa: ARG002
-        self.canvas._forward_toolbar_button("home")
-
-    def back(self, *args: Any) -> None:  # noqa: ARG002
-        self.canvas._forward_toolbar_button("back")
-
-    def forward(self, *args: Any) -> None:  # noqa: ARG002
-        self.canvas._forward_toolbar_button("forward")
-
-    def pan(self, *args: Any) -> None:  # noqa: ARG002
-        self.canvas._forward_toolbar_button("pan")
-
-    def zoom(self, *args: Any) -> None:  # noqa: ARG002
-        self.canvas._forward_toolbar_button("zoom")
+    # home(), back(), forward(), pan(), zoom() are inherited from
+    # RemoteNavigationToolbar2 — they forward to the server via
+    # canvas._forward_toolbar_button().
 
     def download(self, *args: Any) -> None:  # noqa: ARG002
         self._save_remote_figure()

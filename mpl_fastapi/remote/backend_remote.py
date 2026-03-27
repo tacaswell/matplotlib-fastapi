@@ -609,11 +609,11 @@ class RemoteNavigationToolbar2(NavigationToolbar2):
         ("Download", "Download plot", "filesave", "download"),
     )
 
-    def __init__(self, canvas: FigureCanvasRemote) -> None:
+    def __init__(self, canvas: FigureCanvasRemote, *args: Any, **kwargs: Any) -> None:
         self.message = ""
         # Suppress set_history_buttons during __init__ (no nav stack yet)
         self._initializing = True
-        super().__init__(canvas)
+        super().__init__(canvas, *args, **kwargs)
         self._initializing = False
 
     # -- toolbar actions → send to server -----------------------------------
