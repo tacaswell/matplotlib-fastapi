@@ -32,16 +32,14 @@ from mpl_fastapi import (
     install_mpl_router,
 )
 
-# Configure logging to see debug messages
+# Configure logging — keep root at INFO to avoid verbose matplotlib internals
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-# Ensure mpl_fastapi loggers are at DEBUG level
+# Only our own loggers get DEBUG
 logging.getLogger('mpl_fastapi').setLevel(logging.DEBUG)
-logging.getLogger('mpl_fastapi.router').setLevel(logging.DEBUG)
-logging.getLogger('mpl_fastapi.mpl_backend').setLevel(logging.DEBUG)
 
 
 class SinePlotParams(BaseModel):
