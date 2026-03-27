@@ -406,15 +406,15 @@ export class MatplotlibEmbeddable {
       return;
     }
 
-    const params: Record<string, any> = {};
+    const params: Record<string, unknown> = {};
     const inputs = form.querySelectorAll('input, select');
     inputs.forEach((input) => {
       const inputEl = input as HTMLInputElement | HTMLSelectElement;
-      let value: any = inputEl.value;
+      let value: unknown = inputEl.value;
 
       // Convert to appropriate type
       if ((inputEl as HTMLInputElement).type === 'number') {
-        value = parseFloat(value);
+        value = parseFloat(inputEl.value);
       } else if ((inputEl as HTMLInputElement).type === 'checkbox') {
         value = (inputEl as HTMLInputElement).checked;
       }

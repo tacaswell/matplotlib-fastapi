@@ -7,6 +7,9 @@
 
 import type { ReconnectConfig } from './websocket-manager.js';
 
+// Re-export so consumers of types.ts can use it directly
+export type { ReconnectConfig } from './websocket-manager.js';
+
 // ============================================================================
 // Protocol Constants (v0)
 // ============================================================================
@@ -567,58 +570,4 @@ export interface PlotSchemaResponse {
   description: string;
   init_schema: JSONSchema;
   update_schema: JSONSchema | null;
-}
-
-// ============================================================================
-// Internal Component State Types
-// ============================================================================
-
-/**
- * Internal state for MatplotlibEmbeddable component
- */
-export interface ComponentState {
-  connected: boolean;
-  connectionId: string | null;
-}
-
-/**
- * Internal references to DOM elements and objects
- */
-export interface ComponentRefs {
-  ws_manager: WebSocketManager | null;
-  figure: Figure | null;
-  submitButton: HTMLButtonElement | null;
-}
-
-// ============================================================================
-// Forward declarations for classes (defined in other files)
-// ============================================================================
-
-/**
- * WebSocket lifecycle manager
- */
-export interface WebSocketManager {
-  connect(): void;
-  close(): void;
-  send(data: string): void;
-  isConnected(): boolean;
-  isReconnecting(): boolean;
-  onOpen(handler: (event: Event) => void): void;
-  onMessage(handler: (event: MessageEvent) => void): void;
-  onClose(handler: (event: CloseEvent) => void): void;
-  onError(handler: (event: Event) => void): void;
-  onReconnecting(handler: (attempt: number, maxAttempts: number) => void): void;
-  onReconnected(handler: () => void): void;
-  onReconnectFailed(handler: () => void): void;
-}
-
-/**
- * Matplotlib figure renderer
- */
-export interface Figure {
-  id: string;
-  connection_id: string | null;
-  send_message(type: string, properties: Record<string, unknown>): void;
-  canvas_div: HTMLDivElement | undefined;
-  root: HTMLDivElement;
 }

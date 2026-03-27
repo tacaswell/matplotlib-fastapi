@@ -36,17 +36,17 @@ const DEFAULT_RECONNECT: Required<ReconnectConfig> = {
 };
 
 export class WebSocketManager {
-  private url: string;
+  private readonly url: string;
   private ws: WebSocket | null;
-  private messageHandlers: Array<(event: MessageEvent) => void>;
-  private openHandlers: Array<(event: Event) => void>;
-  private closeHandlers: Array<(event: CloseEvent) => void>;
-  private errorHandlers: Array<(event: Event) => void>;
+  private readonly messageHandlers: Array<(event: MessageEvent) => void>;
+  private readonly openHandlers: Array<(event: Event) => void>;
+  private readonly closeHandlers: Array<(event: CloseEvent) => void>;
+  private readonly errorHandlers: Array<(event: Event) => void>;
 
   // Reconnection handlers
-  private reconnectingHandlers: Array<(attempt: number, maxAttempts: number) => void>;
-  private reconnectedHandlers: Array<() => void>;
-  private reconnectFailedHandlers: Array<() => void>;
+  private readonly reconnectingHandlers: Array<(attempt: number, maxAttempts: number) => void>;
+  private readonly reconnectedHandlers: Array<() => void>;
+  private readonly reconnectFailedHandlers: Array<() => void>;
 
   private _isConnecting: boolean;
   private _isConnected: boolean;
@@ -55,7 +55,7 @@ export class WebSocketManager {
   private _explicitClose: boolean;
 
   // Reconnection state
-  private _reconnectConfig: Required<ReconnectConfig>;
+  private readonly _reconnectConfig: Required<ReconnectConfig>;
   private _reconnectTimer: ReturnType<typeof setTimeout> | null;
   private _reconnectAttempt: number;
 
@@ -90,13 +90,13 @@ export class WebSocketManager {
 
     this._isConnecting = true;
 
-    const WebSocketType = this.getWebSocketType();
-    this.ws = new WebSocketType(this.url);
+    const ws = new WebSocket(this.url);
+    this.ws = ws;
 
     // Set binary type to arraybuffer for v0 protocol binary image handling
-    this.ws.binaryType = 'arraybuffer';
+    ws.binaryType = 'arraybuffer';
 
-    this.ws.onopen = (event: Event) => {
+    ws.onopen = (event: Event) => {
       this._isConnecting = false;
       this._isConnected = true;
 
@@ -114,13 +114,13 @@ export class WebSocketManager {
       });
     };
 
-    this.ws.onmessage = (event: MessageEvent) => {
+    ws.onmessage = (event: MessageEvent) => {
       this.messageHandlers.forEach((handler) => {
         handler(event);
       });
     };
 
-    this.ws.onclose = (event: CloseEvent) => {
+    ws.onclose = (event: CloseEvent) => {
       const wasConnected = this._isConnected;
       this._isConnected = false;
       this._isConnecting = false;
@@ -143,7 +143,7 @@ export class WebSocketManager {
       }
     };
 
-    this.ws.onerror = (event: Event) => {
+    ws.onerror = (event: Event) => {
       // If we're in the middle of a reconnect attempt, the error will be
       // followed by an onclose — which will drive the next attempt.  We
       // still fire the error handlers for logging purposes.
@@ -311,21 +311,12 @@ export class WebSocketManager {
   }
 
   /**
-   * Get appropriate WebSocket constructor for the browser
+   * Get the underlying WebSocket instance (if any).
    *
-   * @returns WebSocket constructor
-   * @throws Error if WebSocket is not supported
+   * This is primarily useful for inspecting readyState or binaryType.
+   * Prefer using the manager's own ``send`` / ``close`` methods.
    */
-  private getWebSocketType(): typeof WebSocket {
-    if (typeof WebSocket !== 'undefined') {
-      return WebSocket;
-    } else if (typeof (window as any).MozWebSocket !== 'undefined') {
-      return (window as any).MozWebSocket;
-    } else {
-      throw new Error(
-        'Your browser does not have WebSocket support. ' +
-          'Please try Chrome, Safari or Firefox ≥ 6.'
-      );
-    }
+  get rawSocket(): WebSocket | null {
+    return this.ws;
   }
 }

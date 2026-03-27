@@ -8,7 +8,20 @@
  * - WebSocket message protocol (v0)
  */
 
-import type { ImageMode, ConfigMessage } from './types.js';
+import type {
+  ImageMode,
+  ConfigMessage,
+  ConnectionIdMessage,
+  CursorMessage,
+  ErrorMessage,
+  FigureLabelMessage,
+  ImageModeMessage,
+  NavigateModeMessage,
+  RubberbandMessage,
+  SaveCompleteMessage,
+  SaveErrorMessage,
+  StatusMessage,
+} from './types.js';
 import {
   PROTOCOL_VERSION,
   ImageTypeMode,
@@ -29,9 +42,6 @@ declare global {
  */
 function findpos(e: MouseEvent): { x: number; y: number } {
   let targ = e.target as HTMLElement | null;
-  if (!targ && e.srcElement) {
-    targ = e.srcElement as HTMLElement;
-  }
   if (targ && targ.nodeType === 3) {
     // Defeat Safari bug
     targ = targ.parentNode as HTMLElement;
@@ -65,9 +75,9 @@ function simpleKeys(original: Record<string, any>): Record<string, any> {
  */
 export class Figure {
   // Public properties
-  id: string;
+  readonly id: string;
   connection_id: string | null = null;
-  ws_manager: WebSocketManager;
+  readonly ws_manager: WebSocketManager;
   ws: WebSocket | null = null; // Legacy property
 
   // Canvas and rendering
@@ -78,11 +88,11 @@ export class Figure {
   rubberband_context: CanvasRenderingContext2D | undefined;
   ratio: number = 1;
   image_mode: ImageMode = 'full';
-  imageObj: HTMLImageElement;
+  readonly imageObj: HTMLImageElement;
   waiting: boolean = false;
 
   // UI elements
-  root: HTMLDivElement;
+  readonly root: HTMLDivElement;
   header: HTMLDivElement | undefined;
   message: HTMLSpanElement | undefined;
   format_dropdown: HTMLSelectElement | undefined;
@@ -97,8 +107,7 @@ export class Figure {
   // State
   supports_binary: boolean = true;
   private _key: string | null = null;
-  private ResizeObserver: any;
-  private resizeObserverInstance: any;
+  private resizeObserverInstance: ResizeObserver | null = null;
   private _resize_canvas?: (width: number, height: number, forward: boolean) => void;
   private _server_size: [number, number] | null = null;
   private _initialized: boolean = false;
@@ -135,7 +144,7 @@ export class Figure {
     // Register open handler with WebSocketManager
     this.ws_manager.onOpen(() => {
       // Update legacy ws property
-      this.ws = this.ws_manager['ws'] as WebSocket; // Access private property
+      this.ws = this.ws_manager.rawSocket;
       this.supports_binary = this.ws?.binaryType !== undefined;
 
       if (!this.supports_binary) {
@@ -266,16 +275,7 @@ export class Figure {
     }
     this.context = context;
 
-    const backingStore =
-      (context as any).backingStorePixelRatio ||
-      (context as any).webkitBackingStorePixelRatio ||
-      (context as any).mozBackingStorePixelRatio ||
-      (context as any).msBackingStorePixelRatio ||
-      (context as any).oBackingStorePixelRatio ||
-      (context as any).backingStorePixelRatio ||
-      1;
-
-    this.ratio = (window.devicePixelRatio || 1) / backingStore;
+    this.ratio = window.devicePixelRatio || 1;
 
     const rubberband_canvas = (this.rubberband_canvas =
       document.createElement('canvas'));
@@ -284,47 +284,40 @@ export class Figure {
       'box-sizing: content-box; position: absolute; left: 0; top: 0; z-index: 1;'
     );
 
-    // Apply a ponyfill if ResizeObserver is not implemented by browser
-    this.ResizeObserver =
-      window.ResizeObserver ||
+    // ResizeObserver is available in all modern browsers (baseline 2020).
+    // The _JSXTOOLS_RESIZE_OBSERVER ponyfill path is kept for niche
+    // environments but should rarely (if ever) be needed.
+    const RO: typeof ResizeObserver | undefined =
+      window.ResizeObserver ??
       (window as any)._JSXTOOLS_RESIZE_OBSERVER?.({}).ResizeObserver;
 
-    if (!this.ResizeObserver) {
+    if (!RO) {
       console.warn('ResizeObserver not available');
       return;
     }
 
-    this.resizeObserverInstance = new this.ResizeObserver((entries: any[]) => {
+    this.resizeObserverInstance = new RO((entries: ResizeObserverEntry[]) => {
       for (const entry of entries) {
         let width: number, height: number;
 
-        if (entry.contentBoxSize) {
-          if (entry.contentBoxSize instanceof Array) {
-            // Chrome 84+
-            width = entry.contentBoxSize[0].inlineSize;
-            height = entry.contentBoxSize[0].blockSize;
-          } else {
-            // Firefox
-            width = entry.contentBoxSize.inlineSize;
-            height = entry.contentBoxSize.blockSize;
-          }
+        // contentBoxSize is always a ReadonlyArray per the spec.
+        // Fall back to contentRect for very old polyfills.
+        const cbs = entry.contentBoxSize?.[0];
+        if (cbs) {
+          width = cbs.inlineSize;
+          height = cbs.blockSize;
         } else {
-          // Chrome <84
           width = entry.contentRect.width;
           height = entry.contentRect.height;
         }
 
-        // Keep canvas and rubberband canvas in sync
-        if (entry.devicePixelContentBoxSize) {
-          // Chrome 84+
-          canvas.setAttribute(
-            'width',
-            String(entry.devicePixelContentBoxSize[0].inlineSize)
-          );
-          canvas.setAttribute(
-            'height',
-            String(entry.devicePixelContentBoxSize[0].blockSize)
-          );
+        // Keep canvas and rubberband canvas in sync.
+        // devicePixelContentBoxSize gives physical pixels directly,
+        // avoiding rounding errors on HiDPI displays.
+        const dpcs = entry.devicePixelContentBoxSize?.[0];
+        if (dpcs) {
+          canvas.setAttribute('width', String(dpcs.inlineSize));
+          canvas.setAttribute('height', String(dpcs.blockSize));
         } else {
           canvas.setAttribute('width', String(width * this.ratio));
           canvas.setAttribute('height', String(height * this.ratio));
@@ -345,8 +338,7 @@ export class Figure {
 
         if (
           this._initialized &&
-          this.ws &&
-          this.ws.readyState === 1 &&
+          this.ws_manager.isConnected() &&
           width !== 0 &&
           height !== 0 &&
           !isServerSize
@@ -355,7 +347,9 @@ export class Figure {
         }
       }
     });
-    this.resizeObserverInstance.observe(canvas_div);
+    if (this.resizeObserverInstance) {
+      this.resizeObserverInstance.observe(canvas_div);
+    }
 
     const on_mouse_event_closure = (name: string) => {
       return (event: MouseEvent) => {
@@ -523,14 +517,14 @@ export class Figure {
       return;
     }
 
-    const params: Record<string, any> = {};
+    const params: Record<string, unknown> = {};
     const inputs = form.querySelectorAll('input, select');
     inputs.forEach((input) => {
       const inputEl = input as HTMLInputElement | HTMLSelectElement;
-      let value: any = inputEl.value;
+      let value: unknown = inputEl.value;
 
       if ((inputEl as HTMLInputElement).type === 'number') {
-        value = parseFloat(value);
+        value = parseFloat(inputEl.value);
       }
       params[inputEl.name] = value;
     });
@@ -538,7 +532,7 @@ export class Figure {
     this.send_message('update_params', { params });
   }
 
-  handle_save(fig: Figure, _msg: any): void {
+  handle_save(fig: Figure, _msg: unknown): void {
     if (!fig.format_dropdown) return;
     const selectedOption =
       fig.format_dropdown.options[fig.format_dropdown.selectedIndex];
@@ -553,9 +547,9 @@ export class Figure {
     });
   }
 
-  handle_save_complete(fig: Figure, msg: any): void {
-    const download_url = msg['download_url'];
-    const filename = msg['filename'];
+  handle_save_complete(fig: Figure, msg: SaveCompleteMessage): void {
+    const download_url = msg.download_url;
+    const filename = msg.filename;
 
     // Trigger browser download (no DOM append needed in modern browsers)
     const link = document.createElement('a');
@@ -575,8 +569,8 @@ export class Figure {
     }
   }
 
-  handle_save_error(fig: Figure, msg: any): void {
-    const error_message = msg['message'];
+  handle_save_error(fig: Figure, msg: SaveErrorMessage): void {
+    const error_message = msg.message;
     console.error('Save error:', error_message);
 
     // Show error to user
@@ -618,13 +612,13 @@ export class Figure {
     }
   }
 
-  handle_rubberband(fig: Figure, msg: any): void {
+  handle_rubberband(fig: Figure, msg: RubberbandMessage): void {
     if (!fig.canvas || !fig.rubberband_context) return;
 
-    let x0 = msg['x0'] / fig.ratio;
-    let y0 = (fig.canvas.height - msg['y0']) / fig.ratio;
-    let x1 = msg['x1'] / fig.ratio;
-    let y1 = (fig.canvas.height - msg['y1']) / fig.ratio;
+    let x0 = msg.x0 / fig.ratio;
+    let y0 = (fig.canvas.height - msg.y0) / fig.ratio;
+    let x1 = msg.x1 / fig.ratio;
+    let y1 = (fig.canvas.height - msg.y1) / fig.ratio;
 
     x0 = Math.floor(x0) + 0.5;
     y0 = Math.floor(y0) + 0.5;
@@ -646,21 +640,21 @@ export class Figure {
     fig.rubberband_context.strokeRect(min_x, min_y, width, height);
   }
 
-  handle_figure_label(fig: Figure, msg: any): void {
+  handle_figure_label(fig: Figure, msg: FigureLabelMessage): void {
     if (fig.header) {
-      fig.header.textContent = msg['label'];
+      fig.header.textContent = msg.label;
     }
   }
 
-  handle_cursor(fig: Figure, msg: any): void {
+  handle_cursor(fig: Figure, msg: CursorMessage): void {
     if (fig.rubberband_canvas) {
-      fig.rubberband_canvas.style.cursor = msg['cursor'];
+      fig.rubberband_canvas.style.cursor = msg.cursor;
     }
   }
 
-  handle_message(fig: Figure, msg: any): void {
+  handle_message(fig: Figure, msg: StatusMessage): void {
     if (fig.message) {
-      fig.message.textContent = msg['message'];
+      fig.message.textContent = msg.message;
     }
   }
 
@@ -675,7 +669,7 @@ export class Figure {
       console.error(
         `Protocol version mismatch: client=${PROTOCOL_VERSION}, server=${msg.protocol_version}`
       );
-      fig.ws_manager?.close();
+      fig.ws_manager.close();
       throw new Error(
         `Incompatible protocol version. Client: ${PROTOCOL_VERSION}, server: ${msg.protocol_version}`
       );
@@ -756,7 +750,7 @@ export class Figure {
   /**
    * Handle error message from server
    */
-  handle_error(fig: Figure, msg: any): void {
+  handle_error(fig: Figure, msg: ErrorMessage): void {
     console.error('Server error:', msg.message);
     if (fig.message) {
       fig.message.textContent = `Error: ${msg.message}`;
@@ -770,18 +764,14 @@ export class Figure {
     // Protocol version is REQUIRED
     if (server_version == null) {
       console.error('Protocol version missing from server message');
-      if (fig.ws_manager) {
-        fig.ws_manager.close();
-      }
+      fig.ws_manager.close();
       throw new Error('Protocol version is required');
     }
     if (server_version !== PROTOCOL_VERSION) {
       console.error(
         `Protocol version mismatch: client expects ${PROTOCOL_VERSION}, server sent ${server_version}`
       );
-      if (fig.ws_manager) {
-        fig.ws_manager.close();
-      }
+      fig.ws_manager.close();
       throw new Error(
         `Incompatible protocol version. Client expects ${PROTOCOL_VERSION}, got ${server_version}`
       );
@@ -789,16 +779,16 @@ export class Figure {
     console.log(`Server protocol version validated: ${server_version}`);
   }
 
-  handle_invalidate(fig: Figure, _msg: any): void {
+  handle_invalidate(fig: Figure, _msg: unknown): void {
     fig.send_render_request();
   }
 
-  handle_image_mode(fig: Figure, msg: any): void {
-    fig.image_mode = msg['mode'];
+  handle_image_mode(fig: Figure, msg: ImageModeMessage): void {
+    fig.image_mode = msg.mode;
   }
 
-  handle_connection_id(fig: Figure, msg: any): void {
-    fig.connection_id = msg['id'];
+  handle_connection_id(fig: Figure, msg: ConnectionIdMessage): void {
+    fig.connection_id = msg.id;
   }
 
   // Legacy handler - config message now includes figure size
@@ -829,17 +819,17 @@ export class Figure {
   }
 
   handle_toolbar_config(fig: Figure, msg: any): void {
-    fig.toolbar_items = msg['items'];
+    fig.toolbar_items = msg['items'] as Array<[string, string, string, string]>;
     fig._check_toolbar_ready();
   }
 
   handle_save_formats(fig: Figure, msg: any): void {
-    fig.save_formats = msg['formats'];
+    fig.save_formats = msg['formats'] as string[];
     fig._check_toolbar_ready();
   }
 
   handle_default_save_format(fig: Figure, msg: any): void {
-    fig.default_save_format = msg['format'];
+    fig.default_save_format = msg['format'] as string;
     fig._check_toolbar_ready();
   }
 
@@ -855,20 +845,17 @@ export class Figure {
     }
   }
 
-  handle_history_buttons(fig: Figure, msg: any): void {
-    for (const key in msg) {
-      if (!(key in fig.buttons)) {
-        continue;
-      }
+  handle_history_buttons(fig: Figure, msg: Record<string, boolean>): void {
+    for (const [key, enabled] of Object.entries(msg)) {
       const button = fig.buttons[key];
       if (!button) continue;
-      button.disabled = !msg[key];
-      button.setAttribute('aria-disabled', String(!msg[key]));
+      button.disabled = !enabled;
+      button.setAttribute('aria-disabled', String(!enabled));
     }
   }
 
-  handle_navigate_mode(fig: Figure, msg: any): void {
-    const mode = msg['mode'];
+  handle_navigate_mode(fig: Figure, msg: NavigateModeMessage): void {
+    const mode = msg.mode;
 
     if (mode === 'PAN') {
       fig.buttons['Pan']?.classList.add('active');
@@ -898,19 +885,22 @@ export class Figure {
         // Get correct MIME type from header
         const mimeType = getImageMimeType(header.format);
 
-        // Create blob with correct type - cast to ArrayBuffer to satisfy TypeScript
-        const blob = new Blob([imageData as unknown as ArrayBuffer], {
+        // Create blob with correct type.
+        // imageData is a Uint8Array *view* into the original ArrayBuffer
+        // (offset past the 8-byte header), so we must NOT use .buffer here
+        // — that would include the header bytes and corrupt the image.
+        // The `as any` satisfies TS 5.9 which widens Uint8Array's backing
+        // store to ArrayBufferLike (incompatible with BlobPart).
+        const blob = new Blob([imageData as any], {
           type: mimeType,
         });
 
         // Free memory for previous frames
         if (this.imageObj.src) {
-          (window.URL || (window as any).webkitURL).revokeObjectURL(this.imageObj.src);
+          URL.revokeObjectURL(this.imageObj.src);
         }
 
-        this.imageObj.src = (window.URL || (window as any).webkitURL).createObjectURL(
-          blob
-        );
+        this.imageObj.src = URL.createObjectURL(blob);
         this.updated_canvas_event();
         this.waiting = false;
 
@@ -932,18 +922,16 @@ export class Figure {
 
         // Free memory for previous frames
         if (this.imageObj.src) {
-          (window.URL || (window as any).webkitURL).revokeObjectURL(this.imageObj.src);
+          URL.revokeObjectURL(this.imageObj.src);
         }
 
-        this.imageObj.src = (window.URL || (window as any).webkitURL).createObjectURL(
-          img
-        );
+        this.imageObj.src = URL.createObjectURL(img);
         this.updated_canvas_event();
         this.waiting = false;
         return;
       } else if (
         typeof evt.data === 'string' &&
-        evt.data.slice(0, 21) === 'data:image/png;base64'
+        evt.data.startsWith('data:image/png;base64')
       ) {
         this.imageObj.src = evt.data;
         this.updated_canvas_event();
@@ -951,17 +939,21 @@ export class Figure {
         return;
       }
 
-      const msg = JSON.parse(evt.data);
-      const msg_type = msg['type'];
+      const msg = JSON.parse(evt.data) as { type: string };
+      const msg_type = msg.type;
 
-      // Call the handle_{type} callback
-      const callback = (this as any)['handle_' + msg_type];
+      // Dynamic dispatch to handle_{type} methods.
+      // This is a pattern inherited from matplotlib's JS layer.  The `any`
+      // cast is unavoidable because the handler names are constructed at
+      // runtime; individual handle_* methods carry their own typed signatures.
+      const handler = `handle_${msg_type}` as keyof Figure;
+      const callback = this[handler];
 
-      if (callback) {
+      if (typeof callback === 'function') {
         try {
-          callback.call(this, this, msg);
+          (callback as (fig: Figure, msg: unknown) => void).call(this, this, msg);
         } catch (e) {
-          console.log(`Exception inside 'handle_${msg_type}' callback:`, e, msg);
+          console.error(`Exception inside '${handler}' callback:`, e, msg);
         }
       }
     };
@@ -1110,7 +1102,7 @@ export class Figure {
 
     // Revoke any object URLs to free memory
     if (this.imageObj.src && this.imageObj.src.startsWith('blob:')) {
-      (window.URL || (window as any).webkitURL).revokeObjectURL(this.imageObj.src);
+      URL.revokeObjectURL(this.imageObj.src);
     }
 
     // Remove DOM elements
@@ -1118,12 +1110,4 @@ export class Figure {
       this.root.parentNode.removeChild(this.root);
     }
   }
-}
-
-// Export Figure to global window.mpl namespace for backwards compatibility
-if (typeof window !== 'undefined') {
-  if (!window.mpl) {
-    window.mpl = {} as any;
-  }
-  window.mpl.Figure = Figure as any;
 }
