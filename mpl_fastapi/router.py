@@ -20,6 +20,7 @@ import functools
 import hashlib
 import io
 import logging
+import os
 import struct
 import uuid
 from collections import defaultdict
@@ -46,37 +47,47 @@ from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
 PROTOCOL_VERSION = 0
 
 
-# Cache headers for immutable JS bundles.
-# These files are build artifacts that never change within a deployment,
-# so we use a long max-age with immutable.
-_JS_CACHE_HEADERS: dict[str, str] = {
-    "Cache-Control": "public, max-age=86400, immutable",
-}
+# JS caching control: set MPL_NO_CACHE_JS=1 (or any truthy value) to disable
+# in-process JS caching and aggressive Cache-Control headers.  This is
+# essential during development so that rebuilding the JS bundle is
+# immediately reflected without restarting the Python server.
+# This only affects static JS serving — it does not change logging levels
+# or any other server behaviour.
+_NO_CACHE_JS: bool = os.environ.get("MPL_NO_CACHE_JS", "").strip() not in ("", "0")
+
+# Cache headers for JS bundles.
+# In production the bundles are build artifacts that don't change within a
+# deployment, so we use aggressive caching.  In dev-mode we use no-cache
+# so the browser always revalidates.
+_JS_CACHE_HEADERS: dict[str, str] = (
+    {"Cache-Control": "no-cache"}
+    if _NO_CACHE_JS
+    else {"Cache-Control": "public, max-age=86400, immutable"}
+)
 
 
 @functools.lru_cache(maxsize=64)
-def _read_static_file(filename: str) -> tuple[str, str] | None:
-    """Read a static JS/map file from the dist directory, cached in memory.
-
-    Returns the file content and a content-based ETag.  Both are cached
-    after the first read so subsequent requests are free.
-
-    Parameters
-    ----------
-    filename : str
-        Filename relative to ``static/js/dist/`` (e.g. ``"component.esm.js"``).
-
-    Returns
-    -------
-    tuple[str, str] or None
-        ``(content, etag)`` or ``None`` if the file does not exist.
-    """
+def _read_static_file_cached(filename: str) -> tuple[str, str] | None:
+    """Read and permanently cache a static JS file (production path)."""
     path = Path(__file__).parent / "static/js/dist" / filename
     if path.exists():
         content = path.read_text(encoding="utf-8")
         etag = hashlib.sha256(content.encode()).hexdigest()[:16]
         return content, f'"{etag}"'
     return None
+
+
+def _read_static_file_uncached(filename: str) -> tuple[str, str] | None:
+    """Read a static JS file from disk every time (dev-mode path)."""
+    path = Path(__file__).parent / "static/js/dist" / filename
+    if path.exists():
+        content = path.read_text(encoding="utf-8")
+        etag = hashlib.sha256(content.encode()).hexdigest()[:16]
+        return content, f'"{etag}"'
+    return None
+
+
+_read_static_file = _read_static_file_uncached if _NO_CACHE_JS else _read_static_file_cached
 
 
 class ImageTypeMode(IntEnum):

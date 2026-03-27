@@ -65,11 +65,11 @@ format-check = "ruff format --check mpl_fastapi"
 typecheck = "mypy mpl_fastapi"
 
 # Run the example server
-run = "uvicorn demos.demo_server:app --reload --host 127.0.0.1 --port 8000"
+run = "MPL_NO_CACHE_JS=1 uvicorn demos.demo_server:app --reload --host 127.0.0.1 --port 8000"
 
 # Development mode with hot reload (TypeScript watch + React watch + Python server in parallel)
 # Note: Runs all processes; Ctrl+C will stop all
-dev = "npm run watch & (cd demos/react-example && npm run dev) & uvicorn demos.demo_server:app --reload --host 127.0.0.1 --port 8000"
+dev = "MPL_NO_CACHE_JS=1 npm run watch & (cd demos/react-example && npm run dev) & MPL_NO_CACHE_JS=1 uvicorn demos.demo_server:app --reload --host 127.0.0.1 --port 8000"
 
 # Documentation
 docs-build = "sphinx-build -b html docs docs/_build"
