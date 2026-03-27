@@ -16,6 +16,7 @@ import os
 from collections.abc import Callable
 from typing import IO, Any
 
+from matplotlib import cbook
 from matplotlib.backend_bases import (
     FigureCanvasBase,
     FigureManagerBase,
@@ -72,6 +73,7 @@ class FigureCanvasRemote(FigureCanvasBase):
         transport: RemoteTransport,
         server_config: ServerConfig,
     ) -> None:
+        self._is_drawing = False
         super().__init__(figure)
         self._transport = transport
         self._server_config = server_config
@@ -114,15 +116,14 @@ class FigureCanvasRemote(FigureCanvasBase):
 
     # -- rendering (main thread, blit only) ---------------------------------
 
-    def draw(self) -> None:
-        """Blit ``_remote_image`` to the paint surface.
 
-        This is a **no-op at this layer** — toolkit subclasses override
-        ``paintEvent`` (Qt) or equivalent to do the actual blit.  No
-        server IO happens here.
-        """
-        # FigureCanvasBase.draw fires the "draw_event"
-        self.draw_event(self)
+    def draw(self) -> None:
+        """Request a server re-render and schedule a Qt repaint."""
+        if self._is_drawing:
+            return
+        with cbook._setattr_cm(self, _is_drawing=True):
+            self._transport.send_json({"type": "render"})
+        self.update()
 
     def draw_idle(self) -> None:
         """Schedule a ``draw()`` on the toolkit event loop.

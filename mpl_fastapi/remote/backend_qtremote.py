@@ -41,7 +41,6 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
-from matplotlib import cbook
 from matplotlib.backend_bases import (
     CloseEvent,
     KeyEvent,
@@ -387,15 +386,6 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         # Delegate to the toolkit-agnostic reset (clears _remote_image,
         # _rubberband_rect, sends resize + refresh, etc.)
         super()._on_reconnected(config)
-
-    def draw(self) -> None:
-        """Blit-only draw — no server IO."""
-        if self._is_drawing:
-            return
-        with cbook._setattr_cm(self, _is_drawing=True):
-            # Fire the matplotlib draw_event but don't render anything
-            self.draw_event(self)
-        self.update()
 
     def draw_idle(self) -> None:
         """Queue a draw via QTimer (same pattern as upstream Qt backend)."""
