@@ -90,7 +90,7 @@ class FigureCanvasRemote(FigureCanvasBase):
         figure.set_size_inches(
             w_css / original_dpi, h_css / original_dpi, forward=False
         )
-        self._set_device_pixel_ratio(dpr)
+        self._set_device_pixel_ratio(dpr)  # type: ignore[attr-defined]
         if server_config.figure_label:
             figure.set_label(server_config.figure_label)
 

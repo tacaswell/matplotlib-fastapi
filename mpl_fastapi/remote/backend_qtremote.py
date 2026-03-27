@@ -462,7 +462,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
             QtWidgets.QWidget.resizeEvent(self, event)
 
             # Fire local resize event (for mpl_connect callbacks)
-            ResizeEvent("resize_event", self)._process()
+            ResizeEvent("resize_event", self)._process()  # type: ignore[attr-defined]
 
             # Debounce the resize to the server — only the final size
             # matters, so we restart a short timer on every resize and
@@ -525,7 +525,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
                 button,
                 modifiers=self._mpl_modifiers(),
                 guiEvent=event,
-            )._process()
+            )._process()  # type: ignore[attr-defined]
             # Wire protocol uses 0-indexed buttons (JS convention);
             # the server adds +1 to get matplotlib MouseButton values.
             wx, wy = self._wireEventCoords(event)
@@ -544,7 +544,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
                 dblclick=True,
                 modifiers=self._mpl_modifiers(),
                 guiEvent=event,
-            )._process()
+            )._process()  # type: ignore[attr-defined]
             wx, wy = self._wireEventCoords(event)
             self._forward_mouse_event("button_press", wx, wy, button=int(button) - 1)
 
@@ -560,7 +560,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
             buttons=self._mpl_buttons(event.buttons()),
             modifiers=self._mpl_modifiers(),
             guiEvent=event,
-        )._process()
+        )._process()  # type: ignore[attr-defined]
 
         # Throttle motion_notify to the server to avoid overwhelming it.
         wx, wy = self._wireEventCoords(event)
@@ -600,7 +600,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
                 button,
                 modifiers=self._mpl_modifiers(),
                 guiEvent=event,
-            )._process()
+            )._process()  # type: ignore[attr-defined]
             wx, wy = self._wireEventCoords(event)
             self._forward_mouse_event("button_release", wx, wy, button=int(button) - 1)
 
@@ -622,7 +622,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
                 step=steps,
                 modifiers=self._mpl_modifiers(),
                 guiEvent=event,
-            )._process()
+            )._process()  # type: ignore[attr-defined]
             wx, wy = self._wireEventCoords(event)
             self._forward_mouse_event("scroll", wx, wy, step=steps)
 
@@ -635,7 +635,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
                 key,
                 *self.mouseEventCoords(),
                 guiEvent=event,
-            )._process()
+            )._process()  # type: ignore[attr-defined]
             self._forward_key_event("key_press", key)
 
     def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
@@ -647,7 +647,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
                 key,
                 *self.mouseEventCoords(),
                 guiEvent=event,
-            )._process()
+            )._process()  # type: ignore[attr-defined]
             self._forward_key_event("key_release", key)
 
     # -- cleanup ------------------------------------------------------------
@@ -1154,7 +1154,7 @@ class FigureManagerQTRemote(FigureManagerQT):
 
     def _widgetclosed(self) -> None:
         """Handle the window close event."""
-        CloseEvent("close_event", self.canvas)._process()
+        CloseEvent("close_event", self.canvas)._process()  # type: ignore[attr-defined]
         if getattr(self.window, "_destroying", False):
             return
         self.window._destroying = True
