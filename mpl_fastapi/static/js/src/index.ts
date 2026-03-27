@@ -6,7 +6,7 @@
  */
 
 // Export core components
-export { WebSocketManager } from './websocket-manager.js';
+export { WebSocketManager, type ReconnectConfig } from './websocket-manager.js';
 export { Figure } from './figure.js';
 export { MatplotlibEmbeddable } from './embeddable.js';
 

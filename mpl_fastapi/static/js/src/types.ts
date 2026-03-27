@@ -5,6 +5,8 @@
  * used across the matplotlib-fastapi JavaScript components.
  */
 
+import type { ReconnectConfig } from './websocket-manager.js';
+
 // ============================================================================
 // Protocol Constants (v0)
 // ============================================================================
@@ -128,6 +130,18 @@ export interface EmbeddableConfig {
 
   /** Whether to automatically connect on instantiation (default: true) */
   autoConnect?: boolean;
+
+  /** Reconnection configuration (default: enabled with 10 attempts) */
+  reconnect?: ReconnectConfig;
+
+  /** Callback when reconnection attempt starts */
+  onReconnecting?: (attempt: number, maxAttempts: number) => void;
+
+  /** Callback when reconnection succeeds */
+  onReconnected?: () => void;
+
+  /** Callback when all reconnection attempts are exhausted */
+  onReconnectFailed?: () => void;
 }
 
 // ============================================================================
@@ -588,10 +602,14 @@ export interface WebSocketManager {
   close(): void;
   send(data: string): void;
   isConnected(): boolean;
+  isReconnecting(): boolean;
   onOpen(handler: (event: Event) => void): void;
   onMessage(handler: (event: MessageEvent) => void): void;
   onClose(handler: (event: CloseEvent) => void): void;
   onError(handler: (event: Event) => void): void;
+  onReconnecting(handler: (attempt: number, maxAttempts: number) => void): void;
+  onReconnected(handler: () => void): void;
+  onReconnectFailed(handler: () => void): void;
 }
 
 /**

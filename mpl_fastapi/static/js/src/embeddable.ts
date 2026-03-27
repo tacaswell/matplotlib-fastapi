@@ -75,6 +75,10 @@ export class MatplotlibEmbeddable {
       showUpdateForm: config.showUpdateForm ?? true,
       staticPath: config.staticPath ?? '/mpl-static',
       autoConnect: config.autoConnect ?? true,
+      reconnect: config.reconnect ?? {},
+      onReconnecting: config.onReconnecting ?? (() => {}),
+      onReconnected: config.onReconnected ?? (() => {}),
+      onReconnectFailed: config.onReconnectFailed ?? (() => {}),
     };
 
     // Set static path globally for Figure class compatibility
@@ -150,7 +154,7 @@ export class MatplotlibEmbeddable {
 
       // Create WebSocketManager
       const wsUrl = this._buildWebSocketUrl();
-      this.ws_manager = new WebSocketManager(wsUrl);
+      this.ws_manager = new WebSocketManager(wsUrl, this.config.reconnect);
 
       // Set up connection handlers
       this.ws_manager.onOpen(() => {
@@ -174,9 +178,9 @@ export class MatplotlibEmbeddable {
             this.submitButton.style.cursor = 'not-allowed';
           }
           this.config.onDisconnect();
-        } else if (event.code !== 1000) {
-          // Connection failed before it was established (e.g., invalid figure name)
-          // Clean up the figure to prevent resource leaks (ResizeObserver, DOM elements)
+        } else if (event.code !== 1000 && !this.ws_manager?.isReconnecting()) {
+          // Connection failed before it was established AND we are not in
+          // a reconnect cycle.  Clean up to prevent resource leaks.
           this._cleanupFigure();
           this.config.onError(
             new Error(`Connection failed: ${event.reason || 'Unknown error'}`)
@@ -185,10 +189,30 @@ export class MatplotlibEmbeddable {
       });
 
       this.ws_manager.onError(() => {
-        // Clean up the figure to prevent resource leaks
-        this._cleanupFigure();
-        this.config.onError(new Error('WebSocket connection failed'));
+        // During reconnection the browser fires onerror for every failed
+        // attempt.  Only clean up if we're NOT in a reconnect cycle;
+        // otherwise let the reconnect machinery keep trying.
+        if (!this.ws_manager?.isReconnecting()) {
+          this._cleanupFigure();
+          this.config.onError(new Error('WebSocket connection failed'));
+        }
       });
+
+      // Reconnection handlers — forward to config callbacks
+      this.ws_manager.onReconnecting(this.config.onReconnecting);
+
+      this.ws_manager.onReconnected(() => {
+        this.connected = true;
+        // Re-enable submit button
+        if (this.submitButton) {
+          this.submitButton.disabled = false;
+          this.submitButton.style.opacity = '1';
+          this.submitButton.style.cursor = 'pointer';
+        }
+        this.config.onReconnected();
+      });
+
+      this.ws_manager.onReconnectFailed(this.config.onReconnectFailed);
 
       // Initialize figure first (before connecting), it will register its handlers
       this._initializeFigure();

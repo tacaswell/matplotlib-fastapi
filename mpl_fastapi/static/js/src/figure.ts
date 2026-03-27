@@ -104,6 +104,11 @@ export class Figure {
   private _initialized: boolean = false;
   private _initial_size: [number, number] | null = null;
 
+  // Reconnection state
+  private _reconnecting: boolean = false;
+  private _reconnect_overlay: HTMLDivElement | null = null;
+  private _reconnect_label: HTMLDivElement | null = null;
+
   // Download handler
   ondownload: (fig: Figure, format: string) => void;
 
@@ -152,6 +157,35 @@ export class Figure {
 
       // Server will respond with consolidated 'config' message
       // Then we send 'refresh' to get the first image
+    });
+
+    // Register reconnection handlers
+    this.ws_manager.onReconnecting((attempt, maxAttempts) => {
+      this._reconnecting = true;
+      this._showOverlay(`Reconnecting\u2026  (${attempt}/${maxAttempts})`);
+    });
+
+    this.ws_manager.onReconnected(() => {
+      // Reset canvas state before the onOpen handler re-sends init.
+      // The fresh server-side figure will send a new config message;
+      // handle_config will resize the server figure to match the
+      // current canvas_div and request a refresh.
+      this._reconnecting = true;
+      this.connection_id = null;
+      this.image_mode = 'full';
+      this.waiting = false;
+      this._server_size = null;
+
+      // Clear the canvas so the user sees a blank plot rather than a
+      // stale image at the (possibly wrong) size.
+      if (this.context && this.canvas) {
+        this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      }
+    });
+
+    this.ws_manager.onReconnectFailed(() => {
+      this._reconnecting = false;
+      this._showOverlay('Disconnected');
     });
 
     // Register message handler with WebSocketManager
@@ -697,8 +731,26 @@ export class Figure {
     // Mark as initialized before first refresh to prevent ResizeObserver feedback
     fig._initialized = true;
 
+    if (fig._reconnecting) {
+      // On reconnect, the server created a default-sized figure.  Tell
+      // it to match the *current* canvas_div size (which may differ
+      // from the default) before requesting a refresh.  This mirrors
+      // the Qt client's _on_reconnected logic.
+      if (fig.canvas_div) {
+        const curW = fig.canvas_div.clientWidth;
+        const curH = fig.canvas_div.clientHeight;
+        // Only send resize if the size actually differs from the config
+        if (Math.abs(curW - width) > 1 || Math.abs(curH - height) > 1) {
+          fig.request_resize(curW, curH);
+        }
+      }
+    }
+
     // Request initial render now that canvas is properly sized
     fig.send_message('refresh', {});
+
+    // If reconnecting, the overlay will be hidden when the first
+    // binary image arrives (see _make_on_message_function).
   }
 
   /**
@@ -861,6 +913,12 @@ export class Figure {
         );
         this.updated_canvas_event();
         this.waiting = false;
+
+        // Hide reconnect overlay on first image after reconnection
+        if (this._reconnecting) {
+          this._reconnecting = false;
+          this._hideReconnectOverlay();
+        }
         return;
       }
 
@@ -978,6 +1036,60 @@ export class Figure {
     if (this.message) {
       this.message.textContent = tooltip;
     }
+  }
+
+  // -- reconnection overlay ------------------------------------------------
+
+  /**
+   * Show a semi-transparent overlay with the given text.
+   */
+  private _showOverlay(text: string): void {
+    this._ensureReconnectOverlay();
+    if (this._reconnect_label) {
+      this._reconnect_label.textContent = text;
+    }
+    if (this._reconnect_overlay) {
+      this._reconnect_overlay.style.display = 'flex';
+    }
+  }
+
+  /**
+   * Hide the reconnection overlay.
+   */
+  private _hideReconnectOverlay(): void {
+    if (this._reconnect_overlay) {
+      this._reconnect_overlay.style.display = 'none';
+    }
+  }
+
+  /**
+   * Lazily create the overlay element inside the canvas_div.
+   */
+  private _ensureReconnectOverlay(): void {
+    if (this._reconnect_overlay || !this.canvas_div) return;
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText =
+      'position: absolute;' +
+      'inset: 0;' +
+      'display: none;' +
+      'align-items: center;' +
+      'justify-content: center;' +
+      'z-index: 10;' +
+      'pointer-events: none;';
+
+    const label = document.createElement('div');
+    label.style.cssText =
+      'background-color: rgba(0, 0, 0, 0.62);' +
+      'color: white;' +
+      'font-size: 16px;' +
+      'padding: 12px 20px;' +
+      'border-radius: 8px;';
+    overlay.appendChild(label);
+
+    this.canvas_div.appendChild(overlay);
+    this._reconnect_overlay = overlay;
+    this._reconnect_label = label;
   }
 
   /**
