@@ -205,7 +205,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
       thread via ``run_coroutine_threadsafe``.
     """
 
-    toolbar: NavigationToolbar2QTRemote # type: ignore[assignment]
+    toolbar: NavigationToolbar2QTRemote  # type: ignore[assignment]
     manager_class = property(lambda self: FigureManagerQTRemote)  # noqa: ARG005
 
     def __init__(
@@ -227,7 +227,6 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
 
         # Pre-set Qt attributes needed before QWidget.__init__
         self._draw_pending = False
-        self._is_drawing = False
         self._draw_rect_callback = lambda painter: None  # noqa: ARG005
         self._in_resize_event = False
 
@@ -270,9 +269,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
 
         # "Reconnecting…" overlay — a child QLabel shown during reconnect
         self._reconnect_overlay = QtWidgets.QLabel(self)
-        self._reconnect_overlay.setAlignment(
-            QtCore.Qt.AlignmentFlag.AlignCenter
-        )
+        self._reconnect_overlay.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self._reconnect_overlay.setStyleSheet(
             "background-color: rgba(0, 0, 0, 160);"
             "color: white;"
@@ -1280,8 +1277,8 @@ def open_remote_figure(
         on_binary=on_binary,
         on_json=on_json,
         on_disconnect=on_disconnect,
-        on_reconnect=lambda config: None,  # Rewired to signal below
-        on_reconnecting=lambda a, m: None,  # Rewired to signal below
+        on_reconnect=lambda config: None,   # noqa: ARG005
+        on_reconnecting=lambda a, m: None,  # noqa: ARG005
         device_pixel_ratio=device_pixel_ratio,
     )
 

@@ -737,7 +737,7 @@ class FigureManagerRemote(FigureManagerBase):
 
     def __init__(self, canvas: FigureCanvasRemote, num: int) -> None:
         super().__init__(canvas, num)
-        self.toolbar = RemoteNavigationToolbar2(canvas)
+        self.toolbar = RemoteNavigationToolbar2(canvas)  # type: ignore[assignment]
 
     def destroy(self) -> None:
         """Disconnect the transport and clean up."""
