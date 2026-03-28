@@ -796,10 +796,9 @@ class TestOpenRemoteFigures:
 
 
 class TestRunQtApp:
-    def test_run_qt_app_with_no_managers_returns(self) -> None:
-        """run_qt_app with no managers returns immediately."""
+    def test_run_qt_app_with_no_specs_returns(self) -> None:
+        """run_qt_app with empty specs returns immediately."""
         # Should not block or raise
-        run_qt_app(None)
         run_qt_app([])
 
     def test_run_qt_app_shows_managers(self, qtbot: Any, server_url: str) -> None:
@@ -809,22 +808,28 @@ class TestRunQtApp:
         so we verify the show + exec machinery indirectly by patching
         app.exec and checking that managers get shown.
         """
-        from unittest.mock import patch
+        from unittest.mock import MagicMock, patch
 
-        mgr = open_remote_figure(
-            url=server_url,
-            plot_name="simple",
-        )
+        managers_shown: list[FigureManagerQTRemote] = []
+        original_show = FigureManagerQTRemote.show
+
+        def tracking_show(self: FigureManagerQTRemote) -> None:
+            managers_shown.append(self)
+            original_show(self)
+
+        app = QApplication.instance()
+        assert app is not None
+
+        with (
+            patch.object(app, "exec"),
+            patch.object(FigureManagerQTRemote, "show", tracking_show),
+        ):
+            run_qt_app([(server_url, "simple")])
+
+        assert len(managers_shown) == 1
+        mgr = managers_shown[0]
         qtbot.addWidget(mgr.window)
-
         try:
-            app = QApplication.instance()
-            assert app is not None
-
-            with patch.object(app, "exec"):
-                run_qt_app([mgr])
-
-            # After run_qt_app, the window should be visible
             assert mgr.window.isVisible()
         finally:
             mgr.destroy()

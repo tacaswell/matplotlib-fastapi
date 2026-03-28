@@ -49,7 +49,6 @@ from matplotlib.backends.backend_qt import (  # type: ignore[import-untyped]
     FigureManagerQT,
     MainWindow,
     NavigationToolbar2QT,
-    _create_qApp,
 )
 from matplotlib.backends.qt_compat import QtCore, QtGui, QtWidgets  # type: ignore[import-untyped]
 from matplotlib.figure import Figure
@@ -219,8 +218,6 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         transport: RemoteTransport | TransportThread,
         server_config: ServerConfig,
     ) -> None:
-        _create_qApp()
-
         # Accept either a bare RemoteTransport (unit-testing with mocks)
         # or a TransportThread (production).  When a thread is given we
         # extract the transport *and* wire its Qt signals.
@@ -1096,8 +1093,6 @@ def open_remote_figure(
     RuntimeError
         If the connection fails or the handshake times out.
     """
-    _create_qApp()
-
     # Auto-detect device pixel ratio from the primary screen if not given.
     if device_pixel_ratio is None:
         screen = QtWidgets.QApplication.primaryScreen()
@@ -1200,12 +1195,15 @@ def open_remote_figures(
     --------
     ::
 
+        app = QApplication(sys.argv)
         managers = open_remote_figures([
             ("ws://localhost:8000/plots", "sine", {"frequency": 2.0}),
             ("ws://localhost:8000/plots", "cosine"),
             ("ws://other-host:9000/plots", "heatmap"),
         ])
-        run_qt_app(managers)
+        for mgr in managers:
+            mgr.show()
+        app.exec()
     """
     managers: list[FigureManagerQTRemote] = []
     for spec in specs:
@@ -1229,42 +1227,50 @@ def open_remote_figures(
 
 
 def run_qt_app(
-    managers: list[FigureManagerQTRemote] | None = None,
+    specs: Sequence[tuple[str, str] | tuple[str, str, dict[str, Any] | None]],
+    *,
+    device_pixel_ratio: float | None = None,
 ) -> None:
-    """Show figures and enter the Qt event loop.
+    """Create a QApplication, open remote figures, and enter the event loop.
 
-    A convenience helper for scripts that only need to display remote
-    plots.  Creates a :class:`QApplication` if one does not already
-    exist, calls ``manager.show()`` on every manager, and enters
-    ``app.exec()``.
+    This is the top-level entry point for scripts.  It handles the
+    chicken-and-egg problem: :func:`open_remote_figure` needs a
+    ``QApplication`` (for ``QEventLoop``, ``primaryScreen``, widget
+    creation), and the ``QApplication`` must outlive all windows.
+    This function creates the application *first*, then opens the
+    figures, shows them, and enters ``app.exec()``.
 
     Parameters
     ----------
-    managers : list of FigureManagerQTRemote, optional
-        Managers to show.  If *None* or empty, exits immediately with
-        a message.
+    specs : list of tuples
+        Each element is either ``(url, plot_name)`` or
+        ``(url, plot_name, init_params)``.  *url* is the server base
+        WebSocket URL, *plot_name* is the name of the plot, and
+        *init_params* is an optional dict of initialisation parameters.
+    device_pixel_ratio : float, optional
+        Passed to :func:`open_remote_figure`.  If *None*, auto-detected
+        from the primary screen.
 
     Examples
     --------
     ::
 
-        from mpl_fastapi.remote.backend_qtremote import (
-            open_remote_figure,
-            run_qt_app,
-        )
+        from mpl_fastapi.remote.backend_qtremote import run_qt_app
 
-        mgr = open_remote_figure(
-            "ws://localhost:8000/plots", "sine",
-        )
-        run_qt_app([mgr])
+        run_qt_app([
+            ("ws://localhost:8000/plots", "sine", {"frequency": 2.0}),
+            ("ws://localhost:8000/plots", "cosine"),
+        ])
     """
-    if not managers:
-        logger.warning("No figures to show.")
-        return
-
     app = QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication(sys.argv)
+
+    managers = open_remote_figures(specs, device_pixel_ratio=device_pixel_ratio)
+
+    if not managers:
+        logger.warning("No figures opened.")
+        return
 
     for mgr in managers:
         mgr.show()

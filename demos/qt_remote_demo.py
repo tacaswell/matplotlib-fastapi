@@ -33,13 +33,8 @@ What you should see
 from __future__ import annotations
 
 import argparse
-import sys
-
-from PySide6.QtWidgets import QApplication
 
 from mpl_fastapi.remote.backend_qtremote import (
-    open_remote_figure,
-    open_remote_figures,
     run_qt_app,
 )
 
@@ -78,19 +73,9 @@ def main() -> None:
         key, value = kv.split("=", 1)
         init_params[key] = value
 
-    # Ensure a QApplication exists (open_remote_figure needs one for the
-    # event loop it spins while waiting for the handshake).
-    _app = QApplication.instance() or QApplication(sys.argv)
-
     if args.plot:
         # Open a single named plot
-        print(f"Connecting to {args.url} / {args.plot} ...")
-        mgr = open_remote_figure(
-            url=args.url,
-            plot_name=args.plot,
-            init_params=init_params or None,
-        )
-        managers = [mgr]
+        specs = [(args.url, args.plot, init_params or None)]
     else:
         # Open several demo plots to show multi-figure support
         specs = [
@@ -99,16 +84,9 @@ def main() -> None:
             (args.url, "cosine", {"damping": "0.3"}),
             (args.url, "lissajous", {"freq_x": "3", "freq_y": "2", "delta": "1.57"}),
         ]
-        print(f"Opening {len(specs)} demo plots on {args.url} ...")
-        managers = open_remote_figures(specs)
 
-    if not managers:
-        print("No figures opened — is the demo server running?")
-        print("  uvicorn demos.demo_server:app --reload")
-        sys.exit(1)
-
-    print(f"\n{len(managers)} figure(s) opened.  Close all windows to exit.")
-    run_qt_app(managers)
+    print(f"Opening {len(specs)} plot(s) on {args.url} ...")
+    run_qt_app(specs)
 
 
 if __name__ == "__main__":
