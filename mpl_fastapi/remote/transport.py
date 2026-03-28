@@ -198,9 +198,9 @@ class RemoteTransport:
         self,
         url: str,
         *,
-        on_binary: Callable[[bytes], None],
-        on_json: Callable[[dict[str, Any]], None],
-        on_disconnect: Callable[[], None],
+        on_binary: Callable[[bytes], None] | None = None,
+        on_json: Callable[[dict[str, Any]], None] | None = None,
+        on_disconnect: Callable[[], None] | None = None,
         on_reconnect: Callable[[ServerConfig], None] | None = None,
         on_reconnecting: Callable[[int, int], None] | None = None,
         device_pixel_ratio: float = 1.0,
@@ -210,9 +210,9 @@ class RemoteTransport:
         reconnect_backoff_base: float = 2.0,
     ) -> None:
         self._url = url
-        self._on_binary = on_binary
-        self._on_json = on_json
-        self._on_disconnect = on_disconnect
+        self._on_binary = on_binary or (lambda data: None)
+        self._on_json = on_json or (lambda msg: None)
+        self._on_disconnect = on_disconnect or (lambda: None)
         self._on_reconnect = on_reconnect
         self._on_reconnecting = on_reconnecting
         self._device_pixel_ratio = device_pixel_ratio

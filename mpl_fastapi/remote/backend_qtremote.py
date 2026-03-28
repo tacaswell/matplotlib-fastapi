@@ -115,6 +115,14 @@ class TransportThread(QtCore.QThread):
         super().__init__(parent)
         self._transport = transport
 
+        # Wire the transport's raw callbacks to emit Qt signals, so
+        # incoming messages are marshalled to the main thread.
+        transport._on_binary = self.binary_received.emit
+        transport._on_json = self.json_received.emit
+        transport._on_disconnect = self.disconnected.emit
+        transport._on_reconnect = self.reconnected.emit
+        transport._on_reconnecting = self.reconnecting.emit
+
     @property
     def transport(self) -> RemoteTransport:
         return self._transport
@@ -208,10 +216,19 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
     def __init__(
         self,
         figure: Figure,
-        transport: RemoteTransport,
+        transport: RemoteTransport | TransportThread,
         server_config: ServerConfig,
     ) -> None:
         _create_qApp()
+
+        # Accept either a bare RemoteTransport (unit-testing with mocks)
+        # or a TransportThread (production).  When a thread is given we
+        # extract the transport *and* wire its Qt signals.
+        if isinstance(transport, TransportThread):
+            transport_thread: TransportThread | None = transport
+            transport = transport_thread.transport
+        else:
+            transport_thread = None
 
         # Pre-set attributes that get_width_height() needs, because the MRO
         # chain (FigureCanvasRemote → FigureCanvasQT → QWidget) triggers
@@ -230,8 +247,8 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         # Pre-converted QPixmap for blitting
         self._remote_qpixmap: QtGui.QPixmap | None = None
 
-        # Thread will be set up by the manager / factory
-        self._transport_thread: TransportThread | None = None
+        # Store the transport thread (owns the asyncio loop).
+        self._transport_thread: TransportThread | None = transport_thread
 
         # Rate-limit resize events to the server.  Only the final size
         # matters, so we use a pure trailing-edge debounce: stash the
@@ -266,6 +283,15 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
             "border-radius: 8px;"
         )
         self._reconnect_overlay.hide()
+
+        # Wire TransportThread signals → canvas slots for thread-safe
+        # message dispatch and reconnection UI.
+        if transport_thread is not None:
+            transport_thread.binary_received.connect(self._on_binary_message)
+            transport_thread.json_received.connect(self._on_json_message)
+            transport_thread.reconnecting.connect(self._show_reconnect_overlay)
+            transport_thread.reconnected.connect(self._on_reconnected)
+            transport_thread.disconnected.connect(self._show_disconnected_overlay)
 
     # -- painting -----------------------------------------------------------
 
@@ -1083,26 +1109,12 @@ def open_remote_figure(
     result: dict[str, Any] = {}
     error: list[str] = []
 
-    def on_binary(data: bytes) -> None:
-        pass  # Will be wired to canvas later
-
-    def on_json(msg: dict[str, Any]) -> None:
-        pass  # Will be wired to canvas later
-
-    def on_disconnect() -> None:
-        pass  # Will be wired to canvas later
-
     transport = RemoteTransport(
         ws_url,
-        on_binary=on_binary,
-        on_json=on_json,
-        on_disconnect=on_disconnect,
-        on_reconnect=lambda config: None,   # noqa: ARG005
-        on_reconnecting=lambda a, m: None,  # noqa: ARG005
         device_pixel_ratio=device_pixel_ratio,
     )
 
-    # Start the transport thread and wait for the handshake
+    # TransportThread wires transport callbacks → Qt signals in its __init__.
     thread = TransportThread(transport)
 
     event_loop = QtCore.QEventLoop()
@@ -1136,26 +1148,9 @@ def open_remote_figure(
     # from the server config, so a bare Figure() is fine here.
     figure = Figure()
 
-    # Create the canvas
-    canvas = FigureCanvasQTRemote(figure, transport, config)
-    canvas._transport_thread = thread
-
-    # Now rewire the transport callbacks to the canvas (on the main thread)
-    # We use signals from the TransportThread for thread-safe dispatch.
-    thread.binary_received.connect(canvas._on_binary_message)
-    thread.json_received.connect(canvas._on_json_message)
-
-    # Reconnection signals → canvas overlay and state reset
-    thread.reconnecting.connect(canvas._show_reconnect_overlay)
-    thread.reconnected.connect(canvas._on_reconnected)
-    thread.disconnected.connect(canvas._show_disconnected_overlay)
-
-    # Also rewire the transport's raw callbacks to emit signals
-    transport._on_binary = thread.binary_received.emit
-    transport._on_json = thread.json_received.emit
-    transport._on_disconnect = thread.disconnected.emit
-    transport._on_reconnect = thread.reconnected.emit
-    transport._on_reconnecting = thread.reconnecting.emit
+    # Canvas extracts the transport from the thread and wires
+    # signals → slots in its __init__.
+    canvas = FigureCanvasQTRemote(figure, thread, config)
 
     # Create the manager (which creates the window + toolbar).
     # Toolbar messages (navigate_mode, history_buttons, message,
