@@ -129,6 +129,12 @@ export class MatplotlibEmbeddable {
     const params = new URLSearchParams(
       Object.entries(this.config.initParams).map(([k, v]) => [k, String(v)])
     );
+
+    // Add update parameters with _update. prefix
+    for (const [k, v] of Object.entries(this.config.updateParams)) {
+      params.set(`_update.${k}`, String(v));
+    }
+
     const queryString = params.toString();
     if (queryString) {
       wsUrl += '?' + queryString;

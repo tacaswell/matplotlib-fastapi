@@ -12,6 +12,7 @@ Then visit:
     http://localhost:8000/plots - List all available plots
     http://localhost:8000/plots/plot/sine?frequency=2.0&amplitude=1.5 - Sine wave with params
     http://localhost:8000/plots/plot/interactive_sine - Interactive sine with update controls
+    http://localhost:8000/plots/plot/interactive_sine?frequency=2.0&_update.phase=1.57 - Pre-configured with update
     http://localhost:8000/embeddable - Embeddable component demos
 """
 
@@ -87,7 +88,7 @@ def create_sine_plot(fig: Figure, params: SinePlotParams) -> None:
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_title(
-        f"Sine Wave: y = ${params.amplitude} \sin({params.frequency}x + {params.phase:.2f})$"
+        fr"Sine Wave: y = ${params.amplitude} \sin({params.frequency}x + {params.phase:.2f})$"
     )
     ax.legend()
 
@@ -121,7 +122,7 @@ def create_interactive_sine(fig: Figure, params: SinePlotParams) -> dict:
     ax.set_ylabel("y")
     ax.set_ylim(-params.amplitude * 1.2, params.amplitude * 1.2)
     title = ax.set_title(
-        f"Interactive Sine: $y = {params.amplitude}\sin({params.frequency}x)$"
+        fr"Interactive Sine: $y = {params.amplitude}\sin({params.frequency}x)$"
     )
 
     # Return state object that update function will use
@@ -148,7 +149,7 @@ def update_interactive_sine(state: dict, params: SineUpdateParams) -> dict:
 
     # Update title to show current phase
     state["title"].set_text(
-        f"Interactive Sine: $y = {state['amplitude']} \sin({state['frequency']}x + {params.phase:.2f})$"
+        fr"Interactive Sine: $y = {state['amplitude']} \sin({state['frequency']}x + {params.phase:.2f})$"
     )
 
     # Update and return state
@@ -181,10 +182,10 @@ def create_cosine_plot(fig: Figure, params: CosinePlotParams) -> None:
     ax.grid(True, alpha=0.3)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
-    rhs = f'{params.amplitude}\cos({params.frequency}x)'
+    rhs = fr'{params.amplitude}\cos({params.frequency}x)'
     if params.damping > 0:
-        rhs += f"e^{{-{params.damping}x}}"
-    title = f"Cosine Wave: y = ${rhs}$"
+        rhs += fr"e^{{-{params.damping}x}}"
+    title = fr"Cosine Wave: y = ${rhs}$"
 
     ax.set_title(title)
     ax.legend()

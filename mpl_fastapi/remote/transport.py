@@ -93,12 +93,20 @@ class ServerConfig:
     default_save_format: str = "png"
     image_format: str = "png"
     update_schema: dict[str, Any] | None = None
+    init_params: dict[str, Any] = field(default_factory=dict)
+    update_params: dict[str, Any] | None = None
+
+
+# Reserved prefix for update parameters in query strings.
+_UPDATE_PREFIX = "_update."
 
 
 def build_ws_url(
     base_url: str,
     plot_name: str,
     init_params: dict[str, Any] | None = None,
+    *,
+    update_params: dict[str, Any] | None = None,
 ) -> str:
     """Build a WebSocket URL for the v0 endpoint.
 
@@ -110,6 +118,9 @@ def build_ws_url(
         Name of the plot to connect to.
     init_params : dict, optional
         Query-string parameters for plot initialisation.
+    update_params : dict, optional
+        Update parameters.  Encoded as ``_update.<key>=<value>`` in the
+        query string so the server applies them after initialisation.
 
     Returns
     -------
@@ -118,8 +129,14 @@ def build_ws_url(
     """
     base = base_url.rstrip("/")
     url = f"{base}/ws/v0/{plot_name}"
+    combined: dict[str, Any] = {}
     if init_params:
-        url = f"{url}?{urlencode(init_params)}"
+        combined.update(init_params)
+    if update_params:
+        for k, v in update_params.items():
+            combined[f"{_UPDATE_PREFIX}{k}"] = v
+    if combined:
+        url = f"{url}?{urlencode(combined)}"
     return url
 
 
@@ -152,6 +169,8 @@ def _parse_config_message(msg: dict[str, Any]) -> ServerConfig:
         default_save_format=save_cfg.get("default_format", "png"),
         image_format=image_cfg.get("format", "png"),
         update_schema=msg.get("update_schema"),
+        init_params=msg.get("init_params", {}),
+        update_params=msg.get("update_params"),
     )
 
 

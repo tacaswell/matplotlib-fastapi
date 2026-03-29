@@ -71,7 +71,7 @@
             type="number"
             id="{{ prop_name }}"
             name="{{ prop_name }}"
-            value="{{ prop_info.get('default', 0) }}"
+            value="{{ update_values.get(prop_name, prop_info.get('default', 0)) }}"
             {% if prop_info.get('minimum') is not none %}min="{{ prop_info.minimum }}"{% endif %}
             {% if prop_info.get('maximum') is not none %}max="{{ prop_info.maximum }}"{% endif %}
             step="any"

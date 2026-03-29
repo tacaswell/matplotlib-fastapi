@@ -1073,3 +1073,120 @@ class TestInteractiveCallbacks:
 
             # Both should complete without error
             # (Scroll events don't usually modify the figure directly)
+
+
+class TestUpdateOnInit:
+    """Tests for _update.* query parameters applied on init."""
+
+    def test_update_params_in_url_applied_on_init(
+        self, client: TestClient
+    ) -> None:
+        """Test that _update.* query params are applied after init."""
+        adapter = create_fastapi_test_client_adapter(client)
+        ws_client = MatplotlibWebSocketClient(
+            adapter=adapter,
+            base_url="/plots",
+            plot_name="updatable",
+            init_params={"value": 1.0},
+            update_params={"phase": 1.57},
+        )
+
+        with ws_client.connect():
+            assert ws_client._initialized is True
+            # The config message should echo init and update params
+            assert ws_client.server_init_params == {
+                "value": 1.0,
+            }
+            assert ws_client.server_update_params == {
+                "phase": 1.57,
+            }
+
+    def test_config_message_echoes_init_params(
+        self, client: TestClient
+    ) -> None:
+        """Test that the config message includes init_params."""
+        adapter = create_fastapi_test_client_adapter(client)
+        ws_client = MatplotlibWebSocketClient(
+            adapter=adapter,
+            base_url="/plots",
+            plot_name="simple",
+            init_params={"value": 3.5},
+        )
+
+        with ws_client.connect():
+            assert ws_client.server_init_params["value"] == 3.5
+            # No update params for a non-updatable plot
+            assert ws_client.server_update_params is None
+
+    def test_config_message_null_update_params_when_none(
+        self, client: TestClient
+    ) -> None:
+        """Test that update_params is null when no _update.* given."""
+        adapter = create_fastapi_test_client_adapter(client)
+        ws_client = MatplotlibWebSocketClient(
+            adapter=adapter,
+            base_url="/plots",
+            plot_name="updatable",
+            init_params={"value": 1.0},
+        )
+
+        with ws_client.connect():
+            assert ws_client.server_update_params is None
+
+    def test_update_on_init_renders_correctly(
+        self, client: TestClient
+    ) -> None:
+        """Test that the figure reflects update params applied on init."""
+        adapter = create_fastapi_test_client_adapter(client)
+        ws_client = MatplotlibWebSocketClient(
+            adapter=adapter,
+            base_url="/plots",
+            plot_name="updatable",
+            init_params={"value": 1.0},
+            update_params={"phase": 1.57},
+        )
+
+        with ws_client.connect():
+            image_data = ws_client.send_render()
+            assert isinstance(image_data, bytes)
+            assert len(image_data) > 0
+
+    def test_invalid_update_params_closes_connection(
+        self, client: TestClient
+    ) -> None:
+        """Test that invalid _update.* params close the connection."""
+        adapter = ContextManagerWebSocketAdapter(client)
+
+        # phase must be float; 'bad' will fail Pydantic validation
+        adapter.connect(
+            "/plots/ws/v0/updatable?value=1.0&_update.phase=bad"
+        )
+        adapter.send_json({"type": "init", "protocol_version": 0})
+
+        msg = adapter.receive_json()
+        assert msg["type"] == "error"
+        assert "update parameters" in msg["message"].lower()
+
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            adapter.receive_json()
+        assert exc_info.value.code == 1008
+
+    def test_update_params_ignored_for_non_updatable_plot(
+        self, client: TestClient
+    ) -> None:
+        """Test that _update.* params are ignored for plots without update."""
+        adapter = create_fastapi_test_client_adapter(client)
+        # 'simple' has no update config — _update.* should be ignored
+        ws_client = MatplotlibWebSocketClient(
+            adapter=adapter,
+            base_url="/plots",
+            plot_name="simple",
+            init_params={"value": 1.0},
+            update_params={"phase": 1.57},
+        )
+
+        with ws_client.connect():
+            assert ws_client._initialized is True
+            # update_params in config should be None since plot has
+            # no update config
+            assert ws_client.server_update_params is None

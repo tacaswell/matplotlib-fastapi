@@ -20,6 +20,11 @@ Prerequisites
        python demos/qt_remote_demo.py --url ws://localhost:8000/plots \\
            --plot sine --frequency 3.0 --amplitude 2.0
 
+   Or with update parameters (applied after init)::
+
+       python demos/qt_remote_demo.py --plot interactive_sine \\
+           --frequency 2.0 --amplitude 1.5 --update phase=1.57
+
 What you should see
 -------------------
 - One or more Qt windows appear, each showing a server-rendered plot.
@@ -63,6 +68,13 @@ def main() -> None:
         metavar="KEY=VALUE",
         help="Init parameters as key=value pairs (e.g. frequency=3.0)",
     )
+    parser.add_argument(
+        "--update",
+        nargs="*",
+        metavar="KEY=VALUE",
+        default=[],
+        help="Update parameters as key=value pairs (e.g. phase=1.57)",
+    )
     args = parser.parse_args()
 
     # Parse key=value pairs into a dict
@@ -73,9 +85,18 @@ def main() -> None:
         key, value = kv.split("=", 1)
         init_params[key] = value
 
+    update_params: dict[str, str] = {}
+    for kv in args.update:
+        if "=" not in kv:
+            parser.error(f"Update parameters must be KEY=VALUE, got: {kv!r}")
+        key, value = kv.split("=", 1)
+        update_params[key] = value
+
     if args.plot:
         # Open a single named plot
-        specs = [(args.url, args.plot, init_params or None)]
+        specs = [
+            (args.url, args.plot, init_params or None, update_params or None)
+        ]
     else:
         # Open several demo plots to show multi-figure support
         specs = [

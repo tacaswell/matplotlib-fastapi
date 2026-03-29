@@ -113,6 +113,10 @@ export class Figure {
   private _initialized: boolean = false;
   private _initial_size: [number, number] | null = null;
 
+  // Echoed params from config message (for reconstructing state URLs)
+  server_init_params: Record<string, unknown> = {};
+  server_update_params: Record<string, unknown> | null = null;
+
   // Reconnection state
   private _reconnecting: boolean = false;
   private _reconnect_overlay: HTMLDivElement | null = null;
@@ -530,6 +534,9 @@ export class Figure {
     });
 
     this.send_message('update_params', { params });
+
+    // Track current update params locally
+    this.server_update_params = params;
   }
 
   handle_save(fig: Figure, _msg: unknown): void {
@@ -678,6 +685,10 @@ export class Figure {
 
     // Store connection ID
     fig.connection_id = msg.connection_id;
+
+    // Store echoed params (for reconstructing state URLs)
+    fig.server_init_params = msg.init_params ?? {};
+    fig.server_update_params = msg.update_params ?? null;
 
     // Store toolbar config (will init toolbar after)
     fig.toolbar_items = msg.toolbar.items;

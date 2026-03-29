@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from mpl_fastapi import (
     InitConfig,
     PlotConfig,
+    UpdateConfig,
     create_mpl_router,
     install_mpl_router,
 )
@@ -42,12 +43,22 @@ class SimpleParams(BaseModel):
     value: float = Field(default=1.0, ge=0.1, le=10.0)
 
 
+class UpdateParams(BaseModel):
+    phase: float = Field(default=0.0, ge=0.0, le=6.28)
+
+
 def _create_simple_plot(fig: Figure, params: SimpleParams) -> dict[str, object]:
     ax = fig.add_subplot(111)
     x = np.linspace(0, 4 * np.pi, 100)
     y = params.value * np.sin(x)
     ax.plot(x, y)
-    return {"ax": ax, "x": x}
+    return {"ax": ax, "x": x, "value": params.value}
+
+
+def _update_simple_plot(
+    state: dict[str, object], params: UpdateParams
+) -> dict[str, object]:
+    return state
 
 
 def _make_test_app() -> FastAPI:
@@ -59,6 +70,17 @@ def _make_test_app() -> FastAPI:
                 init=InitConfig(
                     function=_create_simple_plot,
                     params_model=SimpleParams,
+                ),
+            ),
+            "updatable": PlotConfig(
+                description="updatable test",
+                init=InitConfig(
+                    function=_create_simple_plot,
+                    params_model=SimpleParams,
+                ),
+                update=UpdateConfig(
+                    function=_update_simple_plot,
+                    params_model=UpdateParams,
                 ),
             ),
         }
@@ -137,6 +159,26 @@ class TestBuildWsUrl:
         url = build_ws_url("http://host/prefix///", "p")
         assert "/prefix/ws/v0/p" in url
 
+    def test_with_update_params(self) -> None:
+        url = build_ws_url(
+            "ws://host:9000/plots",
+            "interactive_sine",
+            {"frequency": 2.0},
+            update_params={"phase": 1.57},
+        )
+        assert url.startswith("ws://host:9000/plots/ws/v0/interactive_sine?")
+        assert "frequency=2.0" in url
+        assert "_update.phase=1.57" in url
+
+    def test_update_params_only(self) -> None:
+        url = build_ws_url(
+            "ws://host/plots",
+            "wave",
+            update_params={"phase": 0.5},
+        )
+        assert url.startswith("ws://host/plots/ws/v0/wave?")
+        assert "_update.phase=0.5" in url
+
 
 class TestTransportHandshake:
     """Tests for the connect / handshake flow."""
@@ -176,6 +218,45 @@ class TestTransportHandshake:
         )
         with pytest.raises(Exception, match=r"rejected|403|close|1008"):
             await transport.connect()
+
+    @pytest.mark.asyncio
+    async def test_config_echoes_init_params(self, server_url: str) -> None:
+        """Config message should echo back the init params."""
+        binaries, jsons, disconnects = _collected_messages()
+        url = build_ws_url(server_url, "simple", {"value": 3.5})
+        transport = RemoteTransport(
+            url,
+            on_binary=binaries.append,
+            on_json=jsons.append,
+            on_disconnect=lambda: disconnects.append(None),
+        )
+        config = await transport.connect()
+        try:
+            assert config.init_params == {"value": 3.5}
+            assert config.update_params is None
+        finally:
+            await transport.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_config_echoes_update_params(self, server_url: str) -> None:
+        """Config message should echo back _update.* params."""
+        binaries, jsons, disconnects = _collected_messages()
+        url = build_ws_url(
+            server_url, "updatable", {"value": 1.0},
+            update_params={"phase": 1.57},
+        )
+        transport = RemoteTransport(
+            url,
+            on_binary=binaries.append,
+            on_json=jsons.append,
+            on_disconnect=lambda: disconnects.append(None),
+        )
+        config = await transport.connect()
+        try:
+            assert config.init_params == {"value": 1.0}
+            assert config.update_params == {"phase": 1.57}
+        finally:
+            await transport.disconnect()
 
 
 class TestTransportMessaging:

@@ -19,6 +19,7 @@ import asyncio
 import functools
 import hashlib
 import io
+import json
 import logging
 import os
 import struct
@@ -45,6 +46,38 @@ from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
 
 # Protocol constants
 PROTOCOL_VERSION = 0
+
+# Reserved query-string prefix for update parameters.
+# Keys like ``_update.phase=1.57`` are split out and validated against
+# the UpdateConfig.params_model.  All other keys are treated as init params.
+_UPDATE_PREFIX = "_update."
+
+
+def _split_query_params(
+    raw: dict[str, str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Separate init params from ``_update.*`` params.
+
+    Parameters
+    ----------
+    raw : dict
+        Raw query-string key/value pairs from the request.
+
+    Returns
+    -------
+    init_raw : dict
+        Keys that do **not** start with ``_update.``.
+    update_raw : dict
+        Keys that start with ``_update.``, with the prefix stripped.
+    """
+    init_raw: dict[str, str] = {}
+    update_raw: dict[str, str] = {}
+    for key, value in raw.items():
+        if key.startswith(_UPDATE_PREFIX):
+            update_raw[key[len(_UPDATE_PREFIX):]] = value
+        else:
+            init_raw[key] = value
+    return init_raw, update_raw
 
 
 # JS caching control: set MPL_NO_CACHE_JS=1 (or any truthy value) to disable
@@ -866,6 +899,10 @@ def create_mpl_router(
                 base_path = "/" + "/".join(prefix_parts)
                 ws_uri += base_path
 
+        # Extract _update.* values from the page URL so the form can
+        # be pre-populated with them instead of schema defaults.
+        _, update_values = _split_query_params(dict(request.query_params))
+
         return templates.TemplateResponse(
             "figure.html",
             {
@@ -875,6 +912,7 @@ def create_mpl_router(
                 "fig_id": plot_name,
                 "static_path": static_mount_path,
                 "update_params_schema": update_params_schema,
+                "update_values": update_values,
             },
         )
 
@@ -959,9 +997,12 @@ def create_mpl_router(
 
         config = plot_generators[plot_name]
 
-        # Parse parameters from query string
+        # Split query string into init params and _update.* params
+        init_raw, update_raw = _split_query_params(dict(websocket.query_params))
+
+        # Parse and validate init parameters
         try:
-            params = config.init.params_model(**websocket.query_params)
+            params = config.init.params_model(**init_raw)
         except ValidationError as e:
             logger.warning("Invalid parameters for plot %s: %s", plot_name, e)
             await websocket.send_json(
@@ -969,6 +1010,27 @@ def create_mpl_router(
             )
             await websocket.close(code=1008, reason=f"Invalid params: {e}")
             return
+
+        # Parse and validate _update.* parameters (if any)
+        initial_update_params = None
+        if update_raw:
+            if config.update is None:
+                logger.warning(
+                    "Ignoring _update.* params for plot '%s' (no update configured)",
+                    plot_name,
+                )
+            else:
+                try:
+                    initial_update_params = config.update.params_model(**update_raw)
+                except ValidationError as e:
+                    logger.warning(
+                        "Invalid _update.* parameters for plot %s: %s", plot_name, e
+                    )
+                    await websocket.send_json(
+                        {"type": "error", "message": f"Invalid update parameters: {e}"}
+                    )
+                    await websocket.close(code=1008, reason=f"Invalid update params: {e}")
+                    return
 
         # Wait for client `init` message as FIRST message (REQUIRED)
         try:
@@ -1047,6 +1109,31 @@ def create_mpl_router(
             await websocket.close(code=1011, reason=f"Plot generation failed: {e}")
             return
 
+        # If _update.* params were provided, apply them now
+        if initial_update_params is not None and config.update is not None:
+            try:
+                logger.debug(
+                    "Applying initial update params for '%s': %s",
+                    plot_name, initial_update_params,
+                )
+                state = await loop.run_in_executor(
+                    executor,
+                    config.update.function,
+                    state,
+                    initial_update_params,
+                )
+            except Exception as e:
+                logger.exception(
+                    "Error applying initial update for '%s': %s", plot_name, e
+                )
+                await websocket.send_json(
+                    {"type": "error", "message": f"Initial update failed: {e}"}
+                )
+                await websocket.close(
+                    code=1011, reason=f"Initial update failed: {e}"
+                )
+                return
+
         # Attach FastAPICanvas after figure is populated
         canvas = FastAPICanvas(fig)
 
@@ -1093,6 +1180,12 @@ def create_mpl_router(
                 "format": "png",  # Currently only PNG supported
             },
             "update_schema": None,
+            "init_params": params.model_dump(mode="json"),
+            "update_params": (
+                initial_update_params.model_dump(mode="json")
+                if initial_update_params is not None
+                else None
+            ),
         }
 
         # Include update schema if available
@@ -1101,6 +1194,9 @@ def create_mpl_router(
 
         await websocket.send_json(config_msg)
         logger.debug("Sent consolidated config message")
+
+        # Track current update params for this connection
+        current_update_params = initial_update_params
 
         # Event loop
         try:
@@ -1239,6 +1335,9 @@ def create_mpl_router(
                                 state,
                                 update_params,
                             )
+
+                            # Track current update params
+                            current_update_params = update_params
 
                             # Trigger redraw
                             canvas.draw_idle()

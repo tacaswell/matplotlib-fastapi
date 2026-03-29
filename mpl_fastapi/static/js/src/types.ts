@@ -220,6 +220,10 @@ export interface ConfigMessage extends BaseMessage {
   };
   /** JSON schema for update parameters (null if not supported) */
   update_schema: Record<string, unknown> | null;
+  /** Init parameters used to create this figure (serialized from Pydantic model) */
+  init_params: Record<string, unknown>;
+  /** Update parameters applied on init via _update.* query params (null if none) */
+  update_params: Record<string, unknown> | null;
 }
 
 /**

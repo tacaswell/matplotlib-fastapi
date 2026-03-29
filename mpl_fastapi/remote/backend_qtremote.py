@@ -976,6 +976,9 @@ class FigureManagerQTRemote(FigureManagerQT):
                 canvas,
                 self.window,
             )
+            # Pre-populate form with update params from the URL (if any)
+            if canvas._server_config.update_params:
+                self.update_widget.set_values(canvas._server_config.update_params)
             self.window.addDockWidget(
                 QtCore.Qt.DockWidgetArea.BottomDockWidgetArea,
                 self.update_widget,
@@ -1061,6 +1064,7 @@ def open_remote_figure(
     plot_name: str,
     init_params: dict[str, Any] | None = None,
     *,
+    update_params: dict[str, Any] | None = None,
     device_pixel_ratio: float | None = None,
 ) -> FigureManagerQTRemote:
     """Connect to a remote plot and return a ready-to-show Qt figure manager.
@@ -1079,6 +1083,9 @@ def open_remote_figure(
         Name of the plot to connect to.
     init_params : dict, optional
         Query-string parameters for plot initialisation.
+    update_params : dict, optional
+        Update parameters applied after initialisation.  Encoded as
+        ``_update.<key>=<value>`` in the WebSocket query string.
     device_pixel_ratio : float, optional
         Device pixel ratio for the init handshake.  If *None* (the
         default), the ratio is auto-detected from the primary screen.
@@ -1098,7 +1105,7 @@ def open_remote_figure(
         screen = QtWidgets.QApplication.primaryScreen()
         device_pixel_ratio = screen.devicePixelRatio() if screen is not None else 1.0
 
-    ws_url = build_ws_url(url, plot_name, init_params)
+    ws_url = build_ws_url(url, plot_name, init_params, update_params=update_params)
 
     # We'll collect the server config from the connected signal
     result: dict[str, Any] = {}
@@ -1178,10 +1185,13 @@ def open_remote_figures(
     Parameters
     ----------
     specs : list of tuples
-        Each element is either ``(url, plot_name)`` or
-        ``(url, plot_name, init_params)``.  *url* is the server base
-        WebSocket URL, *plot_name* is the name of the plot, and
-        *init_params* is an optional dict of initialisation parameters.
+        Each element is ``(url, plot_name)``,
+        ``(url, plot_name, init_params)``, or
+        ``(url, plot_name, init_params, update_params)``.
+        *url* is the server base WebSocket URL, *plot_name* is the name
+        of the plot, *init_params* is an optional dict of initialisation
+        parameters, and *update_params* is an optional dict of update
+        parameters (applied after init via ``_update.*`` query params).
     device_pixel_ratio : float, optional
         Passed to :func:`open_remote_figure`.  If *None*, auto-detected.
 
@@ -1210,14 +1220,19 @@ def open_remote_figures(
         if len(spec) == 2:
             url, plot_name = spec  # type: ignore[misc]
             init_params: dict[str, Any] | None = None
-        else:
+            update_params: dict[str, Any] | None = None
+        elif len(spec) == 3:
             url, plot_name, init_params = spec  # type: ignore[misc]
+            update_params = None
+        else:
+            url, plot_name, init_params, update_params = spec  # type: ignore[misc]
 
         try:
             mgr = open_remote_figure(
                 url=url,
                 plot_name=plot_name,
                 init_params=init_params,
+                update_params=update_params,
                 device_pixel_ratio=device_pixel_ratio,
             )
             managers.append(mgr)
@@ -1227,7 +1242,11 @@ def open_remote_figures(
 
 
 def run_qt_app(
-    specs: Sequence[tuple[str, str] | tuple[str, str, dict[str, Any] | None]],
+    specs: Sequence[
+        tuple[str, str]
+        | tuple[str, str, dict[str, Any] | None]
+        | tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]
+    ],
     *,
     device_pixel_ratio: float | None = None,
 ) -> None:
@@ -1243,10 +1262,13 @@ def run_qt_app(
     Parameters
     ----------
     specs : list of tuples
-        Each element is either ``(url, plot_name)`` or
-        ``(url, plot_name, init_params)``.  *url* is the server base
-        WebSocket URL, *plot_name* is the name of the plot, and
-        *init_params* is an optional dict of initialisation parameters.
+        Each element is ``(url, plot_name)``,
+        ``(url, plot_name, init_params)``, or
+        ``(url, plot_name, init_params, update_params)``.
+        *url* is the server base WebSocket URL, *plot_name* is the name
+        of the plot, *init_params* is an optional dict of initialisation
+        parameters, and *update_params* is an optional dict of update
+        parameters.
     device_pixel_ratio : float, optional
         Passed to :func:`open_remote_figure`.  If *None*, auto-detected
         from the primary screen.

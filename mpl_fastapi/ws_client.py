@@ -338,12 +338,14 @@ class MatplotlibWebSocketClient:
         init_params: dict[str, Any] | None = None,
         device_pixel_ratio: float = 1.0,
         supports_binary: bool = True,
+        update_params: dict[str, Any] | None = None,
     ) -> None:
         """Initialize WebSocket client."""
         self.adapter = adapter
         self.base_url = base_url.rstrip("/")
         self.plot_name = plot_name
         self.init_params = init_params or {}
+        self.update_params_for_url = update_params or {}
         self.device_pixel_ratio = device_pixel_ratio
         self.supports_binary = supports_binary
 
@@ -370,8 +372,11 @@ class MatplotlibWebSocketClient:
     def _build_ws_url(self) -> str:
         """Build WebSocket URL with query parameters (v0 endpoint)."""
         url = f"{self.base_url}/ws/v0/{self.plot_name}"
-        if self.init_params:
-            query = urlencode(self.init_params)
+        combined: dict[str, Any] = dict(self.init_params)
+        for k, v in self.update_params_for_url.items():
+            combined[f"_update.{k}"] = v
+        if combined:
+            query = urlencode(combined)
             url = f"{url}?{query}"
         return url
 
@@ -470,6 +475,12 @@ class MatplotlibWebSocketClient:
 
         # Update schema
         self.update_schema = config_msg.get("update_schema")
+
+        # Echoed params (for reconstructing state URLs)
+        self.server_init_params: dict[str, Any] = config_msg.get("init_params", {})
+        self.server_update_params: dict[str, Any] | None = config_msg.get(
+            "update_params"
+        )
 
         logger.debug(
             "Config received: connection_id=%s, figure_size=%s, toolbar_items=%d",

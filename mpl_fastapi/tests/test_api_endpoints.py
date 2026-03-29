@@ -228,3 +228,41 @@ class TestHealthCheckAPI:
         # No WebSocket connections in this test
         assert data["connections"] == 0
         assert data["connections_by_plot"] == {}
+
+
+class TestSplitQueryParams:
+    """Tests for the _split_query_params utility."""
+
+    def test_no_update_params(self) -> None:
+        from mpl_fastapi.router import _split_query_params
+
+        init, update = _split_query_params(
+            {"frequency": "2.0", "amplitude": "1.5"}
+        )
+        assert init == {"frequency": "2.0", "amplitude": "1.5"}
+        assert update == {}
+
+    def test_only_update_params(self) -> None:
+        from mpl_fastapi.router import _split_query_params
+
+        init, update = _split_query_params(
+            {"_update.phase": "1.57"}
+        )
+        assert init == {}
+        assert update == {"phase": "1.57"}
+
+    def test_mixed_params(self) -> None:
+        from mpl_fastapi.router import _split_query_params
+
+        init, update = _split_query_params(
+            {"frequency": "2.0", "_update.phase": "1.57", "amplitude": "1.0"}
+        )
+        assert init == {"frequency": "2.0", "amplitude": "1.0"}
+        assert update == {"phase": "1.57"}
+
+    def test_empty(self) -> None:
+        from mpl_fastapi.router import _split_query_params
+
+        init, update = _split_query_params({})
+        assert init == {}
+        assert update == {}

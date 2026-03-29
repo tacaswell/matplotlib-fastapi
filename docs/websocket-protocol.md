@@ -27,6 +27,24 @@ The WebSocket endpoint includes the protocol version in the URL path:
 2. **Consolidated config**: Server responds with single `config` message
 3. **Self-describing binary**: Images include 8-byte header with metadata
 4. **Sequence tracking**: Image sequence numbers enable diff validation
+5. **Stateful URIs**: Full figure state (init + update params) is encodable in the URL
+
+### Query String Parameters
+
+The WebSocket URL accepts two categories of query parameters:
+
+- **Init parameters** (flat): `?frequency=2.0&amplitude=1.5` — validated against `InitConfig.params_model`
+- **Update parameters** (prefixed): `?_update.phase=1.57` — validated against `UpdateConfig.params_model`
+
+The `_update.` prefix is a reserved namespace. When present, the server:
+1. Calls the init function with the flat params
+2. Calls the update function with the `_update.*` params (prefix stripped)
+3. Returns the fully-applied figure state
+
+This enables **shareable URIs** that capture the full figure state:
+```
+/ws/v0/interactive_sine?frequency=2.0&amplitude=1.0&_update.phase=1.57
+```
 
 ---
 
@@ -42,16 +60,19 @@ sequenceDiagram
     participant Executor as ThreadPoolExecutor
 
     Note over Client,Router: Connection Establishment
-    Client->>Router: WebSocket connect to /ws/v0/{plot_name}?{params}
+    Client->>Router: WebSocket connect to /ws/v0/{plot_name}?{init_params}&_update.{key}={value}
     Router->>Router: Validate plot exists
     Router->>Router: Accept WebSocket connection
     
     Note over Client,Router: Client sends init (REQUIRED first message)
     Client->>Router: {"type": "init", "protocol_version": 0, "device_pixel_ratio": 2.0, "supports_binary": true}
     Router->>Router: Validate protocol version
-    Router->>Router: Validate query parameters
-    Router->>Executor: Run plot init function(fig, params)
+    Router->>Router: Split query params (init vs _update.*)
+    Router->>Executor: Run plot init function(fig, init_params)
     Executor-->>Router: Return state dict
+    Router->>Router: If _update.* params present and update configured:
+    Router->>Executor: Run update function(state, update_params)
+    Executor-->>Router: Return updated state
     Router->>Router: Create FastAPICanvas(fig)
     Router->>Router: Create FastAPIManger(canvas)
     Router->>Router: Apply device_pixel_ratio
@@ -116,9 +137,16 @@ sequenceDiagram
   "image": {
     "format": "png"
   },
-  "update_schema": null
+  "update_schema": null,
+  "init_params": {"frequency": 2.0, "amplitude": 1.0, "phase": 0.0, "points": 200},
+  "update_params": null
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `init_params` | object | Serialized init parameters (always present) |
+| `update_params` | object\|null | Serialized update parameters applied on init, or null |
 
 ### Error Handling
 
