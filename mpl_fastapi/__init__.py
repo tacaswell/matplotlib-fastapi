@@ -3,6 +3,7 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+from .auth import AuthPolicy, NoAuth, SingleUserToken
 from .router import (
     InitConfig,
     Lifespan,
@@ -20,13 +21,16 @@ from .router import (
 )
 
 __all__ = [
+    "AuthPolicy",
     "InitConfig",
     "Lifespan",
     "MPLRouter",
+    "NoAuth",
     "PlotConfig",
     "PlotGenerator",
     "PlotInfo",
     "PlotsListResponse",
+    "SingleUserToken",
     "UpdateConfig",
     "UpdateFunction",
     "__version__",

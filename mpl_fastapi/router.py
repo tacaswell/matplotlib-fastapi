@@ -42,6 +42,7 @@ from matplotlib.figure import Figure
 from pydantic import BaseModel, ValidationError
 from starlette.websockets import WebSocketDisconnect
 
+from mpl_fastapi.auth import AuthPolicy, NoAuth
 from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
 
 # Protocol constants
@@ -723,6 +724,7 @@ def create_mpl_router(
     *,
     template_dir: Path | str | None = None,
     static_mount_path: str = "/mpl-static",
+    auth: AuthPolicy | None = None,
 ) -> MPLRouter:
     """
     Create a mountable router for matplotlib figures.
@@ -739,6 +741,12 @@ def create_mpl_router(
         Custom template directory (defaults to package templates)
     static_mount_path : str, optional
         URL path for static assets (default: "/mpl-static")
+    auth : AuthPolicy or None, optional
+        Authentication policy for the router.  Pass ``None`` or omit
+        for open access (:class:`~mpl_fastapi.auth.NoAuth`).  Use
+        :class:`~mpl_fastapi.auth.SingleUserToken` for bearer-token
+        protection, or supply any object satisfying the
+        :class:`~mpl_fastapi.auth.AuthPolicy` protocol.
 
     Returns
     -------
@@ -787,6 +795,12 @@ def create_mpl_router(
     """
     router = APIRouter()
 
+    # Resolve auth policy
+    if auth is None:
+        auth = NoAuth()
+    _http_auth = auth.http_dependency()
+    _ws_auth = auth.ws_dependency()
+
     # Create state instance for this router
     router_state = RouterState()
 
@@ -812,7 +826,7 @@ def create_mpl_router(
             )
 
     # Route: HTML plots list (root)
-    @router.get("/", response_class=HTMLResponse)
+    @router.get("/", response_class=HTMLResponse, dependencies=[Depends(_http_auth)])
     async def plots_list_html(request: Request) -> HTMLResponse:
         """Render an HTML page listing all available plots."""
         plots_info = {}
@@ -835,7 +849,7 @@ def create_mpl_router(
         )
 
     # Route: List all available plots (JSON API)
-    @router.get("/plots", response_model=PlotsListResponse)
+    @router.get("/plots", response_model=PlotsListResponse, dependencies=[Depends(_http_auth)])
     async def list_plots() -> PlotsListResponse:
         """List all available plots with their parameter schemas."""
         plots_info = {}
@@ -868,7 +882,7 @@ def create_mpl_router(
         return router_state.get_health_stats()
 
     # Route: View a specific plot
-    @router.get("/plot/{plot_name}", response_class=HTMLResponse)
+    @router.get("/plot/{plot_name}", response_class=HTMLResponse, dependencies=[Depends(_http_auth)])
     async def view_plot(
         request: Request,
         plot_name: str,
@@ -917,7 +931,7 @@ def create_mpl_router(
         )
 
     # Route: Download saved file
-    @router.get("/download/{file_id}")
+    @router.get("/download/{file_id}", dependencies=[Depends(_http_auth)])
     async def download_saved_file(file_id: str) -> StreamingResponse:
         """
         Download a previously saved figure file.
@@ -965,7 +979,7 @@ def create_mpl_router(
         )
 
     # Route: WebSocket connection for interactive plotting (v0 protocol)
-    @router.websocket("/ws/v0/{plot_name}")
+    @router.websocket("/ws/v0/{plot_name}", dependencies=[Depends(_ws_auth)])
     async def websocket_endpoint_v0(websocket: WebSocket, plot_name: str) -> None:
         """Handle WebSocket connection for a plot using v0 protocol.
 
@@ -1499,7 +1513,7 @@ def create_mpl_router(
         raise HTTPException(status_code=404, detail="ESM source map not found")
 
     # Route: Get schema for a specific plot
-    @router.get("/api/plots/{plot_name}/schema")
+    @router.get("/api/plots/{plot_name}/schema", dependencies=[Depends(_http_auth)])
     async def get_plot_schema(
         plot_name: str,
         _: None = Depends(validate_plot_name),
