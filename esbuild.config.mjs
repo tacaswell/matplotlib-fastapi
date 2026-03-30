@@ -67,8 +67,16 @@ const browserBuildOptions = {
 
 if (isWatch) {
   console.log('🔨 Building TypeScript in watch mode...');
-  const context = await esbuild.context(iifeBuildOptions);
-  await context.watch();
+  // Watch all outputs so both FastAPI static and npm package stay fresh.
+  // The React example imports from the npm ESM bundle (dist/mpl-fastapi.js),
+  // so it must be rebuilt alongside the IIFE bundle.
+  const contexts = await Promise.all([
+    esbuild.context(iifeBuildOptions),
+    esbuild.context(fastapiEsmBuildOptions),
+    esbuild.context({ ...esmBuildOptions, minify: false }),
+    esbuild.context({ ...cjsBuildOptions, minify: false }),
+  ]);
+  await Promise.all(contexts.map(ctx => ctx.watch()));
   console.log('👀 Watching for changes...');
   console.log('Press Ctrl+C to stop');
 } else if (isNpm) {
