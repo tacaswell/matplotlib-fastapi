@@ -17,6 +17,7 @@ Then visit:
 """
 
 import logging
+import secrets
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from matplotlib.figure import Figure
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from mpl_fastapi import (
     InitConfig,
@@ -33,6 +35,7 @@ from mpl_fastapi import (
     create_mpl_router,
     install_mpl_router,
 )
+from mpl_fastapi.auth import COOKIE_NAME
 
 # Configure logging — keep root at INFO to avoid verbose matplotlib internals
 logging.basicConfig(
@@ -265,6 +268,28 @@ app = FastAPI(
     description="Interactive matplotlib plots served via FastAPI and WebSockets",
     version="1.0.0",
 )
+
+
+# Middleware: set an auth cookie when ?token= is present on ANY request.
+# The mpl router's auth dependency handles this for protected routes,
+# but unprotected pages (/, /embeddable, /react-app/) also need the
+# cookie set so that subsequent navigations to protected routes work.
+class _TokenCookieMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        token = request.query_params.get("token")
+        if token and secrets.compare_digest(token, auth.token):
+            response.set_cookie(
+                key=COOKIE_NAME,
+                value=token,
+                httponly=True,
+                samesite="lax",
+                path="/",
+            )
+        return response
+
+
+app.add_middleware(_TokenCookieMiddleware)
 
 # Install the matplotlib router at /plots in a single call.
 # This includes the router, mounts static files, and chains the

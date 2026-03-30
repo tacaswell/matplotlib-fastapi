@@ -30,9 +30,8 @@ import secrets
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
-from fastapi import Depends, HTTPException, Request, WebSocket, status
+from fastapi import Depends, HTTPException, Request, Response, WebSocket, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from starlette.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +92,9 @@ class NoAuth:
 
 # Environment variable to set the shared secret.
 _TOKEN_ENV_VAR = "MPL_FASTAPI_TOKEN"
+
+# Cookie name used by SingleUserToken to persist the auth token in the browser.
+COOKIE_NAME = "mpl_fastapi_token"
 
 
 class SingleUserToken:
@@ -161,20 +163,36 @@ class SingleUserToken:
 
         async def _verify(
             request: Request,
+            response: Response,
             credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
         ) -> None:
             # Prefer the bearer token from the Authorization header
-            # (parsed by HTTPBearer), fall back to ?token= query param.
+            # (parsed by HTTPBearer), fall back to ?token= query param,
+            # then to the browser cookie.
             token: str | None = None
+            from_query = False
             if credentials is not None:
                 token = credentials.credentials
             else:
                 token = request.query_params.get("token")
+                if token:
+                    from_query = True
+                else:
+                    token = request.cookies.get(COOKIE_NAME)
             if not token or not secrets.compare_digest(token, expected):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid or missing authentication token",
                     headers={"WWW-Authenticate": "Bearer"},
+                )
+            # Persist as cookie so subsequent navigations just work.
+            if from_query:
+                response.set_cookie(
+                    key=COOKIE_NAME,
+                    value=token,
+                    httponly=True,
+                    samesite="lax",
+                    path="/",
                 )
 
         return _verify
@@ -187,6 +205,8 @@ class SingleUserToken:
                 authorization=websocket.headers.get("authorization"),
                 query_token=websocket.query_params.get("token"),
             )
+            if token is None:
+                token = websocket.cookies.get(COOKIE_NAME)
             if not token or not secrets.compare_digest(token, expected):
                 # Raise HTTPException — Starlette's dependency resolver
                 # converts this into an HTTP 403 denial before the

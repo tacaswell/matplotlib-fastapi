@@ -4,12 +4,6 @@ import { MatplotlibPlot } from './MatplotlibPlot';
 export default function App() {
   const [phase, setPhase] = useState(0.0);
 
-  // Read auth token from the page URL once.
-  const token = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('token') ?? undefined;
-  }, []);
-
   // Memoize updateParams to avoid unnecessary re-renders
   const updateParams = useMemo(() => ({ phase }), [phase]);
 
@@ -56,7 +50,6 @@ export default function App() {
         <MatplotlibPlot
           plotName="interactive_sine"
           baseUrl="/plots"
-          token={token}
           initParams={{ frequency: 2.0, amplitude: 1.5 }}
           updateParams={updateParams}
           showToolbar={true}
