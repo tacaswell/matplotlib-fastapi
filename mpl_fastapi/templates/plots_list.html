@@ -130,6 +130,13 @@
             const form = document.getElementById(formId);
             const params = new URLSearchParams();
 
+            // Forward the auth token from the current page URL (if present)
+            const currentParams = new URLSearchParams(window.location.search);
+            const token = currentParams.get('token');
+            if (token) {
+                params.append('token', token);
+            }
+
             // Collect all input values
             const inputs = form.querySelectorAll('input');
             inputs.forEach(input => {

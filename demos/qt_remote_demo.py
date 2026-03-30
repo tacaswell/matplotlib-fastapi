@@ -38,6 +38,7 @@ What you should see
 from __future__ import annotations
 
 import argparse
+import os
 
 from mpl_fastapi.remote.backend_qtremote import (
     run_qt_app,
@@ -75,7 +76,20 @@ def main() -> None:
         default=[],
         help="Update parameters as key=value pairs (e.g. phase=1.57)",
     )
+    parser.add_argument(
+        "--token",
+        default=None,
+        help=(
+            "Authentication token. Defaults to the MPL_FASTAPI_TOKEN "
+            "environment variable if set."
+        ),
+    )
     args = parser.parse_args()
+
+    # Resolve auth token: CLI arg > environment variable
+    token: str | None = args.token
+    if token is None:
+        token = os.environ.get("MPL_FASTAPI_TOKEN", "").strip() or None
 
     # Parse key=value pairs into a dict
     init_params: dict[str, str] = {}
@@ -107,7 +121,7 @@ def main() -> None:
         ]
 
     print(f"Opening {len(specs)} plot(s) on {args.url} ...")
-    run_qt_app(specs)
+    run_qt_app(specs, token=token)
 
 
 if __name__ == "__main__":

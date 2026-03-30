@@ -131,6 +131,9 @@ export interface EmbeddableConfig {
   /** Path to static assets (default: '/mpl-static') */
   staticPath?: string;
 
+  /** Authentication token for protected routers */
+  token?: string;
+
   /** Whether to automatically connect on instantiation (default: true) */
   autoConnect?: boolean;
 

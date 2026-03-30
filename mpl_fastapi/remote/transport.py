@@ -107,6 +107,7 @@ def build_ws_url(
     init_params: dict[str, Any] | None = None,
     *,
     update_params: dict[str, Any] | None = None,
+    token: str | None = None,
 ) -> str:
     """Build a WebSocket URL for the v0 endpoint.
 
@@ -121,6 +122,9 @@ def build_ws_url(
     update_params : dict, optional
         Update parameters.  Encoded as ``_update.<key>=<value>`` in the
         query string so the server applies them after initialisation.
+    token : str, optional
+        Authentication token.  When provided, appended as
+        ``token=<value>`` in the query string.
 
     Returns
     -------
@@ -135,6 +139,8 @@ def build_ws_url(
     if update_params:
         for k, v in update_params.items():
             combined[f"{_UPDATE_PREFIX}{k}"] = v
+    if token is not None:
+        combined["token"] = token
     if combined:
         url = f"{url}?{urlencode(combined)}"
     return url

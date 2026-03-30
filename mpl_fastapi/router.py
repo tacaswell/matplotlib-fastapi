@@ -53,6 +53,10 @@ PROTOCOL_VERSION = 0
 # the UpdateConfig.params_model.  All other keys are treated as init params.
 _UPDATE_PREFIX = "_update."
 
+# Query-string keys that are consumed by the framework (auth, etc.)
+# and must not be forwarded to plot init/update parameter models.
+_RESERVED_QUERY_KEYS = frozenset({"token"})
+
 
 def _split_query_params(
     raw: dict[str, str],
@@ -67,7 +71,7 @@ def _split_query_params(
     Returns
     -------
     init_raw : dict
-        Keys that do **not** start with ``_update.``.
+        Keys that do **not** start with ``_update.`` and are not reserved.
     update_raw : dict
         Keys that start with ``_update.``, with the prefix stripped.
     """
@@ -76,7 +80,7 @@ def _split_query_params(
     for key, value in raw.items():
         if key.startswith(_UPDATE_PREFIX):
             update_raw[key[len(_UPDATE_PREFIX):]] = value
-        else:
+        elif key not in _RESERVED_QUERY_KEYS:
             init_raw[key] = value
     return init_raw, update_raw
 

@@ -34,13 +34,21 @@ import { WebSocketManager } from './websocket-manager.js';
 import { Figure } from './figure.js';
 
 /**
+ * Internal resolved config type.
+ *
+ * All fields are required except `token` which stays optional since
+ * not every deployment uses authentication.
+ */
+type ResolvedConfig = Required<Omit<EmbeddableConfig, 'token'>> & { token: string | undefined };
+
+/**
  * Main embeddable matplotlib component class
  *
  * This provides a unified API for embedding interactive matplotlib figures
  * into any web application, supporting both template-based and programmatic usage.
  */
 export class MatplotlibEmbeddable {
-  private readonly config: Required<EmbeddableConfig>;
+  private readonly config: ResolvedConfig;
   private ws_manager: WebSocketManager | null = null;
   private figure: Figure | null = null;
   private connected: boolean = false;
@@ -67,6 +75,7 @@ export class MatplotlibEmbeddable {
       baseUrl: config.baseUrl ?? '',
       initParams: config.initParams ?? {},
       updateParams: config.updateParams ?? {},
+      token: config.token,
       onConnect: config.onConnect ?? (() => {}),
       onError: config.onError ?? ((err: Error) => console.error('MPL Error:', err)),
       onUpdate: config.onUpdate ?? (() => {}),
@@ -133,6 +142,11 @@ export class MatplotlibEmbeddable {
     // Add update parameters with _update. prefix
     for (const [k, v] of Object.entries(this.config.updateParams)) {
       params.set(`_update.${k}`, String(v));
+    }
+
+    // Add auth token if configured
+    if (this.config.token) {
+      params.set('token', this.config.token);
     }
 
     const queryString = params.toString();
@@ -235,8 +249,13 @@ export class MatplotlibEmbeddable {
    */
   private async _fetchUpdateSchema(): Promise<void> {
     try {
+      const headers: Record<string, string> = {};
+      if (this.config.token) {
+        headers['Authorization'] = `Bearer ${this.config.token}`;
+      }
       const response = await fetch(
-        `${this.config.baseUrl}/api/plots/${this.config.plotName}/schema`
+        `${this.config.baseUrl}/api/plots/${this.config.plotName}/schema`,
+        { headers }
       );
       if (!response.ok) {
         console.warn('Could not fetch update schema');

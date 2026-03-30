@@ -30,7 +30,8 @@ import secrets
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
-from fastapi import HTTPException, Request, WebSocket, status
+from fastapi import Depends, HTTPException, Request, WebSocket, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
@@ -156,12 +157,19 @@ class SingleUserToken:
 
     def http_dependency(self) -> Callable[..., Any]:
         expected = self._token
+        _bearer = HTTPBearer(auto_error=False)
 
-        async def _verify(request: Request) -> None:
-            token = self._extract_token(
-                authorization=request.headers.get("authorization"),
-                query_token=request.query_params.get("token"),
-            )
+        async def _verify(
+            request: Request,
+            credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+        ) -> None:
+            # Prefer the bearer token from the Authorization header
+            # (parsed by HTTPBearer), fall back to ?token= query param.
+            token: str | None = None
+            if credentials is not None:
+                token = credentials.credentials
+            else:
+                token = request.query_params.get("token")
             if not token or not secrets.compare_digest(token, expected):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -180,9 +188,9 @@ class SingleUserToken:
                 query_token=websocket.query_params.get("token"),
             )
             if not token or not secrets.compare_digest(token, expected):
-                # Reject before accepting — Starlette sends a 403 HTTP
-                # response, which prevents the upgrade.
-                await websocket.close(code=1008)
+                # Raise HTTPException — Starlette's dependency resolver
+                # converts this into an HTTP 403 denial before the
+                # WebSocket upgrade, so the connection is never accepted.
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Invalid or missing authentication token",

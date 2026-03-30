@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from mpl_fastapi import (
     InitConfig,
     PlotConfig,
+    SingleUserToken,
     UpdateConfig,
     create_mpl_router,
     install_mpl_router,
@@ -215,6 +216,10 @@ def create_lissajous_plot(fig: Figure, params: LissajousParams) -> None:
     ax.set_title(f"Lissajous Curve: {params.freq_x}:{params.freq_y}")
 
 
+# Resolve auth token — SingleUserToken reads MPL_FASTAPI_TOKEN from
+# the environment (set in pixi.toml) or generates an ephemeral one.
+auth = SingleUserToken()
+
 # Create the matplotlib router with PlotConfig
 mpl = create_mpl_router(
     {
@@ -250,7 +255,8 @@ mpl = create_mpl_router(
                 params_model=LissajousParams,
             ),
         ),
-    }
+    },
+    auth=auth,
 )
 
 # Create FastAPI app
@@ -264,6 +270,16 @@ app = FastAPI(
 # This includes the router, mounts static files, and chains the
 # shutdown lifespan automatically.
 install_mpl_router(app, mpl, prefix="/plots")
+
+# Print startup URLs including the auth token so operators can copy-paste.
+_host = "127.0.0.1"
+_port = 8000
+print(f"\n  Plots list:  http://{_host}:{_port}/plots/?token={auth.token}")
+print(f"  Sine plot:   http://{_host}:{_port}/plots/plot/sine?token={auth.token}")
+print(f"  Interactive: http://{_host}:{_port}/plots/plot/interactive_sine?token={auth.token}")
+print(f"  Embeddable:  http://{_host}:{_port}/embeddable?token={auth.token}")
+print(f"  React app:   http://{_host}:{_port}/react-app/?token={auth.token}")
+print(f"\n  Auth token:  {auth.token}\n")
 
 
 # Add route to serve home page

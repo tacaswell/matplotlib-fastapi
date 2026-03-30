@@ -152,5 +152,20 @@
         zoom, and home buttons. Plots marked with "live updates" also have parameter
         adjustment forms for real-time interaction.
     </div>
+
+    <script>
+        // Forward the auth token from the current URL into all navigation links
+        // so that token-protected routers work seamlessly.
+        (function() {
+            const token = new URLSearchParams(window.location.search).get('token');
+            if (!token) return;
+            document.querySelectorAll('a[href]').forEach(function(a) {
+                const href = a.getAttribute('href');
+                if (!href || href.startsWith('http') || href.startsWith('#')) return;
+                const sep = href.includes('?') ? '&' : '?';
+                a.setAttribute('href', href + sep + 'token=' + encodeURIComponent(token));
+            });
+        })();
+    </script>
 </body>
 </html>

@@ -274,6 +274,9 @@ import { MatplotlibEmbeddable } from 'mpl-fastapi';</code></pre>
     <script src="/plots/component.js"></script>
 
     <script>
+        // Extract auth token from page URL so all plot instances inherit it.
+        const _pageToken = new URLSearchParams(window.location.search).get('token') || undefined;
+
         // Utility function to log messages
         function log(logId, message, type = 'info') {
             const logDiv = document.getElementById(logId);
@@ -292,6 +295,7 @@ import { MatplotlibEmbeddable } from 'mpl-fastapi';</code></pre>
                 container: document.getElementById('plot1'),
                 plotName: 'interactive_sine',
                 baseUrl: '/plots',
+                token: _pageToken,
                 initParams: { frequency: 1.0, amplitude: 1.0 },
                 onConnect: () => log('log1', '✓ Connected to plot', 'success'),
                 onError: (error) => log('log1', `✗ Error: ${error.message}`, 'error'),
@@ -319,6 +323,7 @@ import { MatplotlibEmbeddable } from 'mpl-fastapi';</code></pre>
                     container: document.getElementById('plot2'),
                     plotName: 'interactive_sine',
                     baseUrl: '/plots',
+                    token: _pageToken,
                     initParams: { frequency: 2.0, amplitude: 1.5 },
                     updateParams: { phase: 0.0 },
                     onConnect: () => log('log2', '✓ Connected', 'success'),
@@ -385,6 +390,7 @@ import { MatplotlibEmbeddable } from 'mpl-fastapi';</code></pre>
                 container: document.getElementById('plot3a'),
                 plotName: 'interactive_sine',
                 baseUrl: '/plots',
+                token: _pageToken,
                 initParams: { frequency: 0.5, amplitude: 2.0 },
                 onConnect: () => log('log3', '✓ Plot A connected', 'success'),
                 onError: (error) => log('log3', `✗ Plot A error: ${error.message}`, 'error')
@@ -394,6 +400,7 @@ import { MatplotlibEmbeddable } from 'mpl-fastapi';</code></pre>
                 container: document.getElementById('plot3b'),
                 plotName: 'interactive_sine',
                 baseUrl: '/plots',
+                token: _pageToken,
                 initParams: { frequency: 2.0, amplitude: 0.5 },
                 onConnect: () => log('log3', '✓ Plot B connected', 'success'),
                 onError: (error) => log('log3', `✗ Plot B error: ${error.message}`, 'error')
@@ -412,6 +419,7 @@ import { MatplotlibEmbeddable } from 'mpl-fastapi';</code></pre>
                     container: document.getElementById('plot4'),
                     plotName: 'nonexistent_plot',
                     baseUrl: '/plots',
+                    token: _pageToken,
                     initParams: {},
                     onConnect: () => log('log4', 'Connected (unexpected!)', 'success'),
                     onError: (error) => log('log4', `✗ Expected error: ${error.message || error}`, 'error'),

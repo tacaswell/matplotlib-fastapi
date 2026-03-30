@@ -6,6 +6,8 @@ export interface MatplotlibPlotProps {
   plotName: string;
   /** Base URL where the mpl router is mounted (e.g., '/plots') */
   baseUrl?: string;
+  /** Authentication token for protected routers */
+  token?: string;
   /** Initial parameters passed when creating the figure */
   initParams?: Record<string, unknown>;
   /** Update parameters for dynamic updates (without reconnecting) */
@@ -53,6 +55,7 @@ export interface MatplotlibPlotProps {
 export function MatplotlibPlot({
   plotName,
   baseUrl = '',
+  token,
   initParams = {},
   updateParams = {},
   showToolbar = true,
@@ -84,6 +87,7 @@ export function MatplotlibPlot({
       container: containerRef.current,
       plotName,
       baseUrl,
+      token,
       initParams,
       updateParams,
       showToolbar,

@@ -685,7 +685,8 @@ class FigureCanvasRemote(FigureCanvasBase):
         """HTTP GET *download_url* and write the response to *filepath*.
 
         Builds a full URL from the transport's WebSocket URL and the
-        relative *download_url* path returned by the server.
+        relative *download_url* path returned by the server.  If the
+        WS URL contains a ``token`` query parameter it is forwarded.
         """
         import urllib.parse
         import urllib.request
@@ -695,6 +696,14 @@ class FigureCanvasRemote(FigureCanvasBase):
         scheme = "https" if parsed.scheme == "wss" else "http"
         base = f"{scheme}://{parsed.netloc}"
         full_url = urllib.parse.urljoin(base, download_url)
+
+        # Forward auth token from WS query string if present
+        ws_qs = urllib.parse.parse_qs(parsed.query)
+        token = (ws_qs.get("token", [None]) or [None])[0]
+        if token is not None:
+            sep = "&" if "?" in full_url else "?"
+            full_url = f"{full_url}{sep}token={urllib.parse.quote(token)}"
+
         urllib.request.urlretrieve(full_url, filepath)
 
     # -- abstract (toolkit must implement) ----------------------------------

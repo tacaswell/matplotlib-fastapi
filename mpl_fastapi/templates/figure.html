@@ -33,7 +33,19 @@
           // Pass query parameters from the page URL to the WebSocket
           var ws_url = "{{ ws_uri }}/ws/v0/{{ fig_id }}";
           if (window.location.search) {
-            ws_url += window.location.search;
+            // Forward all query params except 'token' (which is for HTTP auth)
+            // and re-attach 'token' separately so it reaches the WS auth dep.
+            var pageParams = new URLSearchParams(window.location.search);
+            var token = pageParams.get('token');
+            // Remove 'token' so it doesn't get misinterpreted as an init param
+            pageParams.delete('token');
+            var remaining = pageParams.toString();
+            if (remaining) {
+              ws_url += '?' + remaining;
+            }
+            if (token) {
+              ws_url += (remaining ? '&' : '?') + 'token=' + encodeURIComponent(token);
+            }
           }
           // Create WebSocketManager and Figure, then connect
           var ws_manager = new mpl.WebSocketManager(ws_url);

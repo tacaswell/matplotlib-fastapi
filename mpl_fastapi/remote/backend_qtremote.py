@@ -620,6 +620,13 @@ class NavigationToolbar2QTRemote(RemoteNavigationToolbar2, NavigationToolbar2QT)
         base = f"{scheme}://{parsed.netloc}"
         full_url = urllib.parse.urljoin(base, download_url)
 
+        # Forward auth token from WS query string if present
+        ws_qs = urllib.parse.parse_qs(parsed.query)
+        token = (ws_qs.get("token", [None]) or [None])[0]
+        if token is not None:
+            sep = "&" if "?" in full_url else "?"
+            full_url = f"{full_url}{sep}token={urllib.parse.quote(token)}"
+
         try:
             urllib.request.urlretrieve(full_url, local_path)
         except Exception as exc:
@@ -1065,6 +1072,7 @@ def open_remote_figure(
     init_params: dict[str, Any] | None = None,
     *,
     update_params: dict[str, Any] | None = None,
+    token: str | None = None,
     device_pixel_ratio: float | None = None,
 ) -> FigureManagerQTRemote:
     """Connect to a remote plot and return a ready-to-show Qt figure manager.
@@ -1086,6 +1094,8 @@ def open_remote_figure(
     update_params : dict, optional
         Update parameters applied after initialisation.  Encoded as
         ``_update.<key>=<value>`` in the WebSocket query string.
+    token : str, optional
+        Authentication token appended to the WebSocket query string.
     device_pixel_ratio : float, optional
         Device pixel ratio for the init handshake.  If *None* (the
         default), the ratio is auto-detected from the primary screen.
@@ -1105,7 +1115,7 @@ def open_remote_figure(
         screen = QtWidgets.QApplication.primaryScreen()
         device_pixel_ratio = screen.devicePixelRatio() if screen is not None else 1.0
 
-    ws_url = build_ws_url(url, plot_name, init_params, update_params=update_params)
+    ws_url = build_ws_url(url, plot_name, init_params, update_params=update_params, token=token)
 
     # We'll collect the server config from the connected signal
     result: dict[str, Any] = {}
@@ -1175,6 +1185,7 @@ def open_remote_figure(
 def open_remote_figures(
     specs: Sequence[tuple[str, str] | tuple[str, str, dict[str, Any] | None]],
     *,
+    token: str | None = None,
     device_pixel_ratio: float | None = None,
 ) -> list[FigureManagerQTRemote]:
     """Batch-open multiple remote figures.
@@ -1233,6 +1244,7 @@ def open_remote_figures(
                 plot_name=plot_name,
                 init_params=init_params,
                 update_params=update_params,
+                token=token,
                 device_pixel_ratio=device_pixel_ratio,
             )
             managers.append(mgr)
@@ -1248,6 +1260,7 @@ def run_qt_app(
         | tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]
     ],
     *,
+    token: str | None = None,
     device_pixel_ratio: float | None = None,
 ) -> None:
     """Create a QApplication, open remote figures, and enter the event loop.
@@ -1288,7 +1301,7 @@ def run_qt_app(
     if app is None:
         app = QtWidgets.QApplication(sys.argv)
 
-    managers = open_remote_figures(specs, device_pixel_ratio=device_pixel_ratio)
+    managers = open_remote_figures(specs, token=token, device_pixel_ratio=device_pixel_ratio)
 
     if not managers:
         logger.warning("No figures opened.")
