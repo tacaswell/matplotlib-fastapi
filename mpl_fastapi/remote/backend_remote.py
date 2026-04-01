@@ -685,8 +685,9 @@ class FigureCanvasRemote(FigureCanvasBase):
         """HTTP GET *download_url* and write the response to *filepath*.
 
         Builds a full URL from the transport's WebSocket URL and the
-        relative *download_url* path returned by the server.  If the
-        WS URL contains a ``token`` query parameter it is forwarded.
+        relative *download_url* path returned by the server.  Auth
+        credentials are forwarded via the ``Authorization: Bearer``
+        header (if a token is present in the WS URL query string).
         """
         import urllib.parse
         import urllib.request
@@ -697,14 +698,22 @@ class FigureCanvasRemote(FigureCanvasBase):
         base = f"{scheme}://{parsed.netloc}"
         full_url = urllib.parse.urljoin(base, download_url)
 
-        # Forward auth token from WS query string if present
+        # Guard against a malicious download_url redirecting to another host.
+        resolved = urllib.parse.urlparse(full_url)
+        if resolved.netloc != parsed.netloc:
+            raise ValueError(
+                f"download_url resolved to a different host: {full_url!r}"
+            )
+
+        # Forward auth token from WS query string via Authorization header.
         ws_qs = urllib.parse.parse_qs(parsed.query)
         token = (ws_qs.get("token", [None]) or [None])[0]
-        if token is not None:
-            sep = "&" if "?" in full_url else "?"
-            full_url = f"{full_url}{sep}token={urllib.parse.quote(token)}"
 
-        urllib.request.urlretrieve(full_url, filepath)
+        req = urllib.request.Request(full_url)
+        if token is not None:
+            req.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            Path(filepath).write_bytes(resp.read())
 
     # -- abstract (toolkit must implement) ----------------------------------
 

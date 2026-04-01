@@ -724,33 +724,78 @@ class TestDownloadUrlToFile:
 
     def test_url_construction_ws(self) -> None:
         """ws:// should map to http://."""
-        from unittest.mock import patch
+        from unittest.mock import MagicMock, patch
 
         fig = Figure()
         config = _make_server_config()
         transport = _make_mock_transport(url="ws://host:9000/ws/fig1")
         canvas = FigureCanvasRemote(fig, transport, config)
 
-        with patch("urllib.request.urlretrieve") as mock_retrieve:
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"fake-png"
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_open:
             canvas._download_url_to_file("/download/out.png", "/tmp/out.png")
-            mock_retrieve.assert_called_once_with(
-                "http://host:9000/download/out.png", "/tmp/out.png"
-            )
+            mock_open.assert_called_once()
+            req = mock_open.call_args[0][0]
+            assert req.full_url == "http://host:9000/download/out.png"
+            assert req.get_header("Authorization") is None
 
     def test_url_construction_wss(self) -> None:
         """wss:// should map to https://."""
-        from unittest.mock import patch
+        from unittest.mock import MagicMock, patch
 
         fig = Figure()
         config = _make_server_config()
         transport = _make_mock_transport(url="wss://secure.host:443/ws/fig1")
         canvas = FigureCanvasRemote(fig, transport, config)
 
-        with patch("urllib.request.urlretrieve") as mock_retrieve:
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"fake-pdf"
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_open:
             canvas._download_url_to_file("/download/out.pdf", "/tmp/out.pdf")
-            mock_retrieve.assert_called_once_with(
-                "https://secure.host:443/download/out.pdf", "/tmp/out.pdf"
-            )
+            mock_open.assert_called_once()
+            req = mock_open.call_args[0][0]
+            assert req.full_url == "https://secure.host:443/download/out.pdf"
+            assert req.get_header("Authorization") is None
+
+    def test_token_sent_as_bearer_header(self) -> None:
+        """Token from WS query string is forwarded via Authorization header."""
+        from unittest.mock import MagicMock, patch
+
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport(url="ws://host:9000/ws/fig1?token=secret123")
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"data"
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_open:
+            canvas._download_url_to_file("/download/out.png", "/tmp/out.png")
+            req = mock_open.call_args[0][0]
+            # Token should NOT appear in URL, only in header
+            assert "token=" not in req.full_url
+            assert req.get_header("Authorization") == "Bearer secret123"
+
+    def test_rejects_cross_host_download_url(self) -> None:
+        """Protocol-relative download_url pointing elsewhere is rejected."""
+        import pytest
+
+        fig = Figure()
+        config = _make_server_config()
+        transport = _make_mock_transport(url="ws://host:9000/ws/fig1?token=s")
+        canvas = FigureCanvasRemote(fig, transport, config)
+
+        with pytest.raises(ValueError, match="different host"):
+            canvas._download_url_to_file("//evil.com/steal", "/tmp/out.png")
 
 
 class TestSaveFlowEndToEnd:

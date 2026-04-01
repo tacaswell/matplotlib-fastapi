@@ -610,25 +610,8 @@ class NavigationToolbar2QTRemote(RemoteNavigationToolbar2, NavigationToolbar2QT)
 
     def _download_saved_file(self, download_url: str, local_path: str) -> None:
         """Download a saved file from the server via HTTP."""
-        import urllib.parse
-        import urllib.request
-
-        # Build full URL from the WebSocket URL
-        ws_url = self.canvas._transport._url
-        parsed = urllib.parse.urlparse(ws_url)
-        scheme = "https" if parsed.scheme == "wss" else "http"
-        base = f"{scheme}://{parsed.netloc}"
-        full_url = urllib.parse.urljoin(base, download_url)
-
-        # Forward auth token from WS query string if present
-        ws_qs = urllib.parse.parse_qs(parsed.query)
-        token = (ws_qs.get("token", [None]) or [None])[0]
-        if token is not None:
-            sep = "&" if "?" in full_url else "?"
-            full_url = f"{full_url}{sep}token={urllib.parse.quote(token)}"
-
         try:
-            urllib.request.urlretrieve(full_url, local_path)
+            self.canvas._download_url_to_file(download_url, local_path)
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self.canvas, "Download error", str(exc))
 
