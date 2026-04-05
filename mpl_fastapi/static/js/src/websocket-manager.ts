@@ -59,6 +59,12 @@ export class WebSocketManager {
   private _reconnectTimer: ReturnType<typeof setTimeout> | null;
   private _reconnectAttempt: number;
 
+  /**
+   * Create a new WebSocketManager.
+   *
+   * @param url - Full WebSocket URL to connect to (e.g. ``wss://host/ws/v0/plot``).
+   * @param reconnect - Optional reconnection configuration overrides.
+   */
   constructor(url: string, reconnect?: ReconnectConfig) {
     this.url = url;
     this.ws = null;
@@ -259,6 +265,11 @@ export class WebSocketManager {
 
   // -- reconnection internals -----------------------------------------------
 
+  /**
+   * Schedule the next reconnection attempt using exponential backoff with
+   * jitter.  Increments the attempt counter and, if the limit is reached,
+   * fires ``onReconnectFailed`` handlers instead.
+   */
   private _startReconnect(): void {
     const { maxAttempts } = this._reconnectConfig;
 
@@ -291,6 +302,15 @@ export class WebSocketManager {
     }, delay);
   }
 
+  /**
+   * Compute the backoff delay (ms) for the given attempt number.
+   *
+   * Uses exponential backoff capped at ``ReconnectConfig.maxDelayMs`` with
+   * ±25% random jitter.
+   *
+   * @param attempt - 1-based reconnection attempt number.
+   * @returns Delay in milliseconds.
+   */
   private _computeDelay(attempt: number): number {
     const { initialDelayMs, maxDelayMs, backoffBase } = this._reconnectConfig;
     let delay = Math.min(
@@ -302,6 +322,10 @@ export class WebSocketManager {
     return delay;
   }
 
+  /**
+   * Cancel any pending reconnection timer and reset the attempt counter.
+   * Called by ``close()`` to prevent reconnection after an intentional disconnect.
+   */
   private _cancelReconnect(): void {
     if (this._reconnectTimer !== null) {
       clearTimeout(this._reconnectTimer);

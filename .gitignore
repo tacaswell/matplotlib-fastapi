@@ -94,3 +94,5 @@ mpl_fastapi/static/js/dist/
 
 # Keep directory structure but ignore build outputs
 !mpl_fastapi/static/js/dist/.gitkeep
+
+docs/_ts_api

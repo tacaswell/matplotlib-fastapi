@@ -125,6 +125,13 @@ export class Figure {
   // Download handler
   ondownload: (fig: Figure, format: string) => void;
 
+  /**
+   * Create and attach a new Figure to the DOM.
+   *
+   * @param figure_id - Unique identifier for this figure (used in WebSocket messages).
+   * @param ws_manager - The ``WebSocketManager`` that drives this figure's connection.
+   * @param parent_element - DOM element that the figure's root div will be appended to.
+   */
   constructor(
     figure_id: string,
     ws_manager: WebSocketManager,
@@ -233,10 +240,22 @@ export class Figure {
     this.header = titletext;
   }
 
+  /**
+   * Extension point for subclasses to apply additional inline styles to the
+   * figure's canvas wrapper ``<div>``.
+   *
+   * @param _canvas_div - The canvas container element.
+   */
   protected _canvas_extra_style(_canvas_div: HTMLDivElement): void {
     // Hook for subclasses
   }
 
+  /**
+   * Extension point for subclasses to apply additional inline styles to the
+   * figure's root ``<div>``.
+   *
+   * @param _root_div - The root container element.
+   */
   protected _root_extra_style(_root_div: HTMLDivElement): void {
     // Hook for subclasses
   }
@@ -496,17 +515,39 @@ export class Figure {
     this.message = status_bar;
   }
 
+  /**
+   * Request that the server resize the figure canvas.
+   *
+   * Clears the locally-cached server size so that the ResizeObserver will
+   * accept the server's response without treating it as a feedback loop.
+   *
+   * @param x_pixels - Desired canvas width in CSS pixels.
+   * @param y_pixels - Desired canvas height in CSS pixels.
+   */
   request_resize(x_pixels: number, y_pixels: number): void {
     this._server_size = null; // Clear so we accept the server's response
     this.send_message('resize', { width: x_pixels, height: y_pixels });
   }
 
+  /**
+   * Send a JSON message to the server over the WebSocket.
+   *
+   * Automatically injects ``type`` and ``figure_id`` fields.
+   *
+   * @param type - Message type string (e.g. ``'resize'``, ``'toolbar_button'``).
+   * @param properties - Additional properties to include in the message.
+   */
   send_message(type: string, properties: Record<string, any>): void {
     properties['type'] = type;
     properties['figure_id'] = this.id;
     this.ws_manager.send(JSON.stringify(properties));
   }
 
+  /**
+   * Request the server to render and send a new image frame.
+   *
+   * The ``waiting`` flag prevents duplicate in-flight render requests.
+   */
   send_render_request(): void {
     if (!this.waiting) {
       this.waiting = true;
@@ -514,6 +555,12 @@ export class Figure {
     }
   }
 
+  /**
+   * Read an update form by ID and send its values to the server as an
+   * ``update_params`` message.
+   *
+   * @param form_id - The ``id`` attribute of the ``<form>`` element to read.
+   */
   send_update(form_id: string): void {
     const form = document.getElementById(form_id);
     if (!form) {
@@ -539,6 +586,14 @@ export class Figure {
     this.server_update_params = params;
   }
 
+  /**
+   * Initiate a save/download by sending a ``save_figure`` WebSocket message.
+   *
+   * The format is read from the figure's format dropdown.
+   *
+   * @param fig - The Figure instance to save.
+   * @param _msg - Unused (retained for handler signature compatibility).
+   */
   handle_save(fig: Figure, _msg: unknown): void {
     if (!fig.format_dropdown) return;
     const selectedOption =
@@ -554,6 +609,15 @@ export class Figure {
     });
   }
 
+  /**
+   * Handle a successful save response from the server.
+   *
+   * Triggers a browser download of the file at the URL returned by the server
+   * and temporarily shows a confirmation in the status bar.
+   *
+   * @param fig - The Figure instance.
+   * @param msg - Save-complete message containing ``download_url`` and ``filename``.
+   */
   handle_save_complete(fig: Figure, msg: SaveCompleteMessage): void {
     const download_url = msg.download_url;
     const filename = msg.filename;
@@ -576,6 +640,15 @@ export class Figure {
     }
   }
 
+  /**
+   * Handle a save-error response from the server.
+   *
+   * Logs the error, displays it in the status bar for 5 seconds, and falls
+   * back to an ``alert()`` if no status bar element exists.
+   *
+   * @param fig - The Figure instance.
+   * @param msg - Save-error message containing the error ``message`` string.
+   */
   handle_save_error(fig: Figure, msg: SaveErrorMessage): void {
     const error_message = msg.message;
     console.error('Save error:', error_message);
@@ -609,6 +682,15 @@ export class Figure {
     });
   }
 
+  /**
+   * Handle a resize notification from the server.
+   *
+   * Resizes the canvas to the dimensions specified by the server and requests
+   * a new render frame.
+   *
+   * @param fig - The Figure instance.
+   * @param msg - Message containing ``size`` ([width, height]) and ``forward`` flag.
+   */
   handle_resize(fig: Figure, msg: any): void {
     const size = msg['size'];
     if (!fig.canvas || !fig._resize_canvas) return;
@@ -619,6 +701,14 @@ export class Figure {
     }
   }
 
+  /**
+   * Handle a rubberband selection rectangle from the server.
+   *
+   * Clears the rubberband canvas and redraws the selection outline.
+   *
+   * @param fig - The Figure instance.
+   * @param msg - Rubberband coordinates in figure-space pixels.
+   */
   handle_rubberband(fig: Figure, msg: RubberbandMessage): void {
     if (!fig.canvas || !fig.rubberband_context) return;
 
@@ -647,18 +737,36 @@ export class Figure {
     fig.rubberband_context.strokeRect(min_x, min_y, width, height);
   }
 
+  /**
+   * Update the figure title bar with a new label.
+   *
+   * @param fig - The Figure instance.
+   * @param msg - Message containing the new ``label`` string.
+   */
   handle_figure_label(fig: Figure, msg: FigureLabelMessage): void {
     if (fig.header) {
       fig.header.textContent = msg.label;
     }
   }
 
+  /**
+   * Update the CSS cursor style on the rubberband canvas.
+   *
+   * @param fig - The Figure instance.
+   * @param msg - Message containing the CSS ``cursor`` string.
+   */
   handle_cursor(fig: Figure, msg: CursorMessage): void {
     if (fig.rubberband_canvas) {
       fig.rubberband_canvas.style.cursor = msg.cursor;
     }
   }
 
+  /**
+   * Display a status/info message in the toolbar's message bar.
+   *
+   * @param fig - The Figure instance.
+   * @param msg - Message containing the ``message`` text string.
+   */
   handle_message(fig: Figure, msg: StatusMessage): void {
     if (fig.message) {
       fig.message.textContent = msg.message;
@@ -769,7 +877,15 @@ export class Figure {
     }
   }
 
-  // Legacy handlers for backward compatibility with older servers
+  /**
+   * Validate the server protocol version.
+   *
+   * @deprecated Replaced by the consolidated ``config`` message in v0 protocol.
+   *   Kept for backward compatibility with older servers.
+   * @param fig - The Figure instance.
+   * @param msg - Message containing ``version`` number.
+   * @throws {Error} If the server protocol version does not match the client.
+   */
   handle_protocol_version(fig: Figure, msg: any): void {
     const server_version = msg['version'];
     // Protocol version is REQUIRED
@@ -790,18 +906,47 @@ export class Figure {
     console.log(`Server protocol version validated: ${server_version}`);
   }
 
+  /**
+   * Handle an invalidation notification from the server.
+   *
+   * Triggers a new render request, allowing the client to pull the latest
+   * frame after server-side state has changed.
+   *
+   * @param fig - The Figure instance.
+   * @param _msg - Unused payload.
+   */
   handle_invalidate(fig: Figure, _msg: unknown): void {
     fig.send_render_request();
   }
 
+  /**
+   * Update the local image mode (``'full'`` or ``'diff'``).
+   *
+   * @param fig - The Figure instance.
+   * @param msg - Message containing the new ``mode`` string.
+   */
   handle_image_mode(fig: Figure, msg: ImageModeMessage): void {
     fig.image_mode = msg.mode;
   }
 
+  /**
+   * Store the server-assigned connection ID.
+   *
+   * @deprecated Replaced by the ``connection_id`` field in the ``config`` message.
+   * @param fig - The Figure instance.
+   * @param msg - Message containing the ``id`` string.
+   */
   handle_connection_id(fig: Figure, msg: ConnectionIdMessage): void {
     fig.connection_id = msg.id;
   }
 
+  /**
+   * Apply an initial figure size received from the server (legacy protocol).
+   *
+   * @deprecated Replaced by the ``figure.size`` field in the ``config`` message.
+   * @param fig - The Figure instance.
+   * @param msg - Message containing ``size`` ([width, height]) array.
+   */
   // Legacy handler - config message now includes figure size
   handle_figure_size(fig: Figure, msg: any): void {
     // Store initial size to be applied before first render
@@ -829,16 +974,37 @@ export class Figure {
     }
   }
 
+  /**
+   * Store toolbar item configuration and initialise the toolbar when ready.
+   *
+   * @deprecated Replaced by the ``toolbar`` field in the ``config`` message.
+   * @param fig - The Figure instance.
+   * @param msg - Message containing ``items`` array.
+   */
   handle_toolbar_config(fig: Figure, msg: any): void {
     fig.toolbar_items = msg['items'] as Array<[string, string, string, string]>;
     fig._check_toolbar_ready();
   }
 
+  /**
+   * Store supported save formats and initialise the toolbar when ready.
+   *
+   * @deprecated Replaced by the ``save.formats`` field in the ``config`` message.
+   * @param fig - The Figure instance.
+   * @param msg - Message containing ``formats`` array.
+   */
   handle_save_formats(fig: Figure, msg: any): void {
     fig.save_formats = msg['formats'] as string[];
     fig._check_toolbar_ready();
   }
 
+  /**
+   * Store the default save format and initialise the toolbar when ready.
+   *
+   * @deprecated Replaced by the ``save.default_format`` field in the ``config`` message.
+   * @param fig - The Figure instance.
+   * @param msg - Message containing the ``format`` string.
+   */
   handle_default_save_format(fig: Figure, msg: any): void {
     fig.default_save_format = msg['format'] as string;
     fig._check_toolbar_ready();
@@ -856,6 +1022,12 @@ export class Figure {
     }
   }
 
+  /**
+   * Update the enabled/disabled state of navigation history toolbar buttons.
+   *
+   * @param fig - The Figure instance.
+   * @param msg - Map of button names (e.g. ``'Back'``, ``'Forward'``) to boolean enabled state.
+   */
   handle_history_buttons(fig: Figure, msg: Record<string, boolean>): void {
     for (const [key, enabled] of Object.entries(msg)) {
       const button = fig.buttons[key];
@@ -865,6 +1037,13 @@ export class Figure {
     }
   }
 
+  /**
+   * Update visual state of Pan / Zoom toolbar buttons to reflect the active
+   * navigation mode.
+   *
+   * @param fig - The Figure instance.
+   * @param msg - Message containing ``mode`` (``'PAN'``, ``'ZOOM'``, or ``null``).
+   */
   handle_navigate_mode(fig: Figure, msg: NavigateModeMessage): void {
     const mode = msg.mode;
 
@@ -880,6 +1059,12 @@ export class Figure {
     }
   }
 
+  /**
+   * Acknowledge receipt of a rendered image frame by sending an ``ack``
+   * message to the server.
+   *
+   * Called automatically after each binary image is painted onto the canvas.
+   */
   updated_canvas_event(): void {
     this.send_message('ack', {});
   }
@@ -970,6 +1155,14 @@ export class Figure {
     };
   }
 
+  /**
+   * Translate a DOM mouse event into a matplotlib event message and send it
+   * to the server.
+   *
+   * @param event - The original DOM ``MouseEvent``.
+   * @param name - matplotlib event name (e.g. ``'button_press'``, ``'motion_notify'``).
+   * @returns Always ``false`` to prevent default browser behaviour.
+   */
   mouse_event(event: MouseEvent, name: string): boolean {
     const canvas_pos = findpos(event);
 
@@ -993,10 +1186,28 @@ export class Figure {
     return false;
   }
 
+  /**
+   * Extension point for subclasses to handle additional key-event logic
+   * before the event is forwarded to the server.
+   *
+   * @param _event - The original DOM ``KeyboardEvent``.
+   * @param _name - matplotlib event name (``'key_press'`` or ``'key_release'``).
+   */
   protected _key_event_extra(_event: KeyboardEvent, _name: string): void {
     // Hook for subclasses
   }
 
+  /**
+   * Translate a DOM keyboard event into a matplotlib key message and send it
+   * to the server.
+   *
+   * Deduplicates key-repeat events for ``key_press`` and builds a modifier
+   * prefix string (``ctrl+``, ``alt+``, ``shift+``) before the key value.
+   *
+   * @param event - The original DOM ``KeyboardEvent``.
+   * @param name - matplotlib event name (``'key_press'`` or ``'key_release'``).
+   * @returns Always ``false`` to prevent default browser behaviour.
+   */
   key_event(event: KeyboardEvent, name: string): boolean {
     // Prevent repeat events
     if (name === 'key_press') {
@@ -1027,6 +1238,14 @@ export class Figure {
     return false;
   }
 
+  /**
+   * Handle a toolbar button click.
+   *
+   * The ``'download'`` button delegates to ``handle_save()``; all other
+   * buttons forward a ``toolbar_button`` message to the server.
+   *
+   * @param name - The matplotlib name of the toolbar button that was clicked.
+   */
   toolbar_button_onclick(name: string): void {
     if (name === 'download') {
       this.handle_save(this, null);
@@ -1035,6 +1254,11 @@ export class Figure {
     }
   }
 
+  /**
+   * Display the tooltip text of a toolbar button in the status bar.
+   *
+   * @param tooltip - Tooltip string associated with the button being hovered.
+   */
   toolbar_button_onmouseover(tooltip: string): void {
     if (this.message) {
       this.message.textContent = tooltip;

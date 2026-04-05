@@ -58,6 +58,7 @@
     "format": "prettier --write mpl_fastapi/static/js/src/**/*.ts",
     "format:check": "prettier --check mpl_fastapi/static/js/src/**/*.ts",
     "typecheck": "tsc --noEmit",
+    "docs": "typedoc mpl_fastapi/static/js/src/index.ts --out docs/_ts_api",
     "prepublishOnly": "npm run build:npm"
   },
   "devDependencies": {
@@ -70,5 +71,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "typedoc": "^0.28.18"
   }
 }

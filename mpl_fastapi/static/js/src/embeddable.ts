@@ -56,6 +56,24 @@ export class MatplotlibEmbeddable {
   private submitButton: HTMLButtonElement | null = null;
   private readonly instanceId: string;
 
+  /**
+   * Create a new MatplotlibEmbeddable and (by default) immediately connect.
+   *
+   * @param config - Configuration object describing the plot, server URL,
+   *   display options, and lifecycle callbacks.  At minimum, ``container``
+   *   and ``plotName`` must be provided.
+   * @throws If ``container`` or ``plotName`` are missing from ``config``.
+   *
+   * @example
+   * ```typescript
+   * const plot = new MatplotlibEmbeddable({
+   *   container: document.getElementById('my-plot')!,
+   *   plotName: 'sine',
+   *   baseUrl: '/plots',
+   *   initParams: { frequency: 2.0 },
+   * });
+   * ```
+   */
   constructor(config: EmbeddableConfig) {
     // Generate unique instance ID to avoid ID collisions when multiple plots on same page
     this.instanceId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
