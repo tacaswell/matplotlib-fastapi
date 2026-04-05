@@ -1029,3 +1029,151 @@ class TestReconnection:
 
         # _server_config.figure_size should reflect the client size
         assert canvas._server_config.figure_size == (800, 600)
+
+
+# ---------------------------------------------------------------------------
+# list_remote_figures
+# ---------------------------------------------------------------------------
+
+
+class TestListRemoteFigures:
+    """Tests for the list_remote_figures discovery function."""
+
+    def test_parses_server_response(self) -> None:
+        """list_remote_figures returns RemotePlotInfo from a valid response."""
+        import json
+        from io import BytesIO
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_remote import (
+            RemotePlotInfo,
+            list_remote_figures,
+        )
+
+        payload = json.dumps(
+            {
+                "plots": {
+                    "sine": {
+                        "description": "A sine wave",
+                        "parameters": {"type": "object", "properties": {}},
+                        "update_schema": None,
+                        "ws_url": "ws://localhost:8000/plots/ws/v0/sine",
+                        "view_url": "http://localhost:8000/plots/plot/sine",
+                    },
+                    "cosine": {
+                        "description": "A cosine wave",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"freq": {"type": "number"}},
+                        },
+                        "update_schema": {
+                            "type": "object",
+                            "properties": {"phase": {"type": "number"}},
+                        },
+                        "ws_url": "ws://localhost:8000/plots/ws/v0/cosine",
+                        "view_url": "http://localhost:8000/plots/plot/cosine",
+                    },
+                }
+            }
+        ).encode()
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = payload
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_open:
+            plots = list_remote_figures("http://localhost:8000/plots")
+
+        assert len(plots) == 2
+        names = {p.name for p in plots}
+        assert names == {"sine", "cosine"}
+
+        sine = next(p for p in plots if p.name == "sine")
+        assert sine.description == "A sine wave"
+        assert sine.ws_url == "ws://localhost:8000/plots/ws/v0/sine"
+        assert sine.view_url == "http://localhost:8000/plots/plot/sine"
+        assert sine.update_schema is None
+
+        cosine = next(p for p in plots if p.name == "cosine")
+        assert cosine.update_schema is not None
+        assert "phase" in cosine.update_schema["properties"]
+
+        # Verify the URL sent to urlopen
+        req = mock_open.call_args[0][0]
+        assert req.full_url == "http://localhost:8000/plots/plots"
+
+    def test_converts_ws_to_http(self) -> None:
+        """ws:// URLs are converted to http:// for the HTTP request."""
+        import json
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_remote import list_remote_figures
+
+        payload = json.dumps({"plots": {}}).encode()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = payload
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_open:
+            list_remote_figures("ws://myhost:9000/my-router")
+
+        req = mock_open.call_args[0][0]
+        assert req.full_url == "http://myhost:9000/my-router/plots"
+
+    def test_converts_wss_to_https(self) -> None:
+        """wss:// URLs are converted to https:// for the HTTP request."""
+        import json
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_remote import list_remote_figures
+
+        payload = json.dumps({"plots": {}}).encode()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = payload
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_open:
+            list_remote_figures("wss://secure.host/plots")
+
+        req = mock_open.call_args[0][0]
+        assert req.full_url == "https://secure.host/plots/plots"
+
+    def test_passes_auth_token(self) -> None:
+        """An Authorization header is set when a token is provided."""
+        import json
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_remote import list_remote_figures
+
+        payload = json.dumps({"plots": {}}).encode()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = payload
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_open:
+            list_remote_figures("http://localhost:8000/plots", token="secret123")
+
+        req = mock_open.call_args[0][0]
+        assert req.get_header("Authorization") == "Bearer secret123"
+
+    def test_empty_response(self) -> None:
+        """An empty plots dict returns an empty list."""
+        import json
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_remote import list_remote_figures
+
+        payload = json.dumps({"plots": {}}).encode()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = payload
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            plots = list_remote_figures("http://localhost:8000/plots")
+
+        assert plots == []

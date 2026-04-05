@@ -69,6 +69,48 @@ class TestPlotsListAPI:
         assert isinstance(plot_info["update_schema"], dict)
         assert "properties" in plot_info["update_schema"]
 
+    def test_plot_info_has_ws_url(self, client: TestClient) -> None:
+        """Test that each plot includes a ws_url field."""
+        response = client.get("/plots/plots")
+        data = response.json()
+
+        for name, info in data["plots"].items():
+            assert "ws_url" in info, f"{name} missing ws_url"
+            assert info["ws_url"] is not None
+            assert f"/ws/v0/{name}" in info["ws_url"]
+
+    def test_plot_info_has_view_url(self, client: TestClient) -> None:
+        """Test that each plot includes a view_url field."""
+        response = client.get("/plots/plots")
+        data = response.json()
+
+        for name, info in data["plots"].items():
+            assert "view_url" in info, f"{name} missing view_url"
+            assert info["view_url"] is not None
+            assert f"/plot/{name}" in info["view_url"]
+
+    def test_ws_url_uses_ws_scheme(self, client: TestClient) -> None:
+        """Test that ws_url uses ws:// or wss:// scheme."""
+        response = client.get("/plots/plots")
+        data = response.json()
+
+        for name, info in data["plots"].items():
+            assert info["ws_url"].startswith("ws://") or info["ws_url"].startswith(
+                "wss://"
+            ), f"{name} ws_url has wrong scheme: {info['ws_url']}"
+
+    def test_view_url_uses_http_scheme(self, client: TestClient) -> None:
+        """Test that view_url uses http:// or https:// scheme."""
+        response = client.get("/plots/plots")
+        data = response.json()
+
+        for name, info in data["plots"].items():
+            assert info["view_url"].startswith("http://") or info[
+                "view_url"
+            ].startswith("https://"), (
+                f"{name} view_url has wrong scheme: {info['view_url']}"
+            )
+
 
 class TestPlotSchemaAPI:
     """Tests for the /api/plots/{plot_name}/schema endpoint."""

@@ -9,11 +9,14 @@
 export { WebSocketManager, type ReconnectConfig } from './websocket-manager.js';
 export { Figure } from './figure.js';
 export { MatplotlibEmbeddable } from './embeddable.js';
+export { listPlots } from './discovery.js';
 
 // Export types for TypeScript users
 export type {
   EmbeddableConfig,
   PlotSchemaResponse,
+  PlotListEntry,
+  PlotsListResponse,
   JSONSchema,
   JSONSchemaProperty,
   ImageMode,
@@ -26,6 +29,7 @@ export type {
 import { WebSocketManager } from './websocket-manager.js';
 import { Figure } from './figure.js';
 import { MatplotlibEmbeddable } from './embeddable.js';
+import { listPlots } from './discovery.js';
 
 declare global {
   interface Window {
@@ -33,6 +37,7 @@ declare global {
     mpl: {
       WebSocketManager: typeof WebSocketManager;
       Figure: typeof Figure;
+      listPlots: typeof listPlots;
     };
   }
 }
@@ -49,4 +54,5 @@ if (typeof window !== 'undefined') {
   // Preserve any properties already set by Python (toolbar config)
   window.mpl.WebSocketManager = WebSocketManager;
   window.mpl.Figure = Figure;
+  window.mpl.listPlots = listPlots;
 }

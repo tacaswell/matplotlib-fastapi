@@ -27,6 +27,7 @@ from matplotlib.figure import Figure
 from PIL import Image
 from pydantic import BaseModel, Field
 from PySide6.QtCore import QSize, Qt
+from PySide6 import QtWidgets
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -1351,3 +1352,357 @@ class TestFigureCanvasQTRemoteReconnectOverlay:
         calls = transport.send_json.call_args_list
         assert any(c.args[0].get("type") == "resize" for c in calls)
         assert calls[-1].args[0] == {"type": "refresh"}
+
+
+# ---------------------------------------------------------------------------
+# SchemaFormBuilder
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaFormBuilder:
+    """Tests for SchemaFormBuilder."""
+
+    def _make_schema(self, **properties: Any) -> dict[str, Any]:
+        return {"type": "object", "properties": properties}
+
+    def test_build_number_widget(self, qtbot: Any) -> None:
+        from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
+
+        schema = self._make_schema(
+            freq={"type": "number", "default": 2.0, "minimum": 0.1, "maximum": 10.0}
+        )
+        builder = SchemaFormBuilder(schema)
+
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(container)
+        qtbot.addWidget(container)
+        builder.build_form(layout)
+
+        assert "freq" in builder.inputs
+        w = builder.inputs["freq"]
+        assert isinstance(w, QDoubleSpinBox)
+        assert w.value() == pytest.approx(2.0)
+        assert w.minimum() == pytest.approx(0.1)
+        assert w.maximum() == pytest.approx(10.0)
+
+    def test_build_integer_widget(self, qtbot: Any) -> None:
+        from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
+
+        schema = self._make_schema(
+            count={"type": "integer", "default": 5, "minimum": 1, "maximum": 100}
+        )
+        builder = SchemaFormBuilder(schema)
+
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(container)
+        qtbot.addWidget(container)
+        builder.build_form(layout)
+
+        w = builder.inputs["count"]
+        assert isinstance(w, QDoubleSpinBox)
+        assert w.decimals() == 0
+        assert w.value() == pytest.approx(5.0)
+
+    def test_build_boolean_widget(self, qtbot: Any) -> None:
+        from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
+
+        schema = self._make_schema(
+            enabled={"type": "boolean", "default": True}
+        )
+        builder = SchemaFormBuilder(schema)
+
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(container)
+        qtbot.addWidget(container)
+        builder.build_form(layout)
+
+        w = builder.inputs["enabled"]
+        assert isinstance(w, QCheckBox)
+        assert w.isChecked() is True
+
+    def test_build_string_widget(self, qtbot: Any) -> None:
+        from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
+
+        schema = self._make_schema(
+            label={"type": "string", "default": "hello"}
+        )
+        builder = SchemaFormBuilder(schema)
+
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(container)
+        qtbot.addWidget(container)
+        builder.build_form(layout)
+
+        w = builder.inputs["label"]
+        assert isinstance(w, QLineEdit)
+        assert w.text() == "hello"
+
+    def test_build_enum_widget(self, qtbot: Any) -> None:
+        from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
+
+        schema = self._make_schema(
+            color={"type": "string", "enum": ["red", "green", "blue"], "default": "green"}
+        )
+        builder = SchemaFormBuilder(schema)
+
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(container)
+        qtbot.addWidget(container)
+        builder.build_form(layout)
+
+        w = builder.inputs["color"]
+        assert isinstance(w, QComboBox)
+        assert w.currentText() == "green"
+        assert w.count() == 3
+
+    def test_get_values(self, qtbot: Any) -> None:
+        from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
+
+        schema = self._make_schema(
+            freq={"type": "number", "default": 2.0, "minimum": 0.0, "maximum": 10.0},
+            enabled={"type": "boolean", "default": False},
+            label={"type": "string", "default": "test"},
+        )
+        builder = SchemaFormBuilder(schema)
+
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(container)
+        qtbot.addWidget(container)
+        builder.build_form(layout)
+
+        values = builder.get_values()
+        assert values["freq"] == pytest.approx(2.0)
+        assert values["enabled"] is False
+        assert values["label"] == "test"
+
+    def test_set_values(self, qtbot: Any) -> None:
+        from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
+
+        schema = self._make_schema(
+            freq={"type": "number", "default": 2.0, "minimum": 0.0, "maximum": 10.0},
+            enabled={"type": "boolean", "default": False},
+        )
+        builder = SchemaFormBuilder(schema)
+
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(container)
+        qtbot.addWidget(container)
+        builder.build_form(layout)
+
+        builder.set_values({"freq": 7.5, "enabled": True})
+        assert builder.inputs["freq"].value() == pytest.approx(7.5)
+        assert builder.inputs["enabled"].isChecked() is True
+
+    def test_reset_to_defaults(self, qtbot: Any) -> None:
+        from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
+
+        schema = self._make_schema(
+            freq={"type": "number", "default": 2.0, "minimum": 0.0, "maximum": 10.0},
+        )
+        builder = SchemaFormBuilder(schema)
+
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(container)
+        qtbot.addWidget(container)
+        builder.build_form(layout)
+
+        builder.set_values({"freq": 9.0})
+        assert builder.inputs["freq"].value() == pytest.approx(9.0)
+
+        builder.reset_to_defaults()
+        assert builder.inputs["freq"].value() == pytest.approx(2.0)
+
+    def test_empty_schema(self, qtbot: Any) -> None:
+        from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
+
+        schema = {"type": "object", "properties": {}}
+        builder = SchemaFormBuilder(schema)
+
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(container)
+        qtbot.addWidget(container)
+        builder.build_form(layout)
+
+        assert builder.inputs == {}
+        assert builder.get_values() == {}
+
+
+# ---------------------------------------------------------------------------
+# FigureLauncherWindow
+# ---------------------------------------------------------------------------
+
+
+class TestFigureLauncherWindow:
+    """Tests for FigureLauncherWindow."""
+
+    def _make_plots(self) -> list:
+        from mpl_fastapi.remote.backend_remote import RemotePlotInfo
+
+        return [
+            RemotePlotInfo(
+                name="sine",
+                description="A sine wave",
+                ws_url="ws://localhost:8000/plots/ws/v0/sine",
+                view_url="http://localhost:8000/plots/plot/sine",
+                init_schema={
+                    "type": "object",
+                    "properties": {
+                        "freq": {"type": "number", "default": 1.0, "minimum": 0.1, "maximum": 10.0}
+                    },
+                },
+                update_schema=None,
+            ),
+            RemotePlotInfo(
+                name="cosine",
+                description="A cosine wave",
+                ws_url="ws://localhost:8000/plots/ws/v0/cosine",
+                view_url="http://localhost:8000/plots/plot/cosine",
+                init_schema={"type": "object", "properties": {}},
+                update_schema={
+                    "type": "object",
+                    "properties": {
+                        "phase": {"type": "number", "default": 0.0, "minimum": 0.0, "maximum": 6.28}
+                    },
+                },
+            ),
+        ]
+
+    def test_creates_ui(self, qtbot: Any) -> None:
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
+
+        with patch(
+            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
+        ):
+            win = FigureLauncherWindow("ws://localhost:8000/plots")
+            qtbot.addWidget(win)
+
+        assert win._plot_list is not None
+        assert win._launch_button is not None
+        assert not win._launch_button.isEnabled()
+
+    def test_discovery_populates_list(self, qtbot: Any) -> None:
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
+
+        with patch(
+            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
+        ):
+            win = FigureLauncherWindow("ws://localhost:8000/plots")
+            qtbot.addWidget(win)
+
+        plots = self._make_plots()
+        win._on_discovery_finished(plots)
+
+        assert win._plot_list.count() == 2
+        assert "sine" in win._plot_list.item(0).text()
+        assert "cosine" in win._plot_list.item(1).text()
+
+    def test_status_label_after_discovery(self, qtbot: Any) -> None:
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
+
+        with patch(
+            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
+        ):
+            win = FigureLauncherWindow("ws://localhost:8000/plots")
+            qtbot.addWidget(win)
+
+        win._on_discovery_finished(self._make_plots())
+        assert "2 figures available" in win._status_label.text()
+
+    def test_discovery_error_shows_message(self, qtbot: Any) -> None:
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
+
+        with patch(
+            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
+        ):
+            win = FigureLauncherWindow("ws://localhost:8000/plots")
+            qtbot.addWidget(win)
+
+        win._on_discovery_error("Connection refused")
+        assert "Error" in win._status_label.text()
+        assert "Connection refused" in win._status_label.text()
+
+    def test_selecting_plot_enables_launch(self, qtbot: Any) -> None:
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
+
+        with patch(
+            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
+        ):
+            win = FigureLauncherWindow("ws://localhost:8000/plots")
+            qtbot.addWidget(win)
+
+        win._on_discovery_finished(self._make_plots())
+
+        # First item auto-selected, launch should be enabled
+        assert win._launch_button.isEnabled()
+
+    def test_selecting_plot_with_init_schema_shows_form(self, qtbot: Any) -> None:
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
+
+        with patch(
+            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
+        ):
+            win = FigureLauncherWindow("ws://localhost:8000/plots")
+            qtbot.addWidget(win)
+
+        win._on_discovery_finished(self._make_plots())
+        # sine (row 0) has init params
+        win._plot_list.setCurrentRow(0)
+
+        assert not win._init_group.isHidden()
+        assert win._init_form is not None
+        assert "freq" in win._init_form.inputs
+
+    def test_selecting_plot_with_update_schema_shows_form(self, qtbot: Any) -> None:
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
+
+        with patch(
+            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
+        ):
+            win = FigureLauncherWindow("ws://localhost:8000/plots")
+            qtbot.addWidget(win)
+
+        win._on_discovery_finished(self._make_plots())
+        # cosine (row 1) has update params
+        win._plot_list.setCurrentRow(1)
+
+        assert not win._update_group.isHidden()
+        assert win._update_form is not None
+        assert "phase" in win._update_form.inputs
+
+    def test_selecting_plot_hides_irrelevant_forms(self, qtbot: Any) -> None:
+        from unittest.mock import patch
+
+        from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
+
+        with patch(
+            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
+        ):
+            win = FigureLauncherWindow("ws://localhost:8000/plots")
+            qtbot.addWidget(win)
+
+        win._on_discovery_finished(self._make_plots())
+        # sine (row 0) has init but no update
+        win._plot_list.setCurrentRow(0)
+
+        assert not win._init_group.isHidden()
+        assert win._update_group.isHidden()
+
+        # cosine (row 1) has update but empty init
+        win._plot_list.setCurrentRow(1)
+
+        assert win._init_group.isHidden()
+        assert not win._update_group.isHidden()

@@ -15,19 +15,23 @@ Prerequisites
 
        python demos/qt_remote_demo.py
 
-   Or with custom parameters::
+   This opens a **launcher window** that lists all available plots on
+   the server.  Select a plot, fill in parameters, and click Launch.
 
-       python demos/qt_remote_demo.py --url ws://localhost:8000/plots \\
-           --plot sine --frequency 3.0 --amplitude 2.0
+   Or open a specific plot directly *and* show the launcher::
+
+       python demos/qt_remote_demo.py --plot sine frequency=3.0
 
    Or with update parameters (applied after init)::
 
        python demos/qt_remote_demo.py --plot interactive_sine \\
-           --frequency 2.0 --amplitude 1.5 --update phase=1.57
+           frequency=2.0 amplitude=1.5 --update phase=1.57
 
 What you should see
 -------------------
-- One or more Qt windows appear, each showing a server-rendered plot.
+- A launcher window listing all available plots on the server.
+- Selecting a plot shows its init- and update-parameter forms.
+- Clicking Launch opens a Qt window with the server-rendered plot.
 - Pan, zoom, home, back/forward buttons all work — they send commands
   to the server, which re-renders and streams back the updated image.
 - Mouse coordinates appear in the toolbar status bar.
@@ -39,9 +43,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+
+from matplotlib.backends.qt_compat import QtWidgets  # type: ignore[import-untyped]
 
 from mpl_fastapi.remote.backend_qtremote import (
-    run_qt_app,
+    open_launcher,
+    open_remote_figure,
 )
 
 
@@ -58,8 +66,8 @@ def main() -> None:
         "--plot",
         default=None,
         help=(
-            "Plot name to open (e.g. 'sine', 'cosine', 'lissajous').  "
-            "If omitted, opens several demo plots."
+            "Plot name to open directly.  The launcher window is "
+            "always shown; this pre-opens the named plot as well."
         ),
     )
     # Allow arbitrary extra keyword arguments forwarded as init_params
@@ -106,22 +114,33 @@ def main() -> None:
         key, value = kv.split("=", 1)
         update_params[key] = value
 
-    if args.plot:
-        # Open a single named plot
-        specs = [
-            (args.url, args.plot, init_params or None, update_params or None)
-        ]
-    else:
-        # Open several demo plots to show multi-figure support
-        specs = [
-            (args.url, "sine", {"frequency": "2.0", "amplitude": "1.5"}),
-            (args.url, "interactive_sine", {"frequency": "2.0", "amplitude": "1.5"}),
-            (args.url, "cosine", {"damping": "0.3"}),
-            (args.url, "lissajous", {"freq_x": "3", "freq_y": "2", "delta": "1.57"}),
-        ]
+    # Ensure a QApplication exists
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication(sys.argv)
 
-    print(f"Opening {len(specs)} plot(s) on {args.url} ...")
-    run_qt_app(specs, token=token)
+    # Always show the launcher window
+    print(f"Opening launcher for {args.url} ...")
+    launcher = open_launcher(args.url, token=token)
+
+    # If --plot was given, also pre-open that figure directly
+    if args.plot:
+        print(f"Pre-opening plot {args.plot!r} ...")
+        try:
+            mgr = open_remote_figure(
+                url=args.url,
+                plot_name=args.plot,
+                init_params=init_params or None,
+                update_params=update_params or None,
+                token=token,
+            )
+            mgr.show()
+            # Track in launcher so it cleans up on close
+            launcher._managers.append(mgr)
+        except RuntimeError as exc:
+            print(f"Warning: could not open {args.plot!r}: {exc}")
+
+    app.exec()
 
 
 if __name__ == "__main__":

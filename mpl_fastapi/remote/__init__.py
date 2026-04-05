@@ -31,9 +31,12 @@ Batch usage::
     run_qt_app(managers)
 """
 
+from mpl_fastapi.remote.backend_remote import RemotePlotInfo, list_remote_figures
 from mpl_fastapi.remote.transport import RemoteTransport, ServerConfig
 
 __all__ = [
+    "RemotePlotInfo",
     "RemoteTransport",
     "ServerConfig",
+    "list_remote_figures",
 ]

@@ -578,3 +578,29 @@ export interface PlotSchemaResponse {
   init_schema: JSONSchema;
   update_schema: JSONSchema | null;
 }
+
+// ============================================================================
+// Plot Discovery Types (for /plots endpoint)
+// ============================================================================
+
+/**
+ * Information about a single plot from the /plots endpoint
+ */
+export interface PlotListEntry {
+  description: string;
+  /** JSON Schema for init parameters */
+  parameters: JSONSchema;
+  /** JSON Schema for update parameters (null if updates not supported) */
+  update_schema: JSONSchema | null;
+  /** Full WebSocket URL for this plot's v0 endpoint */
+  ws_url: string | null;
+  /** Full HTTP URL for the browser-based viewer */
+  view_url: string | null;
+}
+
+/**
+ * Response from the /plots endpoint
+ */
+export interface PlotsListResponse {
+  plots: Record<string, PlotListEntry>;
+}

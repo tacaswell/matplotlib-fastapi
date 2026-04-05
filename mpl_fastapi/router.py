@@ -320,6 +320,8 @@ class PlotInfo(BaseModel):
     description: str
     parameters: dict[str, Any]
     update_schema: dict[str, Any] | None = None
+    ws_url: str | None = None
+    view_url: str | None = None
 
 
 class PlotsListResponse(BaseModel):
@@ -854,8 +856,23 @@ def create_mpl_router(
 
     # Route: List all available plots (JSON API)
     @router.get("/plots", response_model=PlotsListResponse, dependencies=[Depends(_http_auth)])
-    async def list_plots() -> PlotsListResponse:
+    async def list_plots(request: Request) -> PlotsListResponse:
         """List all available plots with their parameter schemas."""
+        # Derive base URLs from the request so clients get absolute,
+        # ready-to-use WebSocket and HTTP addresses for each plot.
+        http_scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+        host = request.headers.get("x-forwarded-host", request.headers.get("host", ""))
+        ws_scheme = "wss" if http_scheme == "https" else "ws"
+
+        # Extract the router prefix from the request path.
+        # request.url.path for this endpoint is e.g. "/plots/plots";
+        # stripping the trailing "/plots" gives the prefix.
+        req_path = request.url.path.rstrip("/")
+        if req_path.endswith("/plots"):
+            prefix = req_path[: -len("/plots")]
+        else:
+            prefix = req_path
+
         plots_info = {}
         for name, config in plot_generators.items():
             update_schema = None
@@ -866,6 +883,8 @@ def create_mpl_router(
                 description=config.description,
                 parameters=config.init.params_model.model_json_schema(),
                 update_schema=update_schema,
+                ws_url=f"{ws_scheme}://{host}{prefix}/ws/v0/{name}",
+                view_url=f"{http_scheme}://{host}{prefix}/plot/{name}",
             )
         return PlotsListResponse(plots=plots_info)
 

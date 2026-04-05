@@ -222,6 +222,35 @@
         <div id="log4" class="log"></div>
     </div>
 
+    <!-- Demo 5: Discovery -->
+    <div class="demo-section">
+        <h2>Demo 5: Server Discovery</h2>
+        <p>
+            Discover available plots via <code>mpl.listPlots()</code>, then select
+            one from the dropdown to connect automatically.  Init parameters are
+            auto-generated from the server's JSON Schema.
+        </p>
+
+        <div class="controls" id="discovery-controls">
+            <label>
+                Plot:
+                <select id="discovery-select" disabled>
+                    <option>Loading…</option>
+                </select>
+            </label>
+            <button id="discovery-open-btn" onclick="openDiscoveredPlot()" disabled>Open Plot</button>
+        </div>
+
+        <!-- Init params form (populated dynamically) -->
+        <div id="discovery-params" style="margin: 10px 0; padding: 10px; background: #e9ecef; border-radius: 4px; display: none;">
+            <strong>Init Parameters</strong>
+            <form id="discovery-init-form" style="margin-top: 8px;"></form>
+        </div>
+
+        <div id="plot5" class="plot-container" style="min-height: 0;"></div>
+        <div id="log5" class="log"></div>
+    </div>
+
     <!-- API Reference -->
     <div class="demo-section">
         <h2>API Reference</h2>
@@ -423,9 +452,129 @@ import { MatplotlibEmbeddable } from 'mpl-fastapi';</code></pre>
             }
         }
 
+        // Demo 5: Discovery
+        let plot5;
+        let discoveredPlots = {};
+
+        // Fetch available plots on load
+        (async function initDiscovery() {
+            try {
+                const response = await mpl.listPlots('/plots');
+                discoveredPlots = response.plots;
+                const select = document.getElementById('discovery-select');
+                select.innerHTML = '';
+
+                const names = Object.keys(discoveredPlots);
+                if (names.length === 0) {
+                    select.innerHTML = '<option>No plots available</option>';
+                    log('log5', 'No plots found on server', 'info');
+                    return;
+                }
+
+                for (const name of names) {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = `${name} — ${discoveredPlots[name].description}`;
+                    select.appendChild(opt);
+                }
+
+                select.disabled = false;
+                document.getElementById('discovery-open-btn').disabled = false;
+
+                // Show init param form for the first plot
+                select.addEventListener('change', () => buildDiscoveryParamsForm(select.value));
+                buildDiscoveryParamsForm(names[0]);
+
+                log('log5', `Discovered ${names.length} plot(s) via listPlots()`, 'success');
+            } catch (error) {
+                log('log5', `Discovery failed: ${error.message}`, 'error');
+            }
+        })();
+
+        function buildDiscoveryParamsForm(plotName) {
+            const entry = discoveredPlots[plotName];
+            const form = document.getElementById('discovery-init-form');
+            const paramsDiv = document.getElementById('discovery-params');
+            form.innerHTML = '';
+
+            const schema = entry.parameters;
+            const properties = (schema && schema.properties) || {};
+            const propNames = Object.keys(properties);
+
+            if (propNames.length === 0) {
+                paramsDiv.style.display = 'none';
+                return;
+            }
+            paramsDiv.style.display = 'block';
+
+            for (const name of propNames) {
+                const prop = properties[name];
+                const div = document.createElement('div');
+                div.style.marginBottom = '8px';
+
+                const label = document.createElement('label');
+                label.textContent = (prop.title || name) + ': ';
+                label.style.marginRight = '8px';
+
+                const input = document.createElement('input');
+                input.name = name;
+                input.type = (prop.type === 'number' || prop.type === 'integer') ? 'number' : 'text';
+                input.step = prop.type === 'integer' ? '1' : 'any';
+                if (prop.minimum !== undefined) input.min = String(prop.minimum);
+                if (prop.maximum !== undefined) input.max = String(prop.maximum);
+                if (prop.default !== undefined) input.value = String(prop.default);
+                input.style.padding = '4px';
+                input.style.width = '120px';
+
+                div.appendChild(label);
+                div.appendChild(input);
+                form.appendChild(div);
+            }
+        }
+
+        function openDiscoveredPlot() {
+            const select = document.getElementById('discovery-select');
+            const plotName = select.value;
+            if (!plotName) return;
+
+            // Gather init params from the form
+            const form = document.getElementById('discovery-init-form');
+            const initParams = {};
+            const inputs = form.querySelectorAll('input');
+            inputs.forEach(inp => {
+                let val = inp.value;
+                if (inp.type === 'number') val = parseFloat(val);
+                if (val !== '' && !isNaN(val)) initParams[inp.name] = val;
+            });
+
+            // Disconnect previous plot if any
+            if (plot5) {
+                plot5.disconnect();
+                plot5 = null;
+            }
+
+            const container = document.getElementById('plot5');
+            container.style.minHeight = '400px';
+
+            try {
+                plot5 = new MatplotlibEmbeddable({
+                    container: container,
+                    plotName: plotName,
+                    baseUrl: '/plots',
+                    initParams: initParams,
+                    onConnect: () => log('log5', `✓ Connected to ${plotName}`, 'success'),
+                    onError: (error) => log('log5', `✗ Error: ${error.message}`, 'error'),
+                    onDisconnect: () => log('log5', 'Disconnected', 'info'),
+                });
+                log('log5', `Opening ${plotName} with params: ${JSON.stringify(initParams)}`, 'info');
+            } catch (error) {
+                log('log5', `Failed: ${error.message}`, 'error');
+            }
+        }
+
         // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
-            [plot1, plot2, plot3a, plot3b, plot4].forEach(plot => {
+            [plot1, plot2, plot3a, plot3b, plot4, plot5].forEach(plot => {
                 if (plot) plot.disconnect();
             });
         });

@@ -55,7 +55,9 @@ from matplotlib.figure import Figure
 
 from mpl_fastapi.remote.backend_remote import (
     FigureCanvasRemote,
+    RemotePlotInfo,
     RemoteNavigationToolbar2,
+    list_remote_figures,
 )
 from mpl_fastapi.remote.transport import (
     RemoteTransport,
@@ -65,10 +67,13 @@ from mpl_fastapi.remote.transport import (
 
 __all__ = [
     "FigureCanvasQTRemote",
+    "FigureLauncherWindow",
     "FigureManagerQTRemote",
     "NavigationToolbar2QTRemote",
+    "SchemaFormBuilder",
     "TransportThread",
     "UpdateParametersWidget",
+    "open_launcher",
     "open_remote_figure",
     "open_remote_figures",
     "run_qt_app",
@@ -668,67 +673,43 @@ class NavigationToolbar2QTRemote(RemoteNavigationToolbar2, NavigationToolbar2QT)
 
 
 # ---------------------------------------------------------------------------
-# Update parameters widget
+# Reusable JSON-Schema form builder
 # ---------------------------------------------------------------------------
 
 
-class UpdateParametersWidget(QtWidgets.QDockWidget):
-    """Dockable parameter editor driven by a JSON Schema.
+class SchemaFormBuilder:
+    """Build Qt form widgets from a JSON Schema.
 
-    When the server's ``update_schema`` is non-null, this widget provides
-    a form with one input per parameter.  Submitting the form sends an
-    ``update_params`` message to the server, which re-renders the figure.
-
-    The widget is auto-generated from the JSON Schema included in the
-    server's ``config`` handshake message.
+    This is a plain helper class (not a QWidget) that can populate any
+    ``QFormLayout`` with input widgets derived from a JSON Schema's
+    ``properties``.  It is used by both :class:`UpdateParametersWidget`
+    (for live update forms) and :class:`FigureLauncherWindow` (for
+    init / update parameter forms in the launcher).
 
     Parameters
     ----------
     schema : dict
-        JSON Schema for the update parameters (from ``ServerConfig.update_schema``).
-    canvas : FigureCanvasQTRemote
-        Canvas to send update messages through.
-    parent : QWidget, optional
-        Parent widget.
+        JSON Schema with a ``properties`` key.
     """
 
-    # Emitted when the user submits new parameters.
-    params_submitted = QtCore.Signal(dict)
-
-    def __init__(
-        self,
-        schema: dict[str, Any],
-        canvas: FigureCanvasQTRemote,
-        parent: QtWidgets.QWidget | None = None,
-    ) -> None:
-        super().__init__("Update Parameters", parent)
+    def __init__(self, schema: dict[str, Any]) -> None:
         self._schema = schema
-        self._canvas = canvas
         self._inputs: dict[str, QtWidgets.QWidget] = {}
 
-        self.setAllowedAreas(
-            QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
-            | QtCore.Qt.DockWidgetArea.RightDockWidgetArea
-            | QtCore.Qt.DockWidgetArea.BottomDockWidgetArea
-        )
-        self.setFeatures(
-            QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetFloatable
-        )
+    @property
+    def inputs(self) -> dict[str, QtWidgets.QWidget]:
+        """Mapping of property name → input widget."""
+        return self._inputs
 
-        self._build_form()
+    def build_form(self, layout: QtWidgets.QFormLayout) -> None:
+        """Populate *layout* with labelled input widgets.
 
-    # -- form construction --------------------------------------------------
-
-    def _build_form(self) -> None:
-        """Build the form widgets from the JSON Schema."""
-        container = QtWidgets.QWidget()
-        layout = QtWidgets.QFormLayout(container)
-        layout.setFieldGrowthPolicy(
-            QtWidgets.QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
-        )
-
-        properties = self._schema["properties"]
+        Parameters
+        ----------
+        layout : QFormLayout
+            The layout to add rows to.
+        """
+        properties = self._schema.get("properties", {})
         required_fields = set(self._schema.get("required", []))
 
         for name, prop in properties.items():
@@ -741,46 +722,31 @@ class UpdateParametersWidget(QtWidgets.QDockWidget):
                 layout.addRow(label_text, widget)
                 self._inputs[name] = widget
 
-        # Submit button
-        button_row = QtWidgets.QHBoxLayout()
-        self._submit_button = QtWidgets.QPushButton("Update")
-        self._submit_button.clicked.connect(self._on_submit)
-        self._reset_button = QtWidgets.QPushButton("Reset")
-        self._reset_button.clicked.connect(self._on_reset)
-        button_row.addWidget(self._submit_button)
-        button_row.addWidget(self._reset_button)
-        button_row.addStretch()
-        layout.addRow(button_row)
+    # -- widget factory -----------------------------------------------------
 
-        # Wrap in a scroll area for schemas with many parameters
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(container)
-        self.setWidget(scroll)
-
+    @staticmethod
     def _create_input_widget(
-        self,
         name: str,
         prop: dict[str, Any],
-        required: bool,  # noqa: ARG002
+        required: bool,  # noqa: ARG004
     ) -> QtWidgets.QWidget | None:
         """Create an appropriate input widget for a JSON Schema property.
 
         Parameters
         ----------
         name : str
-            Property name.
+            Property name (used as the widget's ``objectName``).
         prop : dict
             JSON Schema property descriptor.
         required : bool
-            Whether the field is required by the schema.
+            Whether the field is required.
 
         Returns
         -------
         QWidget or None
-            The input widget, or ``None`` if the type is unsupported.
+            The created widget, or ``None`` for unsupported types.
         """
-        prop_type = prop["type"]
+        prop_type = prop.get("type", "string")
         default = prop.get("default")
 
         if prop_type in ("number", "integer"):
@@ -788,7 +754,6 @@ class UpdateParametersWidget(QtWidgets.QDockWidget):
             widget.setObjectName(name)
             widget.setDecimals(4 if prop_type == "number" else 0)
 
-            # Range
             minimum = prop.get("minimum", prop.get("exclusiveMinimum"))
             maximum = prop.get("maximum", prop.get("exclusiveMaximum"))
             if minimum is not None:
@@ -800,7 +765,6 @@ class UpdateParametersWidget(QtWidgets.QDockWidget):
             else:
                 widget.setMaximum(1e9)
 
-            # Step — pick a sensible default based on range
             if minimum is not None and maximum is not None:
                 span = float(maximum) - float(minimum)
                 widget.setSingleStep(span / 100)
@@ -820,7 +784,6 @@ class UpdateParametersWidget(QtWidgets.QDockWidget):
             return widget
 
         if prop_type == "string":
-            # Handle enums as combo boxes
             enum_values = prop.get("enum")
             if enum_values is not None:
                 widget = QtWidgets.QComboBox()
@@ -832,7 +795,6 @@ class UpdateParametersWidget(QtWidgets.QDockWidget):
                     if idx >= 0:
                         widget.setCurrentIndex(idx)
                 return widget
-            # Plain string → line edit
             widget = QtWidgets.QLineEdit()
             widget.setObjectName(name)
             if default is not None:
@@ -853,9 +815,9 @@ class UpdateParametersWidget(QtWidgets.QDockWidget):
             Parameter name → value, with types matching the schema.
         """
         values: dict[str, Any] = {}
-        properties = self._schema["properties"]
+        properties = self._schema.get("properties", {})
         for name, widget in self._inputs.items():
-            prop_type = properties[name]["type"]
+            prop_type = properties[name].get("type", "string")
             if isinstance(widget, QtWidgets.QDoubleSpinBox):
                 val = widget.value()
                 if prop_type == "integer":
@@ -892,6 +854,112 @@ class UpdateParametersWidget(QtWidgets.QDockWidget):
             elif isinstance(widget, QtWidgets.QLineEdit):
                 widget.setText(str(value))
 
+    def reset_to_defaults(self) -> None:
+        """Reset all inputs to their schema default values."""
+        properties = self._schema.get("properties", {})
+        defaults = {
+            name: prop["default"]
+            for name, prop in properties.items()
+            if "default" in prop
+        }
+        self.set_values(defaults)
+
+
+# ---------------------------------------------------------------------------
+# Update parameters widget
+# ---------------------------------------------------------------------------
+
+
+class UpdateParametersWidget(QtWidgets.QDockWidget):
+    """Dockable parameter editor driven by a JSON Schema.
+
+    When the server's ``update_schema`` is non-null, this widget provides
+    a form with one input per parameter.  Submitting the form sends an
+    ``update_params`` message to the server, which re-renders the figure.
+
+    The widget is auto-generated from the JSON Schema included in the
+    server's ``config`` handshake message.
+
+    Parameters
+    ----------
+    schema : dict
+        JSON Schema for the update parameters (from ``ServerConfig.update_schema``).
+    canvas : FigureCanvasQTRemote
+        Canvas to send update messages through.
+    parent : QWidget, optional
+        Parent widget.
+    """
+
+    # Emitted when the user submits new parameters.
+    params_submitted = QtCore.Signal(dict)
+
+    def __init__(
+        self,
+        schema: dict[str, Any],
+        canvas: FigureCanvasQTRemote,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__("Update Parameters", parent)
+        self._schema = schema
+        self._canvas = canvas
+        self._form = SchemaFormBuilder(schema)
+
+        self.setAllowedAreas(
+            QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
+            | QtCore.Qt.DockWidgetArea.RightDockWidgetArea
+            | QtCore.Qt.DockWidgetArea.BottomDockWidgetArea
+        )
+        self.setFeatures(
+            QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+
+        self._build_form()
+
+    @property
+    def _inputs(self) -> dict[str, QtWidgets.QWidget]:
+        """Backwards-compatible access to input widgets via the form builder."""
+        return self._form.inputs
+
+    # -- form construction --------------------------------------------------
+
+    def _build_form(self) -> None:
+        """Build the form widgets from the JSON Schema."""
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(container)
+        layout.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+        )
+
+        self._form.build_form(layout)
+
+        # Submit button
+        button_row = QtWidgets.QHBoxLayout()
+        self._submit_button = QtWidgets.QPushButton("Update")
+        self._submit_button.clicked.connect(self._on_submit)
+        self._reset_button = QtWidgets.QPushButton("Reset")
+        self._reset_button.clicked.connect(self._on_reset)
+        button_row.addWidget(self._submit_button)
+        button_row.addWidget(self._reset_button)
+        button_row.addStretch()
+        layout.addRow(button_row)
+
+        # Wrap in a scroll area for schemas with many parameters
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(container)
+        self.setWidget(scroll)
+
+    # -- value extraction (delegated to SchemaFormBuilder) -------------------
+
+    def get_values(self) -> dict[str, Any]:
+        """Read current form values and return as a dict."""
+        return self._form.get_values()
+
+    def set_values(self, params: dict[str, Any]) -> None:
+        """Programmatically set form values."""
+        self._form.set_values(params)
+
     # -- slots --------------------------------------------------------------
 
     def _on_submit(self) -> None:
@@ -903,13 +971,7 @@ class UpdateParametersWidget(QtWidgets.QDockWidget):
 
     def _on_reset(self) -> None:
         """Reset all inputs to their schema default values."""
-        properties = self._schema["properties"]
-        defaults = {
-            name: prop["default"]
-            for name, prop in properties.items()
-            if "default" in prop
-        }
-        self.set_values(defaults)
+        self._form.reset_to_defaults()
 
 
 # ---------------------------------------------------------------------------
@@ -1294,3 +1356,281 @@ def run_qt_app(
         mgr.show()
 
     app.exec()
+
+
+# ---------------------------------------------------------------------------
+# Discovery worker thread
+# ---------------------------------------------------------------------------
+
+
+class _DiscoveryWorker(QtCore.QThread):
+    """Background thread that queries the server for available plots."""
+
+    finished = QtCore.Signal(list)   # list[RemotePlotInfo]
+    error = QtCore.Signal(str)
+
+    def __init__(
+        self,
+        base_url: str,
+        token: str | None,
+        parent: QtCore.QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._base_url = base_url
+        self._token = token
+
+    def run(self) -> None:
+        try:
+            plots = list_remote_figures(self._base_url, token=self._token)
+            self.finished.emit(plots)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Figure launcher window
+# ---------------------------------------------------------------------------
+
+
+class FigureLauncherWindow(QtWidgets.QMainWindow):
+    """Launcher window that discovers remote plots and lets the user open them.
+
+    On construction, queries the server's ``/plots`` endpoint in a
+    background thread.  The left panel shows a list of available plots;
+    selecting one populates the right panel with init- and
+    update-parameter forms (built via :class:`SchemaFormBuilder`).
+    Clicking **Launch** opens the figure via :func:`open_remote_figure`.
+
+    The window stays open after launching figures so the user can open
+    more.
+
+    Parameters
+    ----------
+    base_url : str
+        Server base URL (``ws://`` or ``http://``).
+    token : str, optional
+        Authentication token.
+    parent : QWidget, optional
+        Parent widget.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        token: str | None = None,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._base_url = base_url
+        self._token = token
+        self._plots: list[RemotePlotInfo] = []
+        self._managers: list[FigureManagerQTRemote] = []
+        self._init_form: SchemaFormBuilder | None = None
+        self._update_form: SchemaFormBuilder | None = None
+
+        self.setWindowTitle("mpl_fastapi — Figure Launcher")
+        self.setMinimumSize(700, 450)
+
+        self._build_ui()
+        self._start_discovery()
+
+    # -- UI construction ----------------------------------------------------
+
+    def _build_ui(self) -> None:
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self.setCentralWidget(splitter)
+
+        # --- left panel: plot list ---
+        left = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left)
+        left_layout.setContentsMargins(4, 4, 4, 4)
+
+        left_layout.addWidget(QtWidgets.QLabel("<b>Available Figures</b>"))
+
+        self._plot_list = QtWidgets.QListWidget()
+        self._plot_list.currentRowChanged.connect(self._on_plot_selected)
+        left_layout.addWidget(self._plot_list)
+
+        self._status_label = QtWidgets.QLabel("Loading…")
+        left_layout.addWidget(self._status_label)
+
+        splitter.addWidget(left)
+
+        # --- right panel: parameter forms + launch button ---
+        right = QtWidgets.QWidget()
+        self._right_layout = QtWidgets.QVBoxLayout(right)
+        self._right_layout.setContentsMargins(4, 4, 4, 4)
+
+        self._desc_label = QtWidgets.QLabel()
+        self._desc_label.setWordWrap(True)
+        self._right_layout.addWidget(self._desc_label)
+
+        # Init params group
+        self._init_group = QtWidgets.QGroupBox("Init Parameters")
+        self._init_form_layout = QtWidgets.QFormLayout()
+        self._init_form_layout.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+        )
+        self._init_group.setLayout(self._init_form_layout)
+        self._right_layout.addWidget(self._init_group)
+        self._init_group.hide()
+
+        # Update params group
+        self._update_group = QtWidgets.QGroupBox("Update Parameters")
+        self._update_form_layout = QtWidgets.QFormLayout()
+        self._update_form_layout.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+        )
+        self._update_group.setLayout(self._update_form_layout)
+        self._right_layout.addWidget(self._update_group)
+        self._update_group.hide()
+
+        self._right_layout.addStretch()
+
+        # Launch button
+        self._launch_button = QtWidgets.QPushButton("Launch")
+        self._launch_button.setEnabled(False)
+        self._launch_button.clicked.connect(self._on_launch)
+        self._right_layout.addWidget(self._launch_button)
+
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+
+    # -- discovery ----------------------------------------------------------
+
+    def _start_discovery(self) -> None:
+        self._worker = _DiscoveryWorker(self._base_url, self._token, parent=self)
+        self._worker.finished.connect(self._on_discovery_finished)
+        self._worker.error.connect(self._on_discovery_error)
+        self._worker.start()
+
+    def _on_discovery_finished(self, plots: list[RemotePlotInfo]) -> None:
+        self._plots = plots
+        self._plot_list.clear()
+        for plot in plots:
+            self._plot_list.addItem(f"{plot.name}  —  {plot.description}")
+        count = len(plots)
+        self._status_label.setText(f"{count} figure{'s' if count != 1 else ''} available")
+        if plots:
+            self._plot_list.setCurrentRow(0)
+
+    def _on_discovery_error(self, message: str) -> None:
+        self._status_label.setText(f"Error: {message}")
+        logger.error("Discovery failed: %s", message)
+
+    # -- plot selection -----------------------------------------------------
+
+    def _on_plot_selected(self, row: int) -> None:
+        if row < 0 or row >= len(self._plots):
+            self._launch_button.setEnabled(False)
+            return
+
+        plot = self._plots[row]
+        self._desc_label.setText(f"<b>{plot.name}</b><br>{plot.description}")
+
+        # Rebuild init form
+        self._clear_form_layout(self._init_form_layout)
+        if plot.init_schema and plot.init_schema.get("properties"):
+            self._init_form = SchemaFormBuilder(plot.init_schema)
+            self._init_form.build_form(self._init_form_layout)
+            self._init_group.show()
+        else:
+            self._init_form = None
+            self._init_group.hide()
+
+        # Rebuild update form
+        self._clear_form_layout(self._update_form_layout)
+        if plot.update_schema and plot.update_schema.get("properties"):
+            self._update_form = SchemaFormBuilder(plot.update_schema)
+            self._update_form.build_form(self._update_form_layout)
+            self._update_group.show()
+        else:
+            self._update_form = None
+            self._update_group.hide()
+
+        self._launch_button.setEnabled(True)
+
+    @staticmethod
+    def _clear_form_layout(layout: QtWidgets.QFormLayout) -> None:
+        """Remove all rows from a QFormLayout."""
+        while layout.rowCount() > 0:
+            layout.removeRow(0)
+
+    # -- launch -------------------------------------------------------------
+
+    def _on_launch(self) -> None:
+        row = self._plot_list.currentRow()
+        if row < 0 or row >= len(self._plots):
+            return
+
+        plot = self._plots[row]
+
+        init_params = self._init_form.get_values() if self._init_form else None
+        update_params = self._update_form.get_values() if self._update_form else None
+
+        # Derive the ws base URL from the plot's ws_url by stripping
+        # the /ws/v0/{name} suffix.
+        ws_base = plot.ws_url
+        suffix = f"/ws/v0/{plot.name}"
+        if ws_base.endswith(suffix):
+            ws_base = ws_base[: -len(suffix)]
+
+        try:
+            mgr = open_remote_figure(
+                url=ws_base,
+                plot_name=plot.name,
+                init_params=init_params,
+                update_params=update_params or None,
+                token=self._token,
+            )
+            mgr.show()
+            self._managers.append(mgr)
+        except RuntimeError as exc:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Connection Failed",
+                f"Could not open {plot.name!r}:\n{exc}",
+            )
+
+    # -- cleanup ------------------------------------------------------------
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        # Clean up any managers we launched
+        for mgr in self._managers:
+            try:
+                mgr.destroy()
+            except Exception:
+                pass
+        self._managers.clear()
+        super().closeEvent(event)
+
+
+def open_launcher(
+    base_url: str,
+    *,
+    token: str | None = None,
+) -> FigureLauncherWindow:
+    """Create and show a :class:`FigureLauncherWindow`.
+
+    Creates a ``QApplication`` if one does not already exist.
+
+    Parameters
+    ----------
+    base_url : str
+        Server base URL (``ws://`` or ``http://``).
+    token : str, optional
+        Authentication token.
+
+    Returns
+    -------
+    FigureLauncherWindow
+    """
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication(sys.argv)
+
+    launcher = FigureLauncherWindow(base_url, token=token)
+    launcher.show()
+    return launcher

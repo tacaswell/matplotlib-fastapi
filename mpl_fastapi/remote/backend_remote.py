@@ -11,11 +11,15 @@ provide actual widget rendering and event loop integration.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 import threading
 import time
+import urllib.parse
+import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any, ClassVar, cast
 
@@ -39,6 +43,8 @@ __all__ = [
     "FigureCanvasRemote",
     "FigureManagerRemote",
     "RemoteNavigationToolbar2",
+    "RemotePlotInfo",
+    "list_remote_figures",
 ]
 
 logger = logging.getLogger(__name__)
@@ -858,6 +864,104 @@ class RemoteNavigationToolbar2(NavigationToolbar2):
         """Remove rubberband."""
         self.canvas._rubberband_rect = None
         self.canvas.schedule_repaint()
+
+
+# ---------------------------------------------------------------------------
+# Remote plot discovery
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RemotePlotInfo:
+    """Metadata about a single remote plot, returned by :func:`list_remote_figures`.
+
+    Attributes
+    ----------
+    name : str
+        Plot name (key in the server's plot registry).
+    description : str
+        Human-readable plot description.
+    ws_url : str
+        Full WebSocket URL for this plot's v0 endpoint.
+    view_url : str
+        Full HTTP URL for the browser-based viewer.
+    init_schema : dict
+        JSON Schema for initialisation parameters.
+    update_schema : dict or None
+        JSON Schema for update parameters, or *None* if the plot
+        does not support dynamic updates.
+    """
+
+    name: str
+    description: str
+    ws_url: str
+    view_url: str
+    init_schema: dict[str, Any] = field(default_factory=dict)
+    update_schema: dict[str, Any] | None = None
+
+
+def list_remote_figures(
+    base_url: str,
+    *,
+    token: str | None = None,
+    timeout: float = 10.0,
+) -> list[RemotePlotInfo]:
+    """Query a remote mpl_fastapi server for available plots.
+
+    Fetches the ``/plots`` JSON endpoint and returns a list of
+    :class:`RemotePlotInfo` objects describing each available figure.
+
+    Parameters
+    ----------
+    base_url : str
+        Server base URL.  Both ``ws://`` / ``wss://`` and
+        ``http://`` / ``https://`` schemes are accepted — WebSocket
+        schemes are converted to HTTP automatically.
+    token : str, optional
+        Authentication token.  Sent via ``Authorization: Bearer``
+        header when provided.
+    timeout : float
+        HTTP request timeout in seconds.  Default 10.
+
+    Returns
+    -------
+    list of RemotePlotInfo
+
+    Raises
+    ------
+    urllib.error.URLError
+        If the server is unreachable.
+    RuntimeError
+        If the server returns an unexpected response.
+    """
+    parsed = urllib.parse.urlparse(base_url)
+    scheme = parsed.scheme
+    if scheme in ("ws", "wss"):
+        scheme = "https" if scheme == "wss" else "http"
+    http_base = f"{scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
+    url = f"{http_base}/plots"
+
+    req = urllib.request.Request(url)
+    if token is not None:
+        req.add_header("Authorization", f"Bearer {token}")
+
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read())
+
+    plots_dict = data.get("plots", {})
+    results: list[RemotePlotInfo] = []
+    for name, info in plots_dict.items():
+        results.append(
+            RemotePlotInfo(
+                name=name,
+                description=info.get("description", ""),
+                ws_url=info.get("ws_url", ""),
+                view_url=info.get("view_url", ""),
+                init_schema=info.get("parameters", {}),
+                update_schema=info.get("update_schema"),
+            )
+        )
+    return results
 
 
 class FigureManagerRemote(FigureManagerBase):
