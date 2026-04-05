@@ -52,7 +52,7 @@ This enables **shareable URIs** that capture the full figure state:
 
 The v0 protocol consolidates the handshake into just 2 messages:
 
-```mermaid
+```{mermaid}
 sequenceDiagram
     participant Client as Browser (TypeScript)
     participant Router as FastAPI Router
@@ -63,7 +63,7 @@ sequenceDiagram
     Client->>Router: WebSocket connect to /ws/v0/{plot_name}?{init_params}&_update.{key}={value}
     Router->>Router: Validate plot exists
     Router->>Router: Accept WebSocket connection
-    
+
     Note over Client,Router: Client sends init (REQUIRED first message)
     Client->>Router: {"type": "init", "protocol_version": 0, "device_pixel_ratio": 2.0, "supports_binary": true}
     Router->>Router: Validate protocol version
@@ -76,21 +76,21 @@ sequenceDiagram
     Router->>Router: Create FastAPICanvas(fig)
     Router->>Router: Create FastAPIManger(canvas)
     Router->>Router: Apply device_pixel_ratio
-    
+
     Note over Router: Server sends consolidated config message
     Router->>Client: {"type": "config", "protocol_version": 0, "connection_id": "<uuid>", "figure": {...}, "toolbar": {...}, "save": {...}, "image": {...}, "update_schema": {...}}
-    
+
     Note over Client: Client receives config and completes setup
     Client->>Client: Set canvas_div size from figure.size
     Client->>Client: Initialize toolbar from toolbar.items
     Client->>Client: Mark _initialized = true
-    
+
     Note over Client,Router: Client requests first render
     Client->>Router: {"type": "refresh"}
     Router->>Executor: _sync_draw_figure(canvas)
     Executor-->>Router: Return (image_bytes, is_diff=false)
     Router->>Client: <8-byte header + PNG data>
-    
+
     Note over Client,Router: Connection ready for interaction
 ```
 
@@ -386,7 +386,7 @@ Server-initiated resize (e.g., from figure.set_size_inches).
 
 ### Idle Draw Pattern
 
-```mermaid
+```{mermaid}
 sequenceDiagram
     participant Client as Browser
     participant Router as FastAPI Router
@@ -397,19 +397,19 @@ sequenceDiagram
     Backend-->>Router: (handler returns)
     Router->>Router: Drain queue
     Router->>Client: {"type": "invalidate"}
-    
+
     Note over Client: Client receives invalidate
     Client->>Router: {"type": "render"}
     Router->>Router: Execute _sync_draw_figure in thread pool
     Router->>Client: <8-byte header + PNG data>
-    
+
     Note over Client: Client displays image
     Client->>Client: Parse header, create blob, update canvas
 ```
 
 ### Full Refresh Pattern
 
-```mermaid
+```{mermaid}
 sequenceDiagram
     participant Client as Browser
     participant Router as FastAPI Router

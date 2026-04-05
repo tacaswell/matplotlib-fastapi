@@ -96,3 +96,4 @@ mpl_fastapi/static/js/dist/
 !mpl_fastapi/static/js/dist/.gitkeep
 
 docs/_ts_api
+docs/source/_as_gen
