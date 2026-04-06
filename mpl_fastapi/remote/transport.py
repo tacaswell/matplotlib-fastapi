@@ -287,8 +287,19 @@ class RemoteTransport:
         """
         self._loop = asyncio.get_running_loop()
 
+        # Derive an Origin header from the URL so server-side origin checks
+        # (when BACKEND_CORS_ORIGINS is configured) accept native clients.
+        # The convention for non-browser WebSocket clients is to use the
+        # server's own origin (scheme + host + port).
+        from urllib.parse import urlparse
+        _parsed = urlparse(self._url)
+        _scheme = "https" if _parsed.scheme in ("wss",) else "http"
+        _origin = f"{_scheme}://{_parsed.netloc}"
+
         logger.info("Connecting to %s", self._url)
-        self._ws = await websockets.connect(self._url)
+        self._ws = await websockets.connect(
+            self._url, additional_headers={"Origin": _origin}
+        )
 
         # --- v0 handshake: send init, receive config ---
         init_msg = {

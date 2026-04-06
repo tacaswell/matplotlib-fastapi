@@ -24,6 +24,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from mpl_fastapi.auth import COOKIE_NAME, SingleUserToken
@@ -40,6 +41,7 @@ def build_app(
     version: str = "1.0.0",
     prefix: str = "/plots",
     auth: SingleUserToken | None = None,
+    allowed_origins: list[str] | None = None,
 ) -> FastAPI:
     """Build a fully-configured FastAPI application from a plots mapping.
 
@@ -59,6 +61,14 @@ def build_app(
         Authentication policy.  Defaults to a :class:`SingleUserToken` whose
         token comes from the ``MPL_FASTAPI_TOKEN`` environment variable (or a
         freshly-generated random token when the variable is absent).
+    allowed_origins:
+        Explicit list of origins permitted to make cross-origin requests, e.g.
+        ``["https://example.com", "http://localhost:3000"]``.  When ``None``
+        (the default) the ``BACKEND_CORS_ORIGINS`` environment variable is
+        read and split on commas.  If neither is provided no cross-origin
+        access is allowed.  Never pass ``["*"]`` — the cookie-based auth
+        token cannot be sent with credentialled wildcard requests and a
+        wildcard defeats the purpose of the token entirely.
 
     Returns
     -------
@@ -68,10 +78,30 @@ def build_app(
     if auth is None:
         auth = SingleUserToken()
 
-    mpl = create_mpl_router(plots, auth=auth)
+    # Resolve origins from env var when not supplied programmatically.
+    # Wildcards are forbidden: credentialled requests (cookies) require an
+    # exact origin match and a wildcard defeats the token auth entirely.
+    if allowed_origins is None:
+        raw = os.environ.get("BACKEND_CORS_ORIGINS", "")
+        allowed_origins = [o.strip() for o in raw.split(",") if o.strip()]
+    if "*" in allowed_origins:
+        raise ValueError(
+            "allowed_origins must not contain '*': wildcard CORS is incompatible "
+            "with cookie-based authentication.  List exact origins instead."
+        )
+
+    mpl = create_mpl_router(plots, auth=auth, allowed_origins=allowed_origins)
 
     app = FastAPI(title=title, description=description, version=version)
 
+    # HTTP CORS — same origin list as the WebSocket check above.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization"],
+    )
     # Set an auth cookie whenever ?token= appears on any request, not just
     # the protected plot routes.  This lets unprotected pages (index, etc.)
     # propagate the token for subsequent navigations.

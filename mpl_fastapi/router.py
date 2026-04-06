@@ -731,6 +731,7 @@ def create_mpl_router(
     template_dir: Path | str | None = None,
     static_mount_path: str = "/mpl-static",
     auth: AuthPolicy | None = None,
+    allowed_origins: list[str] | None = None,
 ) -> MPLRouter:
     """
     Create a mountable router for matplotlib figures.
@@ -753,6 +754,15 @@ def create_mpl_router(
         :class:`~mpl_fastapi.auth.SingleUserToken` for bearer-token
         protection, or supply any object satisfying the
         :class:`~mpl_fastapi.auth.AuthPolicy` protocol.
+    allowed_origins : list[str] or None, optional
+        Explicit list of origins permitted to open WebSocket connections,
+        e.g. ``["https://example.com", "http://localhost:3000"]``.
+        When ``None`` (the default) the ``BACKEND_CORS_ORIGINS``
+        environment variable is read and split on commas.  An empty list
+        means *any* origin is allowed (permissive, suitable for local
+        development or fully token-protected deployments).  Note: browsers
+        do not enforce CORS on WebSocket upgrades; this check is
+        server-side enforcement of the same policy.
 
     Returns
     -------
@@ -806,6 +816,21 @@ def create_mpl_router(
         auth = NoAuth()
     _http_auth = auth.http_dependency()
     _ws_auth = auth.ws_dependency()
+
+    # Resolve WebSocket origin allow-list.
+    # None / [] → no restriction (any origin accepted).
+    # Non-empty list → only those origins may open connections.
+    _ws_allowed_origins: frozenset[str] = frozenset(allowed_origins or [])
+
+    async def _check_ws_origin(websocket: WebSocket) -> None:
+        """Dependency: reject WebSocket upgrades from disallowed origins."""
+        if not _ws_allowed_origins:
+            return  # no restriction configured
+        origin = websocket.headers.get("origin", "")
+        if origin not in _ws_allowed_origins:
+            await websocket.close(code=1008, reason="Origin not allowed")
+            from fastapi import WebSocketException
+            raise WebSocketException(code=1008, reason="Origin not allowed")
 
     # Create state instance for this router
     router_state = RouterState()
@@ -1002,7 +1027,7 @@ def create_mpl_router(
         )
 
     # Route: WebSocket connection for interactive plotting (v0 protocol)
-    @router.websocket("/ws/v0/{plot_name}", dependencies=[Depends(_ws_auth)])
+    @router.websocket("/ws/v0/{plot_name}", dependencies=[Depends(_ws_auth), Depends(_check_ws_origin)])
     async def websocket_endpoint_v0(websocket: WebSocket, plot_name: str) -> None:
         """Handle WebSocket connection for a plot using v0 protocol.
 

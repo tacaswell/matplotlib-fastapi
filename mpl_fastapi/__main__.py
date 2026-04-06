@@ -19,6 +19,13 @@ Environment variables
     Pre-set the authentication token instead of generating a random one.
 ``HOST`` / ``PORT``
     Override the host/port shown in the startup log (defaults: 127.0.0.1 / 8000).
+``BACKEND_CORS_ORIGINS``
+    Comma-separated list of origins permitted to make cross-origin requests::
+
+        BACKEND_CORS_ORIGINS=https://app.example.com,http://localhost:3000 \\
+            python -m mpl_fastapi demos.plots:plots --reload
+
+    Defaults to empty (deny all cross-origin requests).
 """
 
 from __future__ import annotations
@@ -80,7 +87,8 @@ def main() -> None:
             "usage: python -m mpl_fastapi <module:attribute> [uvicorn options…]\n\n"
             "  examples:\n"
             "    python -m mpl_fastapi demos.plots:plots\n"
-            "    python -m mpl_fastapi mypackage.figures:registry --host 0.0.0.0 --port 8080 --reload",
+            "    python -m mpl_fastapi mypackage.figures:registry --host 0.0.0.0 --port 8080 --reload\n\n"
+            "  CORS: set BACKEND_CORS_ORIGINS=https://a.com,http://localhost:3000",
             file=sys.stderr,
         )
         sys.exit(1)
