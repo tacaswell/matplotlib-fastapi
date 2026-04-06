@@ -10,6 +10,7 @@ provide actual widget rendering and event loop integration.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
@@ -45,6 +46,7 @@ __all__ = [
     "RemoteNavigationToolbar2",
     "RemotePlotInfo",
     "list_remote_figures",
+    "run_transport_lifecycle",
 ]
 
 logger = logging.getLogger(__name__)
@@ -91,9 +93,13 @@ class FigureCanvasRemote(FigureCanvasBase):
         figure: Figure,
         transport: RemoteTransport,
         server_config: ServerConfig,
+        **kwargs: Any,
     ) -> None:
         self._is_drawing = False
-        super().__init__(figure)
+
+        # Must be set BEFORE super().__init__() because toolkit subclasses
+        # (e.g. FigureCanvasTk) call get_width_height() and may read figure
+        # DPI/size during widget creation.
         self._transport = transport
         self._server_config = server_config
         self._remote_image = None
@@ -104,14 +110,23 @@ class FigureCanvasRemote(FigureCanvasBase):
         # CSS-pixel dimensions.  Recover original_dpi so that
         # Figure._original_dpi is correct — this lets subsequent calls to
         # _set_device_pixel_ratio() (e.g. from Wayland DPR updates) work.
+        # Must also happen before toolkit widget creation so the figure
+        # geometry is already correct when the toolkit reads it.
         w_css, h_css = server_config.figure_size
         dpr = transport._device_pixel_ratio
         original_dpi = server_config.figure_dpi / dpr
-
         figure.set_dpi(original_dpi)
         figure.set_size_inches(
             w_css / original_dpi, h_css / original_dpi, forward=False
         )
+
+        # Let the toolkit subclass create its widget.  Any toolkit-specific
+        # kwargs (e.g. ``master`` for Tk) are forwarded through the MRO so
+        # that FigureCanvasTk / FigureCanvasQT etc. receive them correctly.
+        super().__init__(figure, **kwargs)
+
+        # Post-widget setup: DPR registration and label (some toolkits need
+        # the widget to exist first), then mpl_connect subscriptions.
         self._set_device_pixel_ratio(dpr)  # type: ignore[attr-defined]
         if server_config.figure_label:
             figure.set_label(server_config.figure_label)
@@ -962,6 +977,61 @@ def list_remote_figures(
             )
         )
     return results
+
+
+async def run_transport_lifecycle(
+    transport: RemoteTransport,
+    on_connected: Callable[[ServerConfig], None],
+    on_error: Callable[[str], None],
+) -> None:
+    """Run the full transport connect → receive → reconnect lifecycle.
+
+    This coroutine is intended to be run on a dedicated background thread
+    (via ``asyncio.run``).  It calls *on_connected* once the initial
+    handshake completes (or *on_error* if connection fails), then runs the
+    receive loop and handles reconnection until the transport is explicitly
+    disconnected.
+
+    Parameters
+    ----------
+    transport : RemoteTransport
+        The transport instance.  Must **not** be connected yet.
+    on_connected : callable
+        Called with the :class:`ServerConfig` after a successful handshake.
+        May be called from the asyncio thread — callers are responsible for
+        marshalling to the UI thread if needed.
+    on_error : callable
+        Called with an error string if the initial connection fails.
+    """
+    try:
+        config = await transport.connect()
+    except Exception as exc:
+        on_error(str(exc))
+        return
+
+    on_connected(config)
+    await transport.start_receive_loop()
+
+    # Loop through receive/reconnect cycles until done.
+    while True:
+        if transport._receive_task is not None:
+            try:
+                await transport._receive_task
+            except asyncio.CancelledError:
+                return
+
+        if transport._reconnect_task is None:
+            return
+
+        try:
+            await transport._reconnect_task
+        except asyncio.CancelledError:
+            return
+
+        # After reconnect, a new _receive_task should exist.
+        # If it doesn't, reconnection failed permanently — exit.
+        if transport._receive_task is None:
+            return
 
 
 class FigureManagerRemote(FigureManagerBase):

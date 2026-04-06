@@ -58,6 +58,7 @@ from mpl_fastapi.remote.backend_remote import (
     RemotePlotInfo,
     RemoteNavigationToolbar2,
     list_remote_figures,
+    run_transport_lifecycle,
 )
 from mpl_fastapi.remote.transport import (
     RemoteTransport,
@@ -143,43 +144,14 @@ class TransportThread(QtCore.QThread):
     async def _async_main(self) -> None:
         """Connect, emit ``connected``, then run the receive loop.
 
-        After the initial connection, this loops through reconnect
-        cycles (receive-loop drop → reconnect → new receive-loop)
-        until the transport is explicitly disconnected or reconnection
-        is permanently exhausted.
+        Delegates to :func:`run_transport_lifecycle` which handles the
+        connect → receive → reconnect cycle.
         """
-        try:
-            config = await self._transport.connect()
-        except Exception as exc:
-            self.connection_error.emit(str(exc))
-            return
-
-        self.connected.emit(config)
-        await self._transport.start_receive_loop()
-
-        # Loop through receive/reconnect cycles until done.
-        while True:
-            # Wait for the current receive loop to finish
-            if self._transport._receive_task is not None:
-                try:
-                    await self._transport._receive_task
-                except asyncio.CancelledError:
-                    return
-
-            # If no reconnect was started, we're done
-            if self._transport._reconnect_task is None:
-                return
-
-            # Wait for the reconnect loop to finish
-            try:
-                await self._transport._reconnect_task
-            except asyncio.CancelledError:
-                return
-
-            # After reconnect, a new _receive_task should exist.
-            # If it doesn't, reconnection failed permanently — exit.
-            if self._transport._receive_task is None:
-                return
+        await run_transport_lifecycle(
+            self._transport,
+            on_connected=self.connected.emit,
+            on_error=self.connection_error.emit,
+        )
 
     # -- public helpers (called from the main thread) -----------------------
 
@@ -232,40 +204,26 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         else:
             transport_thread = None
 
-        # Pre-set attributes that get_width_height() needs, because the MRO
-        # chain (FigureCanvasRemote → FigureCanvasQT → QWidget) triggers
-        # self.resize(*self.get_width_height()) during __init__.
-        self._server_config = server_config
-        self._transport = transport
-        self._remote_image = None
-        self._rubberband_rect = None
-        self._last_seq_num = 0
-
-        # Pre-set Qt attributes needed before QWidget.__init__
+        # Qt-specific state that must exist before QWidget.__init__ runs
+        # (FigureCanvasQT triggers self.resize(*self.get_width_height()) and
+        # other operations during __init__).
         self._draw_pending = False
         self._draw_rect_callback = lambda painter: None  # noqa: ARG005
         self._in_resize_event = False
-
-        # Pre-converted QPixmap for blitting
         self._remote_qpixmap: QtGui.QPixmap | None = None
-
-        # Store the transport thread (owns the asyncio loop).
         self._transport_thread: TransportThread | None = transport_thread
 
-        # Rate-limit resize events to the server.  Only the final size
-        # matters, so we use a pure trailing-edge debounce: stash the
-        # latest size and send it after a short quiet period.
+        # Resize debounce timer (trailing-edge, 100 ms).
         self._resize_interval_ms: int = 100  # ms
         self._pending_resize: tuple[int, int] | None = None
         self._resize_timer: QtCore.QTimer = QtCore.QTimer()
         self._resize_timer.setSingleShot(True)
         self._resize_timer.timeout.connect(self._flush_resize)
 
-        # Now initialise via the MRO.  FigureCanvasRemote.__init__ will call
-        # super().__init__(figure), which resolves to FigureCanvasQT.__init__
-        # (and thence QWidget.__init__).  Since we pre-set _server_config
-        # above, get_width_height() will work.
-        FigureCanvasRemote.__init__(self, figure, transport, server_config)
+        # Initialise via the MRO: FigureCanvasRemote.__init__ sets remote
+        # protocol state and DPI *before* calling super(), which resolves to
+        # FigureCanvasQT.__init__ (and thence QWidget.__init__).
+        super().__init__(figure, transport, server_config)
 
         # Ensure Qt widget attributes are configured
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_OpaquePaintEvent)
@@ -1228,7 +1186,7 @@ def open_remote_figure(
 
 
 def open_remote_figures(
-    specs: Sequence[tuple[str, str] | tuple[str, str, dict[str, Any] | None]],
+    specs: Sequence[tuple[str, str] | tuple[str, str, dict[str, Any] | None] | tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]],
     *,
     token: str | None = None,
     device_pixel_ratio: float | None = None,
