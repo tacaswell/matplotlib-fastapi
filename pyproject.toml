@@ -56,6 +56,12 @@ docs = [
     "ipython>=8.0.0",
 ]
 
+[project.scripts]
+# Tk launcher — requires only stdlib Tk (no extra dependencies)
+mpl-fastapi-tk = "mpl_fastapi.remote.backend_tkremote:_main"
+# Qt launcher — requires a Qt binding such as PySide6 or PyQt6
+mpl-fastapi-qt = "mpl_fastapi.remote.backend_qtremote:_main"
+
 [tool.setuptools]
 packages = ["mpl_fastapi"]
 include-package-data = true

@@ -1592,3 +1592,57 @@ def open_launcher(
     launcher = FigureLauncherWindow(base_url, token=token)
     launcher.show()
     return launcher
+
+
+def _main() -> None:
+    """Entry point for the ``mpl-fastapi-qt`` console script.
+
+    Also invoked when running the module directly::
+
+        python -m mpl_fastapi.remote.backend_qtremote
+
+    Authentication token resolution order:
+
+    1. ``--token`` CLI argument.
+    2. ``MPL_FASTAPI_TOKEN`` environment variable.
+    3. No token (unauthenticated).
+    """
+    from mpl_fastapi.remote._launcher_cli import (
+        build_arg_parser,
+        parse_kv_pairs,
+        resolve_token,
+    )
+
+    parser = build_arg_parser(
+        "Qt thin-client launcher for remote mpl_fastapi plots"
+    )
+    args = parser.parse_args()
+    token = resolve_token(args.token)
+    init_params = parse_kv_pairs(args.params, parser, "Init parameters")
+    update_params = parse_kv_pairs(args.update, parser, "Update parameters")
+
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication(sys.argv)
+
+    launcher = open_launcher(args.url, token=token)
+
+    if args.plot:
+        try:
+            mgr = open_remote_figure(
+                url=args.url,
+                plot_name=args.plot,
+                init_params=init_params or None,
+                update_params=update_params or None,
+                token=token,
+            )
+            mgr.show()
+            launcher._managers.append(mgr)
+        except RuntimeError as exc:
+            print(f"Warning: could not open {args.plot!r}: {exc}")
+
+    app.exec()
+
+
+if __name__ == "__main__":
+    _main()
