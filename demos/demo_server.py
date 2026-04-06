@@ -17,6 +17,7 @@ Then visit:
 """
 
 import logging
+import os
 import secrets
 from pathlib import Path
 
@@ -45,6 +46,8 @@ logging.basicConfig(
 
 # Only our own loggers get DEBUG
 logging.getLogger('mpl_fastapi').setLevel(logging.DEBUG)
+
+logger = logging.getLogger(__name__)
 
 
 class SinePlotParams(BaseModel):
@@ -296,15 +299,17 @@ app.add_middleware(_TokenCookieMiddleware)
 # shutdown lifespan automatically.
 install_mpl_router(app, mpl, prefix="/plots")
 
-# Print startup URLs including the auth token so operators can copy-paste.
-_host = "127.0.0.1"
-_port = 8000
-print(f"\n  Plots list:  http://{_host}:{_port}/plots/?token={auth.token}")
-print(f"  Sine plot:   http://{_host}:{_port}/plots/plot/sine?token={auth.token}")
-print(f"  Interactive: http://{_host}:{_port}/plots/plot/interactive_sine?token={auth.token}")
-print(f"  Embeddable:  http://{_host}:{_port}/embeddable?token={auth.token}")
-print(f"  React app:   http://{_host}:{_port}/react-app/?token={auth.token}")
-print(f"\n  Auth token:  {auth.token}\n")
+# Log startup URLs including the auth token so operators can copy-paste.
+# HOST/PORT mirror what you pass to uvicorn (--host / --port); they are only
+# used to construct the informational URLs logged at startup.
+_host = os.environ.get("HOST", "127.0.0.1")
+_port = int(os.environ.get("PORT", "8000"))
+logger.info("Plots list:  http://%s:%d/plots/?token=%s", _host, _port, auth.token)
+logger.info("Sine plot:   http://%s:%d/plots/plot/sine?token=%s", _host, _port, auth.token)
+logger.info("Interactive: http://%s:%d/plots/plot/interactive_sine?token=%s", _host, _port, auth.token)
+logger.info("Embeddable:  http://%s:%d/embeddable?token=%s", _host, _port, auth.token)
+logger.info("React app:   http://%s:%d/react-app/?token=%s", _host, _port, auth.token)
+logger.info("Auth token:  %s", auth.token)
 
 
 # Add route to serve home page
@@ -322,32 +327,40 @@ async def embeddable_demo():
     return FileResponse(demo_path, media_type="text/html")
 
 
-# Serve React example if the build exists
-react_build_path = Path(__file__).parent / "react-example" / "dist"
-if react_build_path.exists():
+# Serve React example if the build exists.  The check is deferred to a startup
+# handler so that whether the build is present is evaluated at server start
+# (the same moment the process begins serving) rather than at module import
+# time, keeping import side-effects minimal and the two code paths symmetric.
+_react_build_path = Path(__file__).parent / "react-example" / "dist"
+
+
+def _mount_react_app() -> None:
+    """Mount the React build or register a fallback route at startup."""
+    from fastapi.responses import HTMLResponse
     from starlette.staticfiles import StaticFiles
 
-    # Mount the React build directory
-    app.mount(
-        "/react-app",
-        StaticFiles(directory=react_build_path, html=True),
-        name="react_app",
-    )
-else:
-    # Fallback route if React isn't built yet
-    @app.get("/react-app")
-    @app.get("/react-app/{path:path}")
-    async def react_not_built(path: str = ""):   # noqa: ARG001
-        """Return instructions if React app hasn't been built."""
-        from fastapi.responses import HTMLResponse
-        return HTMLResponse(
-            content="""
-            <html>
-            <head><title>React Example Not Built</title></head>
-            <body style="font-family: sans-serif; padding: 40px;">
-                <h1>React Example Not Built</h1>
-                <p>The React example hasn't been built yet. To build it:</p>
-                <pre style="background: #f4f4f4; padding: 15px; border-radius: 4px;">
+    if _react_build_path.exists():
+        app.mount(
+            "/react-app",
+            StaticFiles(directory=_react_build_path, html=True),
+            name="react_app",
+        )
+        logger.info("React app mounted from %s", _react_build_path)
+    else:
+        logger.warning("React build not found at %s; serving build instructions", _react_build_path)
+
+        @app.get("/react-app")
+        @app.get("/react-app/{path:path}")
+        async def react_not_built(path: str = ""):   # noqa: ARG001
+            """Return instructions if React app hasn't been built."""
+            return HTMLResponse(
+                content="""
+                <html>
+                <head><title>React Example Not Built</title></head>
+                <body style="font-family: sans-serif; padding: 40px;">
+                    <h1>React Example Not Built</h1>
+                    <p>The React example hasn't been built yet. To build it:</p>
+                    <pre style="background: #f4f4f4; padding: 15px; border-radius: 4px;">
 # First, build the npm package (from repo root):
 npm run build:npm
 
@@ -357,9 +370,12 @@ npm install
 npm run build
 
 # Restart the server and refresh this page
-                </pre>
-            </body>
-            </html>
-            """,
-            status_code=200,
-        )
+                    </pre>
+                </body>
+                </html>
+                """,
+                status_code=200,
+            )
+
+
+app.add_event_handler("startup", _mount_react_app)
