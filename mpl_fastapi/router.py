@@ -846,9 +846,9 @@ def create_mpl_router(
         base_path = request.url.path.rstrip("/")
 
         return templates.TemplateResponse(
+            request,
             "plots_list.html",
             {
-                "request": request,
                 "plots": plots_info,
                 "base_path": base_path,
             },
@@ -941,9 +941,9 @@ def create_mpl_router(
         _, update_values = _split_query_params(dict(request.query_params))
 
         return templates.TemplateResponse(
+            request,
             "figure.html",
             {
-                "request": request,
                 "ws_uri": ws_uri,
                 "base_path": base_path,
                 "fig_id": plot_name,

@@ -6109,10 +6109,11 @@ packages:
   timestamp: 1767634557029
 - pypi: ./
   name: mpl-fastapi
-  version: 0.0.post74
-  sha256: 2ff04716402409e98fe236767a9c6b9825a4fa32e8317e43e1f61285f01d98cc
+  version: 0.0.post113
+  sha256: 0d472bae2fe86869664d117ac029af9493c6f34da540457f3096a275504f2d9d
   requires_dist:
   - fastapi>=0.100.0
+  - starlette>=0.29.0
   - matplotlib>=3.10.0
   - uvicorn>=0.20.0
   - python-multipart>=0.0.6

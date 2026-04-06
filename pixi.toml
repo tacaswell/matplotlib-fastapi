@@ -12,6 +12,7 @@ MPL_FASTAPI_TOKEN = "dev-secret-token-do-not-use-in-production"
 [dependencies]
 python = ">=3.12"
 fastapi = ">=0.100.0"
+starlette = ">=0.29.0"
 matplotlib-base = ">=3.10.0"
 uvicorn = ">=0.20.0"
 python-multipart = ">=0.0.6"

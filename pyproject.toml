@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "fastapi>=0.100.0",
+    "starlette>=0.29.0",  # get new API for templates
     "matplotlib>=3.10.0",
     "uvicorn>=0.20.0",
     "python-multipart>=0.0.6",
