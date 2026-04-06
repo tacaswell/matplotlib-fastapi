@@ -1,8 +1,12 @@
-"""WebSocket client for matplotlib-fastapi protocol.
+"""
+WebSocket client for matplotlib-fastapi protocol.
 
 This module provides a Python client for connecting to matplotlib-fastapi
 WebSocket endpoints. It supports both real HTTP connections (via httpx) and
 testing via FastAPI's TestClient.
+
+This is a low-level module that is intended to be used for testing and for as a
+base for the thin clients.
 
 Example usage with httpx:
     >>> import httpx
@@ -30,6 +34,7 @@ Example usage with TestClient:
     ... )
     >>> with ws_client.connect():
     ...     image_data = ws_client.send_refresh()  # Get first image
+
 """
 
 from __future__ import annotations
