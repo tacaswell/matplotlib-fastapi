@@ -57,6 +57,8 @@ docs = [
 ]
 
 [project.scripts]
+# Serve a user-supplied plots file: mpl-fastapi path/to/plots.py [uvicorn opts]
+mpl-fastapi = "mpl_fastapi.__main__:main"
 # Tk launcher — requires only stdlib Tk (no extra dependencies)
 mpl-fastapi-tk = "mpl_fastapi.remote.backend_tkremote:_main"
 # Qt launcher — requires a Qt binding such as PySide6 or PyQt6

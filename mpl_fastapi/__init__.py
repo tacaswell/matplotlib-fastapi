@@ -4,6 +4,7 @@ except ImportError:
     __version__ = "unknown"
 
 from .auth import AuthPolicy, NoAuth, SingleUserToken
+from ._server import build_app
 from .router import (
     InitConfig,
     Lifespan,
@@ -22,6 +23,7 @@ from .router import (
 
 __all__ = [
     "AuthPolicy",
+    "build_app",
     "InitConfig",
     "Lifespan",
     "MPLRouter",
