@@ -35,7 +35,13 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from matplotlib.figure import Figure
@@ -93,15 +99,20 @@ def _split_query_params(
 # or any other server behaviour.
 _NO_CACHE_JS: bool = os.environ.get("MPL_NO_CACHE_JS", "").strip() not in ("", "0")
 
-# Cache headers for JS bundles.
-# In production the bundles are build artifacts that don't change within a
-# deployment, so we use aggressive caching.  In dev-mode we use no-cache
-# so the browser always revalidates.
-_JS_CACHE_HEADERS: dict[str, str] = (
+# Cache headers for content-hashed JS bundles.
+# These URLs contain the content hash, so the resource at a given URL
+# truly never changes — ``immutable`` is semantically correct.
+# In dev-mode we use ``no-cache`` so the browser always revalidates.
+_JS_IMMUTABLE_HEADERS: dict[str, str] = (
     {"Cache-Control": "no-cache"}
     if _NO_CACHE_JS
-    else {"Cache-Control": "public, max-age=86400, immutable"}
+    else {"Cache-Control": "public, max-age=31536000, immutable"}
 )
+
+# Cache headers for stable (hash-free) redirect URLs.
+# Browsers must revalidate on every visit so they pick up the new hash
+# after a deployment.  The redirect itself is tiny.
+_JS_REDIRECT_HEADERS: dict[str, str] = {"Cache-Control": "no-cache"}
 
 
 @functools.lru_cache(maxsize=64)
@@ -126,6 +137,15 @@ def _read_static_file_uncached(filename: str) -> tuple[str, str] | None:
 
 
 _read_static_file = _read_static_file_uncached if _NO_CACHE_JS else _read_static_file_cached
+
+
+def _get_js_hash(filename: str) -> str | None:
+    """Return the short content hash for a JS file, or None if missing."""
+    result = _read_static_file(filename)
+    if result is None:
+        return None
+    # ETag is '"<hex>"'; strip the quotes to get the bare hash.
+    return result[1].strip('"')
 
 
 class ImageTypeMode(IntEnum):
@@ -965,6 +985,14 @@ def create_mpl_router(
         # be pre-populated with them instead of schema defaults.
         _, update_values = _split_query_params(dict(request.query_params))
 
+        # Build content-hashed JS URL for cache-busting.
+        # Falls back to the stable redirect URL if the hash is unavailable.
+        _component_hash = _get_js_hash("component.js")
+        if _component_hash is not None:
+            js_url = f"{base_path}/component.{_component_hash}.js"
+        else:
+            js_url = f"{base_path}/component.js"
+
         return templates.TemplateResponse(
             request,
             "figure.html",
@@ -973,6 +1001,7 @@ def create_mpl_router(
                 "base_path": base_path,
                 "fig_id": plot_name,
                 "static_path": static_mount_path,
+                "js_url": js_url,
                 "update_params_schema": update_params_schema,
                 "update_values": update_values,
             },
@@ -1475,100 +1504,94 @@ def create_mpl_router(
             except Exception as e:
                 logger.exception("Error during cleanup: %s", e)
 
-    # Route: Serve matplotlib JavaScript
-    @router.get("/js/mpl.js", response_class=PlainTextResponse)
-    async def get_mpl_js(request: Request) -> Response:
-        """Serve the matplotlib JavaScript bundle (TypeScript-compiled)."""
-        result = _read_static_file("component.js")
+    # ── Content-hashed JS routes ─────────────────────────────────────────
+    # These routes embed the content hash in the URL so `immutable` caching
+    # is semantically correct.  Templates use these URLs directly.
+
+    def _serve_hashed_js(
+        request: Request,
+        filename: str,
+        url_hash: str,
+        content_type: str = "application/javascript",
+    ) -> Response:
+        """Serve a JS file only if *url_hash* matches the current content."""
+        result = _read_static_file(filename)
         if result is None:
-            raise HTTPException(status_code=404, detail="JavaScript bundle not found")
+            raise HTTPException(status_code=404, detail=f"{filename} not found")
         content, etag = result
+        actual_hash = etag.strip('"')
+        if url_hash != actual_hash:
+            raise HTTPException(status_code=404, detail="Hash mismatch — bundle may have been redeployed")
         if request.headers.get("if-none-match") == etag:
-            return Response(status_code=304, headers={**_JS_CACHE_HEADERS, "ETag": etag})
+            return Response(status_code=304, headers={**_JS_IMMUTABLE_HEADERS, "ETag": etag})
         return PlainTextResponse(
             content,
             headers={
-                "Content-Type": "application/javascript",
-                **_JS_CACHE_HEADERS,
+                "Content-Type": content_type,
+                **_JS_IMMUTABLE_HEADERS,
                 "ETag": etag,
             },
         )
 
-    # Route: Serve embeddable component bundle (IIFE)
-    @router.get("/component.js", response_class=PlainTextResponse)
-    async def get_component_js(request: Request) -> Response:
-        """Serve the embeddable matplotlib component JavaScript (TypeScript-compiled)."""
-        result = _read_static_file("component.js")
-        if result is None:
-            raise HTTPException(status_code=404, detail="JavaScript bundle not found")
-        content, etag = result
-        if request.headers.get("if-none-match") == etag:
-            return Response(status_code=304, headers={**_JS_CACHE_HEADERS, "ETag": etag})
-        return PlainTextResponse(
-            content,
-            headers={
-                "Content-Type": "application/javascript",
-                **_JS_CACHE_HEADERS,
-                "ETag": etag,
-            },
+    @router.get("/component.{hash}.js")
+    async def get_component_js_hashed(request: Request, hash: str) -> Response:
+        """Serve the IIFE component bundle at a content-hashed URL."""
+        return _serve_hashed_js(request, "component.js", hash)
+
+    @router.get("/component.{hash}.esm.js")
+    async def get_component_esm_js_hashed(request: Request, hash: str) -> Response:
+        """Serve the ESM component bundle at a content-hashed URL."""
+        return _serve_hashed_js(request, "component.esm.js", hash)
+
+    @router.get("/component.{hash}.js.map")
+    async def get_component_js_map_hashed(request: Request, hash: str) -> Response:
+        """Serve the IIFE source map at a content-hashed URL."""
+        return _serve_hashed_js(request, "component.js.map", hash, content_type="application/json")
+
+    @router.get("/component.{hash}.esm.js.map")
+    async def get_component_esm_js_map_hashed(request: Request, hash: str) -> Response:
+        """Serve the ESM source map at a content-hashed URL."""
+        return _serve_hashed_js(request, "component.esm.js.map", hash, content_type="application/json")
+
+    # ── Stable redirect routes ──────────────────────────────────────────
+    # Hash-free URLs redirect to the current content-hashed URL.
+    # External embedders and docs can reference these stable paths.
+
+    def _redirect_to_hashed(filename: str, url_template: str) -> RedirectResponse:
+        """Build a redirect from a stable URL to the content-hashed variant."""
+        file_hash = _get_js_hash(filename)
+        if file_hash is None:
+            raise HTTPException(status_code=404, detail=f"{filename} not found")
+        return RedirectResponse(
+            url=url_template.format(hash=file_hash),
+            status_code=302,
+            headers=_JS_REDIRECT_HEADERS,
         )
 
-    # Route: Serve embeddable component bundle (ESM)
-    @router.get("/component.esm.js", response_class=PlainTextResponse)
-    async def get_component_esm_js(request: Request) -> Response:
-        """Serve the ESM version of the embeddable matplotlib component."""
-        result = _read_static_file("component.esm.js")
-        if result is not None:
-            content, etag = result
-            if request.headers.get("if-none-match") == etag:
-                return Response(status_code=304, headers={**_JS_CACHE_HEADERS, "ETag": etag})
-            return PlainTextResponse(
-                content,
-                headers={
-                    "Content-Type": "application/javascript",
-                    **_JS_CACHE_HEADERS,
-                    "ETag": etag,
-                },
-            )
-        raise HTTPException(status_code=404, detail="ESM bundle not found")
+    @router.get("/js/mpl.js")
+    async def get_mpl_js() -> RedirectResponse:
+        """Redirect legacy /js/mpl.js to the content-hashed IIFE bundle."""
+        return _redirect_to_hashed("component.js", "component.{hash}.js")
 
-    # Route: Serve source map for debugging (IIFE)
-    @router.get("/component.js.map", response_class=PlainTextResponse)
-    async def get_component_js_map(request: Request) -> Response:
-        """Serve the source map for the TypeScript-compiled component."""
-        result = _read_static_file("component.js.map")
-        if result is not None:
-            content, etag = result
-            if request.headers.get("if-none-match") == etag:
-                return Response(status_code=304, headers={**_JS_CACHE_HEADERS, "ETag": etag})
-            return PlainTextResponse(
-                content,
-                headers={
-                    "Content-Type": "application/json",
-                    **_JS_CACHE_HEADERS,
-                    "ETag": etag,
-                },
-            )
-        raise HTTPException(status_code=404, detail="Source map not found")
+    @router.get("/component.js")
+    async def get_component_js() -> RedirectResponse:
+        """Redirect stable /component.js to the content-hashed IIFE bundle."""
+        return _redirect_to_hashed("component.js", "component.{hash}.js")
 
-    # Route: Serve source map for debugging (ESM)
-    @router.get("/component.esm.js.map", response_class=PlainTextResponse)
-    async def get_component_esm_js_map(request: Request) -> Response:
-        """Serve the source map for the ESM component."""
-        result = _read_static_file("component.esm.js.map")
-        if result is not None:
-            content, etag = result
-            if request.headers.get("if-none-match") == etag:
-                return Response(status_code=304, headers={**_JS_CACHE_HEADERS, "ETag": etag})
-            return PlainTextResponse(
-                content,
-                headers={
-                    "Content-Type": "application/json",
-                    **_JS_CACHE_HEADERS,
-                    "ETag": etag,
-                },
-            )
-        raise HTTPException(status_code=404, detail="ESM source map not found")
+    @router.get("/component.esm.js")
+    async def get_component_esm_js() -> RedirectResponse:
+        """Redirect stable /component.esm.js to the content-hashed ESM bundle."""
+        return _redirect_to_hashed("component.esm.js", "component.{hash}.esm.js")
+
+    @router.get("/component.js.map")
+    async def get_component_js_map() -> RedirectResponse:
+        """Redirect stable /component.js.map to the content-hashed source map."""
+        return _redirect_to_hashed("component.js.map", "component.{hash}.js.map")
+
+    @router.get("/component.esm.js.map")
+    async def get_component_esm_js_map() -> RedirectResponse:
+        """Redirect stable /component.esm.js.map to the content-hashed source map."""
+        return _redirect_to_hashed("component.esm.js.map", "component.{hash}.esm.js.map")
 
     # Route: Get schema for a specific plot
     @router.get("/api/plots/{plot_name}/schema", dependencies=[Depends(_http_auth)])
