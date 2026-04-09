@@ -22,6 +22,7 @@ extensions = [
     'sphinx.ext.intersphinx',
     'sphinx_js',
     'numpydoc',  # Needs to be loaded *after* autodoc.
+    'sphinxcontrib.openapi',
 ]
 js_language = 'typescript'
 js_source_path = '../../mpl_fastapi/static/js/src'

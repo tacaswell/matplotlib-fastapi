@@ -24,6 +24,7 @@ big things, but if this moves beyond being a toy will move to follow Matplotlib'
 maxdepth: 1
 ---
 API.md
+open_api.rst
 python_client.rst
 js_api.rst
 websocket-protocol

@@ -97,3 +97,4 @@ mpl_fastapi/static/js/dist/
 
 docs/_ts_api
 docs/source/_as_gen
+docs/source/_static/openapi.json
