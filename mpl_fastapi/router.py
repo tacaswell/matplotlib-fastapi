@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
-from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from matplotlib.figure import Figure
@@ -1477,12 +1477,14 @@ def create_mpl_router(
 
     # Route: Serve matplotlib JavaScript
     @router.get("/js/mpl.js", response_class=PlainTextResponse)
-    async def get_mpl_js() -> PlainTextResponse:
+    async def get_mpl_js(request: Request) -> Response:
         """Serve the matplotlib JavaScript bundle (TypeScript-compiled)."""
         result = _read_static_file("component.js")
         if result is None:
             raise HTTPException(status_code=404, detail="JavaScript bundle not found")
         content, etag = result
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={**_JS_CACHE_HEADERS, "ETag": etag})
         return PlainTextResponse(
             content,
             headers={
@@ -1494,12 +1496,14 @@ def create_mpl_router(
 
     # Route: Serve embeddable component bundle (IIFE)
     @router.get("/component.js", response_class=PlainTextResponse)
-    async def get_component_js() -> PlainTextResponse:
+    async def get_component_js(request: Request) -> Response:
         """Serve the embeddable matplotlib component JavaScript (TypeScript-compiled)."""
         result = _read_static_file("component.js")
         if result is None:
             raise HTTPException(status_code=404, detail="JavaScript bundle not found")
         content, etag = result
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={**_JS_CACHE_HEADERS, "ETag": etag})
         return PlainTextResponse(
             content,
             headers={
@@ -1511,11 +1515,13 @@ def create_mpl_router(
 
     # Route: Serve embeddable component bundle (ESM)
     @router.get("/component.esm.js", response_class=PlainTextResponse)
-    async def get_component_esm_js() -> PlainTextResponse:
+    async def get_component_esm_js(request: Request) -> Response:
         """Serve the ESM version of the embeddable matplotlib component."""
         result = _read_static_file("component.esm.js")
         if result is not None:
             content, etag = result
+            if request.headers.get("if-none-match") == etag:
+                return Response(status_code=304, headers={**_JS_CACHE_HEADERS, "ETag": etag})
             return PlainTextResponse(
                 content,
                 headers={
@@ -1528,11 +1534,13 @@ def create_mpl_router(
 
     # Route: Serve source map for debugging (IIFE)
     @router.get("/component.js.map", response_class=PlainTextResponse)
-    async def get_component_js_map() -> PlainTextResponse:
+    async def get_component_js_map(request: Request) -> Response:
         """Serve the source map for the TypeScript-compiled component."""
         result = _read_static_file("component.js.map")
         if result is not None:
             content, etag = result
+            if request.headers.get("if-none-match") == etag:
+                return Response(status_code=304, headers={**_JS_CACHE_HEADERS, "ETag": etag})
             return PlainTextResponse(
                 content,
                 headers={
@@ -1545,11 +1553,13 @@ def create_mpl_router(
 
     # Route: Serve source map for debugging (ESM)
     @router.get("/component.esm.js.map", response_class=PlainTextResponse)
-    async def get_component_esm_js_map() -> PlainTextResponse:
+    async def get_component_esm_js_map(request: Request) -> Response:
         """Serve the source map for the ESM component."""
         result = _read_static_file("component.esm.js.map")
         if result is not None:
             content, etag = result
+            if request.headers.get("if-none-match") == etag:
+                return Response(status_code=304, headers={**_JS_CACHE_HEADERS, "ETag": etag})
             return PlainTextResponse(
                 content,
                 headers={
