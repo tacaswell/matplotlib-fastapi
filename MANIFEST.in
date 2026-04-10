@@ -1,3 +1,4 @@
+include .mpl-fastapi-repo
 include AUTHORS.rst
 include CONTRIBUTING.rst
 include LICENSE
