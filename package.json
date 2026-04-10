@@ -34,10 +34,6 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/mpl-fastapi.cjs"
       }
-    },
-    "./browser": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/component.js"
     }
   },
   "files": [
@@ -45,12 +41,8 @@
     "README.md",
     "LICENSE"
   ],
-  "sideEffects": [
-    "./dist/component.js"
-  ],
   "scripts": {
     "build": "node esbuild.config.mjs",
-    "build:npm": "node esbuild.config.mjs --npm",
     "watch": "node esbuild.config.mjs --watch",
     "clean": "rm -rf dist mpl_fastapi/static/js/dist",
     "lint": "eslint mpl_fastapi/static/js/src/**/*.ts",
@@ -59,7 +51,7 @@
     "format:check": "prettier --check mpl_fastapi/static/js/src/**/*.ts",
     "typecheck": "tsc --noEmit",
     "docs": "typedoc mpl_fastapi/static/js/src/index.ts --out docs/_ts_api",
-    "prepublishOnly": "npm run build:npm"
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^7.0.0",

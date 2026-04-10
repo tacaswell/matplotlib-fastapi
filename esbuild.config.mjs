@@ -2,7 +2,6 @@ import esbuild from 'esbuild';
 import { readFileSync } from 'fs';
 
 const isWatch = process.argv.includes('--watch');
-const isNpm = process.argv.includes('--npm');
 
 // Read package.json for version
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
@@ -45,7 +44,7 @@ const esmBuildOptions = {
   ...commonOptions,
   outfile: 'dist/mpl-fastapi.js',
   format: 'esm',
-  minify: true,
+  minify: !isWatch,
 };
 
 // Build for npm package (CJS)
@@ -53,16 +52,7 @@ const cjsBuildOptions = {
   ...commonOptions,
   outfile: 'dist/mpl-fastapi.cjs',
   format: 'cjs',
-  minify: true,
-};
-
-// Also copy the IIFE build to dist for browser consumers
-const browserBuildOptions = {
-  ...commonOptions,
-  outfile: 'dist/component.js',
-  format: 'iife',
-  globalName: 'MPL',
-  minify: true,
+  minify: !isWatch,
 };
 
 if (isWatch) {
@@ -73,18 +63,19 @@ if (isWatch) {
   const contexts = await Promise.all([
     esbuild.context(iifeBuildOptions),
     esbuild.context(fastapiEsmBuildOptions),
-    esbuild.context({ ...esmBuildOptions, minify: false }),
-    esbuild.context({ ...cjsBuildOptions, minify: false }),
+    esbuild.context(esmBuildOptions),
+    esbuild.context(cjsBuildOptions),
   ]);
   await Promise.all(contexts.map(ctx => ctx.watch()));
   console.log('👀 Watching for changes...');
   console.log('Press Ctrl+C to stop');
-} else if (isNpm) {
-  console.log('🔨 Building npm package (ESM + CJS + Browser)...');
+} else {
+  console.log('🔨 Building TypeScript (FastAPI static + npm package)...');
   await Promise.all([
+    esbuild.build(iifeBuildOptions),
+    esbuild.build(fastapiEsmBuildOptions),
     esbuild.build(esmBuildOptions),
     esbuild.build(cjsBuildOptions),
-    esbuild.build(browserBuildOptions),
   ]);
   // Generate type declarations using tsc
   console.log('📝 Generating type declarations...');
@@ -94,12 +85,5 @@ if (isWatch) {
   const dtsContent = readFileSync('dist/index.d.ts', 'utf-8');
   const { writeFileSync } = await import('fs');
   writeFileSync('dist/index.d.cts', dtsContent);
-  console.log('✅ npm package build complete!');
-} else {
-  console.log('🔨 Building TypeScript for FastAPI static...');
-  await Promise.all([
-    esbuild.build(iifeBuildOptions),
-    esbuild.build(fastapiEsmBuildOptions),
-  ]);
   console.log('✅ Build complete!');
 }
