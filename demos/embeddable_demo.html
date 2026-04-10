@@ -299,6 +299,8 @@ import { MatplotlibEmbeddable } from 'mpl-fastapi';</code></pre>
 &lt;/script&gt;</code></pre>
     </div>
 
+    <div id="watermark" style="margin-top: 30px; padding: 8px 12px; background: #e9ecef; border-radius: 4px; font-size: 11px; color: #888; font-family: monospace; text-align: center;"></div>
+
     <!-- Load the component -->
     <script src="/plots/component.js"></script>
 
@@ -578,6 +580,21 @@ import { MatplotlibEmbeddable } from 'mpl-fastapi';</code></pre>
                 if (plot) plot.disconnect();
             });
         });
+
+        // Fetch and display watermark
+        (async function loadWatermark() {
+            try {
+                const resp = await fetch('/plots/watermark');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                // Add JS component version
+                data['mpl_fastapi_js'] = mpl.VERSION || 'unknown';
+                const el = document.getElementById('watermark');
+                el.textContent = Object.entries(data).map(([k, v]) => `${k}: ${v}`).join(' | ');
+            } catch (e) {
+                console.warn('Could not load watermark:', e);
+            }
+        })();
     </script>
 </body>
 </html>

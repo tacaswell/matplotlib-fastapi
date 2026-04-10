@@ -48,6 +48,7 @@ from matplotlib.figure import Figure
 from pydantic import BaseModel, ValidationError
 from starlette.websockets import WebSocketDisconnect
 
+from mpl_fastapi import __version__
 from mpl_fastapi.auth import AuthPolicy, NoAuth
 from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
 
@@ -896,6 +897,7 @@ def create_mpl_router(
             {
                 "plots": plots_info,
                 "base_path": base_path,
+                "watermark": await watermark(),
             },
         )
 
@@ -948,6 +950,27 @@ def create_mpl_router(
             - cached_files: Number of cached save files
         """
         return router_state.get_health_stats()
+
+    @router.get("/watermark", dependencies=[Depends(_http_auth)])
+    async def watermark() -> dict[str, str]:
+        """Version watermark reporting key dependency versions."""
+        import importlib.metadata
+        import platform
+
+        import fastapi
+        import matplotlib
+        import starlette
+
+        versions: dict[str, str] = {
+            "fastapi": fastapi.__version__,
+            "Matplotlib": matplotlib.__version__,
+            "mpl_fastapi": __version__,
+            "pydantic": importlib.metadata.version("pydantic"),
+            "Python": platform.python_version(),
+            "starlette": starlette.__version__,
+            "uvicorn": importlib.metadata.version("uvicorn"),
+        }
+        return versions
 
     # Route: View a specific plot
     @router.get("/plot/{plot_name}", response_class=HTMLResponse, dependencies=[Depends(_http_auth)])
@@ -1004,6 +1027,7 @@ def create_mpl_router(
                 "js_url": js_url,
                 "update_params_schema": update_params_schema,
                 "update_values": update_values,
+                "watermark": await watermark(),
             },
         )
 

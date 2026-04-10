@@ -61,6 +61,8 @@ from mpl_fastapi.remote.backend_remote import (
     FigureCanvasRemote,
     RemoteNavigationToolbar2,
     RemotePlotInfo,
+    _build_watermark_text,
+    fetch_watermark,
     list_remote_figures,
     run_transport_lifecycle,
 )
@@ -1408,10 +1410,29 @@ class FigureLauncherWindow(tk.Toplevel):
         self._build_ui()
         self._start_discovery()
 
+        # Cache for remote watermark (fetched in background)
+        self._remote_versions: dict[str, str] = {}
+        self._tk_version = ""
+        try:
+            self._tk_version = self.tk.eval("info patchlevel")
+        except Exception:
+            pass
+        t = threading.Thread(
+            target=self._fetch_watermark_bg, args=(base_url, token), daemon=True
+        )
+        t.start()
+
     # -- UI construction ----------------------------------------------------
 
     def _build_ui(self) -> None:
         """Build the split-pane launcher UI."""
+        # --- Menu bar ---
+        menu_bar = tk.Menu(self)
+        help_menu = tk.Menu(menu_bar, tearoff=0)
+        help_menu.add_command(label="Version Info\u2026", command=self._show_version_dialog)
+        menu_bar.add_cascade(label="Help", menu=help_menu)
+        self.configure(menu=menu_bar)
+
         paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=5)
         paned.pack(fill=tk.BOTH, expand=True)
 
@@ -1590,6 +1611,36 @@ class FigureLauncherWindow(tk.Toplevel):
             )
 
     # -- cleanup ------------------------------------------------------------
+
+    def _fetch_watermark_bg(
+        self, base_url: str, token: str | None,
+    ) -> None:
+        """Background thread: fetch watermark and cache it."""
+        self._remote_versions = fetch_watermark(base_url, token=token)
+
+    def _show_version_dialog(self) -> None:
+        """Open a modal dialog showing local and remote version info."""
+        ui_versions = {"Tk": self._tk_version} if self._tk_version else {}
+        text = _build_watermark_text(self._remote_versions, ui_versions)
+        dlg = tk.Toplevel(self)
+        dlg.title("Version Information")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        txt = tk.Text(
+            dlg, wrap=tk.WORD, font=("liberation mono", 10),
+            width=70, height=12, relief=tk.FLAT, bg=dlg.cget("bg"),
+        )
+        txt.insert("1.0", text)
+        txt.configure(state=tk.DISABLED)
+        txt.pack(padx=12, pady=(12, 4))
+
+        ok_btn = ttk.Button(dlg, text="OK", command=dlg.destroy)
+        ok_btn.pack(pady=(4, 12))
+        dlg.bind("<Return>", lambda e: dlg.destroy())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        ok_btn.focus_set()
 
     def _on_close(self) -> None:
         """Handle window close — destroy all launched managers then ourselves."""

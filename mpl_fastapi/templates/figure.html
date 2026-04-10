@@ -94,5 +94,17 @@
       </form>
     </div>
     {% endif %}
+
+    {% if watermark %}
+    <div id="watermark" style="margin: 10px; padding: 8px 12px; background: #f0f0f0; border-radius: 4px; font-size: 11px; color: #888; font-family: monospace;">
+      {% for key, value in watermark.items() %}{{ key }}: {{ value }}{% if not loop.last %} | {% endif %}{% endfor %}{% if watermark %} | mpl_fastapi_js: <span id="js-version">…</span>{% endif %}
+    </div>
+    <script>
+      ready(function() {
+        var el = document.getElementById('js-version');
+        if (el && window.mpl && window.mpl.VERSION) el.textContent = window.mpl.VERSION;
+      });
+    </script>
+    {% endif %}
   </body>
 </html>

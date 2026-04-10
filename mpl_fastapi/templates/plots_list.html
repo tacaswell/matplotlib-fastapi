@@ -231,5 +231,11 @@
             <p>No plots are currently registered.</p>
         </div>
     {% endif %}
+
+    {% if watermark %}
+    <div id="watermark" style="margin-top: 30px; padding: 8px 12px; background: #e9ecef; border-radius: 4px; font-size: 11px; color: #888; font-family: monospace; text-align: center;">
+      {% for key, value in watermark.items() %}{{ key }}: {{ value }}{% if not loop.last %} | {% endif %}{% endfor %}
+    </div>
+    {% endif %}
 </body>
 </html>

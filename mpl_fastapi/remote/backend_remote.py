@@ -915,6 +915,19 @@ class RemotePlotInfo:
     update_schema: dict[str, Any] | None = None
 
 
+def _base_url_from_ws(ws_url: str) -> str:
+    """Extract the HTTP base URL from a full WebSocket URL.
+
+    Strips ``/ws/v0/{plot_name}?...`` and converts the scheme to HTTP.
+    """
+    import re
+
+    parsed = urllib.parse.urlparse(ws_url)
+    scheme = {"ws": "http", "wss": "https"}.get(parsed.scheme, parsed.scheme)
+    path = re.sub(r"/ws/v0/[^/?]+$", "", parsed.path)
+    return f"{scheme}://{parsed.netloc}{path}"
+
+
 def list_remote_figures(
     base_url: str,
     *,
@@ -965,7 +978,7 @@ def list_remote_figures(
 
     plots_dict = data.get("plots", {})
     results: list[RemotePlotInfo] = []
-    for name, info in plots_dict.items():
+    for name, info in sorted(plots_dict.items()):
         results.append(
             RemotePlotInfo(
                 name=name,
@@ -977,6 +990,95 @@ def list_remote_figures(
             )
         )
     return results
+
+
+def fetch_watermark(
+    base_url: str,
+    *,
+    token: str | None = None,
+    timeout: float = 10.0,
+) -> dict[str, str]:
+    """Fetch version watermark from a remote mpl_fastapi server.
+
+    Queries the ``/watermark`` JSON endpoint and returns a dict of
+    component name → version string pairs.
+
+    Parameters
+    ----------
+    base_url : str
+        Server base URL.  Both ``ws://`` / ``wss://`` and
+        ``http://`` / ``https://`` schemes are accepted.
+    token : str, optional
+        Authentication token.
+    timeout : float
+        HTTP request timeout in seconds.  Default 10.
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping of component names to version strings, e.g.
+        ``{"mpl_fastapi": "0.1.dev1", "matplotlib": "3.9.0", ...}``.
+        Returns an empty dict on failure.
+    """
+    parsed = urllib.parse.urlparse(base_url)
+    scheme = parsed.scheme
+    if scheme in ("ws", "wss"):
+        scheme = "https" if scheme == "wss" else "http"
+    http_base = f"{scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
+    url = f"{http_base}/watermark"
+
+    req = urllib.request.Request(url)
+    if token is not None:
+        req.add_header("Authorization", f"Bearer {token}")
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        logger.debug("Could not fetch watermark from %s", url, exc_info=True)
+        return {}
+
+
+def _build_watermark_text(
+    remote_versions: dict[str, str],
+    ui_versions: dict[str, str] | None = None,
+) -> str:
+    """Build a human-readable watermark string with local and remote versions.
+
+    Parameters
+    ----------
+    remote_versions : dict[str, str]
+        Version dict from :func:`fetch_watermark`.
+    ui_versions : dict[str, str], optional
+        Additional UI-toolkit-specific versions (e.g.
+        ``{"Qt binding": "PyQt6", "Qt": "6.7.0"}`` or
+        ``{"Tk": "8.6.13"}``).  Appended under the Client section.
+
+    Returns
+    -------
+    str
+        Multi-line watermark text.
+    """
+    import platform
+
+    import matplotlib
+
+    import mpl_fastapi
+
+    lines = []
+    if remote_versions:
+        lines.append("Server")
+        for k, v in sorted(remote_versions.items()):
+            lines.append(f"  {k}: {v}")
+
+    lines.append("Client")
+    lines.append(f"  Matplotlib: {matplotlib.__version__}")
+    lines.append(f"  mpl_fastapi: {mpl_fastapi.__version__}")
+    lines.append(f"  Python: {platform.python_version()}")
+    if ui_versions:
+        for k, v in sorted(ui_versions.items()):
+            lines.append(f"  {k}: {v}")
+    return "\n".join(lines)
 
 
 async def run_transport_lifecycle(

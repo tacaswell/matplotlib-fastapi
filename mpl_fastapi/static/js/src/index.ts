@@ -31,6 +31,7 @@ import { WebSocketManager } from './websocket-manager.js';
 import { Figure } from './figure.js';
 import { MatplotlibEmbeddable } from './embeddable.js';
 import { listPlots } from './discovery.js';
+import { VERSION } from './_version.js';
 
 declare global {
   interface Window {
@@ -39,6 +40,7 @@ declare global {
       WebSocketManager: typeof WebSocketManager;
       Figure: typeof Figure;
       listPlots: typeof listPlots;
+      VERSION: string;
     };
   }
 }
@@ -56,4 +58,5 @@ if (typeof window !== 'undefined') {
   window.mpl.WebSocketManager = WebSocketManager;
   window.mpl.Figure = Figure;
   window.mpl.listPlots = listPlots;
+  window.mpl.VERSION = VERSION;
 }

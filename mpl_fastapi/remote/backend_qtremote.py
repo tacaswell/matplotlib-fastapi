@@ -57,6 +57,8 @@ from mpl_fastapi.remote.backend_remote import (
     FigureCanvasRemote,
     RemotePlotInfo,
     RemoteNavigationToolbar2,
+    _build_watermark_text,
+    fetch_watermark,
     list_remote_figures,
     run_transport_lifecycle,
 )
@@ -1345,6 +1347,26 @@ class _DiscoveryWorker(QtCore.QThread):
             self.error.emit(str(exc))
 
 
+class _WatermarkWorker(QtCore.QThread):
+    """Background thread that fetches the watermark from the server."""
+
+    finished = QtCore.Signal(dict)
+
+    def __init__(
+        self,
+        base_url: str,
+        token: str | None = None,
+        parent: QtCore.QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._base_url = base_url
+        self._token = token
+
+    def run(self) -> None:
+        result = fetch_watermark(self._base_url, token=self._token)
+        self.finished.emit(result)
+
+
 # ---------------------------------------------------------------------------
 # Figure launcher window
 # ---------------------------------------------------------------------------
@@ -1393,9 +1415,51 @@ class FigureLauncherWindow(QtWidgets.QMainWindow):
         self._build_ui()
         self._start_discovery()
 
+        # Cache for the remote watermark (fetched in background)
+        self._remote_versions: dict[str, str] = {}
+        self._watermark_worker = _WatermarkWorker(
+            base_url, token=token, parent=self
+        )
+        self._watermark_worker.finished.connect(self._on_watermark_fetched)
+        self._watermark_worker.start()
+
+    def _on_watermark_fetched(self, remote_versions: dict) -> None:
+        self._remote_versions = remote_versions
+
+    def _show_version_dialog(self) -> None:
+        """Open a modal dialog showing local and remote version info."""
+        from matplotlib.backends.qt_compat import QtCore
+
+        qt_binding = QtCore.__package__.split(".")[0] if hasattr(QtCore, "__package__") else "unknown"
+        ui_versions = {"Qt binding": qt_binding, "Qt": QtCore.qVersion()}
+        text = _build_watermark_text(self._remote_versions, ui_versions)
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("Version Information")
+        dlg.setMinimumWidth(500)
+        layout = QtWidgets.QVBoxLayout(dlg)
+
+        text_edit = QtWidgets.QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setFontFamily("monospace")
+        text_edit.setPlainText(text)
+        text_edit.setMinimumHeight(120)
+        layout.addWidget(text_edit)
+
+        button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok)
+        button_box.accepted.connect(dlg.accept)
+        layout.addWidget(button_box)
+
+        dlg.exec()
+
     # -- UI construction ----------------------------------------------------
 
     def _build_ui(self) -> None:
+        # --- Menu bar ---
+        menu_bar = self.menuBar()
+        help_menu = menu_bar.addMenu("&Help")
+        version_action = help_menu.addAction("Version Info\u2026")
+        version_action.triggered.connect(self._show_version_dialog)
+
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self.setCentralWidget(splitter)
 

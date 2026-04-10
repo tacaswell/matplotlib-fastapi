@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { MatplotlibPlot } from './MatplotlibPlot';
 import { PlotPicker } from './PlotPicker';
+import { Watermark } from './Watermark';
 
 export default function App() {
   const [phase, setPhase] = useState(0.0);
@@ -120,6 +121,8 @@ export default function App() {
           </div>
         </>
       )}
+
+      <Watermark baseUrl="/plots" />
     </div>
   );
 }
