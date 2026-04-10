@@ -20,6 +20,62 @@ prepare_metadata_for_build_wheel = _orig.prepare_metadata_for_build_wheel
 prepare_metadata_for_build_editable = _orig.prepare_metadata_for_build_editable
 build_sdist = _orig.build_sdist
 
+_ROOT = Path(__file__).parent
+
+# .in templates → generated files (all generated files should be gitignored)
+_VERSION_TEMPLATES = [
+    (_ROOT / "mpl_fastapi" / "_version.py.in", _ROOT / "mpl_fastapi" / "_version.py"),
+    (
+        _ROOT / "mpl_fastapi" / "static" / "js" / "src" / "_version.ts.in",
+        _ROOT / "mpl_fastapi" / "static" / "js" / "src" / "_version.ts",
+    ),
+]
+
+
+def _get_version() -> str:
+    """Get the package version from git, matching setuptools-scm settings."""
+    try:
+        import setuptools_scm
+
+        return setuptools_scm.get_version(root=_ROOT)
+    except Exception:
+        pass
+
+    # Fallback: raw git describe
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--always"],
+            cwd=_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "0.0.0-unknown"
+
+
+def _stamp_version_files(version: str) -> None:
+    """Generate versioned files from .in templates (like meson configure_file).
+
+    For each (template, output) pair, reads the .in file and replaces
+    ``@VCS_TAG@`` with the actual version string.  If the .in template
+    does not exist but the output already does (e.g. in an sdist), the
+    existing file is left alone.
+    """
+    for template, output in _VERSION_TEMPLATES:
+        if template.exists():
+            text = template.read_text().replace("@VCS_TAG@", version)
+            output.write_text(text)
+            print(f"✓ {output.relative_to(_ROOT)} ← {version}")
+        elif output.exists():
+            print(f"✓ {output.relative_to(_ROOT)} already present (sdist?)")
+        else:
+            print(
+                f"WARNING: neither {template.name} nor {output.name} found",
+                file=sys.stderr,
+            )
+
 
 def _build_javascript() -> None:
     """Build JavaScript/TypeScript files using npm and esbuild.
@@ -35,7 +91,7 @@ def _build_javascript() -> None:
     print("Building JavaScript/TypeScript components...")
     print("=" * 70)
 
-    root = Path(__file__).parent
+    root = _ROOT
 
     # Find node and npm executables (handles Windows .cmd files)
     node_cmd = shutil.which("node")
@@ -137,6 +193,8 @@ def build_wheel(
     str
         Name of the created wheel file.
     """
+    version = _get_version()
+    _stamp_version_files(version)
     _build_javascript()
     return _orig.build_wheel(wheel_directory, config_settings, metadata_directory)
 
@@ -162,5 +220,7 @@ def build_editable(
     str
         Name of the created wheel file.
     """
+    version = _get_version()
+    _stamp_version_files(version)
     _build_javascript()
     return _orig.build_editable(wheel_directory, config_settings, metadata_directory)

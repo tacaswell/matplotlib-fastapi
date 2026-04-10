@@ -6289,8 +6289,8 @@ packages:
   timestamp: 1767634557029
 - pypi: ./
   name: mpl-fastapi
-  version: 0.0.post120
-  sha256: 7bc19ada616328ddd11a0daa7605b30724c237eef9bd6e74d1f336680f8c3a25
+  version: 0.0.post125
+  sha256: 74f2fc5454d0de302e9096938f97eb34ab32ad5907e75a200c2f37911e5c8e5f
   requires_dist:
   - fastapi>=0.100.0
   - starlette>=0.29.0

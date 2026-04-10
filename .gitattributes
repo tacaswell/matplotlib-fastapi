@@ -1,3 +1,4 @@
-mpl_fastapi/_version.py export-subst
+# export-subst expands $Format:...$ during git archive
+.git_archival.txt export-subst
 # SCM syntax highlighting & preventing 3-way merges
 pixi.lock merge=binary linguist-language=YAML linguist-generated=true -diff

@@ -10,6 +10,7 @@ export { WebSocketManager, type ReconnectConfig } from './websocket-manager.js';
 export { Figure } from './figure.js';
 export { MatplotlibEmbeddable } from './embeddable.js';
 export { listPlots } from './discovery.js';
+export { VERSION } from './_version.js';
 
 // Export types for TypeScript users
 export type {

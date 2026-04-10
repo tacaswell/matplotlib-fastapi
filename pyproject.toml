@@ -72,7 +72,6 @@ include-package-data = true
 mpl_fastapi = ["static/**/*", "templates/**/*", "py.typed"]
 
 [tool.setuptools_scm]
-write_to = "mpl_fastapi/_version.py"
 version_scheme = "post-release"
 local_scheme = "no-local-version"
 

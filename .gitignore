@@ -85,6 +85,7 @@ target/
 .pixi/*
 !.pixi/config.toml
 _version.py
+_version.ts
 
 # JavaScript / Node.js
 node_modules/

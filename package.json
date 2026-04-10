@@ -1,6 +1,6 @@
 {
   "name": "mpl-fastapi",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "type": "module",
   "description": "TypeScript/JavaScript client for matplotlib-fastapi interactive plots",
   "author": "Thomas A Caswell",
@@ -51,7 +51,8 @@
     "format:check": "prettier --check mpl_fastapi/static/js/src/**/*.ts",
     "typecheck": "tsc --noEmit",
     "docs": "typedoc mpl_fastapi/static/js/src/index.ts --out docs/_ts_api",
-    "prepublishOnly": "npm run build"
+    "version:stamp": "npm version --no-git-tag-version \"$(git describe --tags --always)\"",
+    "prepublishOnly": "npm run version:stamp && npm run build"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^7.0.0",

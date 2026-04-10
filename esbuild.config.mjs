@@ -1,13 +1,9 @@
 import esbuild from 'esbuild';
-import { readFileSync } from 'fs';
 
 const isWatch = process.argv.includes('--watch');
 
-// Read package.json for version
-const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
-
 const banner = {
-  js: `/* matplotlib-fastapi v${pkg.version} | BSD-3-Clause License */`
+  js: `/* matplotlib-fastapi | BSD-3-Clause License */`
 };
 
 const commonOptions = {
@@ -17,7 +13,7 @@ const commonOptions = {
   target: 'es2020',
   banner,
   define: {
-    'process.env.NODE_ENV': isWatch ? '"development"' : '"production"'
+    'process.env.NODE_ENV': isWatch ? '"development"' : '"production"',
   },
   logLevel: 'info'
 };
@@ -82,8 +78,8 @@ if (isWatch) {
   const { execSync } = await import('child_process');
   execSync('npx tsc --declaration --emitDeclarationOnly --outDir dist', { stdio: 'inherit' });
   // Create CJS type declaration
+  const { readFileSync, writeFileSync } = await import('fs');
   const dtsContent = readFileSync('dist/index.d.ts', 'utf-8');
-  const { writeFileSync } = await import('fs');
   writeFileSync('dist/index.d.cts', dtsContent);
   console.log('✅ Build complete!');
 }
