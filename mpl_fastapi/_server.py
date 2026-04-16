@@ -27,7 +27,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from mpl_fastapi.auth import COOKIE_NAME, SingleUserToken
+from mpl_fastapi.auth import COOKIE_NAME, AuthPolicy, NoAuth, SingleUserToken
 from mpl_fastapi.router import PlotConfig, create_mpl_router, install_mpl_router
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ def build_app(
     description: str = "Interactive matplotlib plots served via FastAPI and WebSockets",
     version: str = "1.0.0",
     prefix: str = "/plots",
-    auth: SingleUserToken | None = None,
+    auth: AuthPolicy | None = None,
     allowed_origins: list[str] | None = None,
 ) -> FastAPI:
     """Build a fully-configured FastAPI application from a plots mapping.
@@ -58,9 +58,16 @@ def build_app(
     prefix:
         URL prefix under which all plot routes are mounted.
     auth:
-        Authentication policy.  Defaults to a :class:`SingleUserToken` whose
-        token comes from the ``MPL_FASTAPI_TOKEN`` environment variable (or a
-        freshly-generated random token when the variable is absent).
+        Authentication policy. Options:
+
+        - ``None`` (default): Creates a :class:`SingleUserToken` whose token
+          comes from the ``MPL_FASTAPI_TOKEN`` environment variable (or a
+          freshly-generated random token when the variable is absent).
+        - :class:`NoAuth`: Accepts all requests without authentication.
+        - :class:`SingleUserToken`: Single-user bearer token authentication.
+        - Any custom object satisfying the :class:`~mpl_fastapi.auth.AuthPolicy`
+          protocol.
+
     allowed_origins:
         Explicit list of origins permitted to make cross-origin requests, e.g.
         ``["https://example.com", "http://localhost:3000"]``.  When ``None``
@@ -102,24 +109,28 @@ def build_app(
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization"],
     )
+
     # Set an auth cookie whenever ?token= appears on any request, not just
     # the protected plot routes.  This lets unprotected pages (index, etc.)
     # propagate the token for subsequent navigations.
-    class _TokenCookieMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request, call_next):
-            response = await call_next(request)
-            token = request.query_params.get("token")
-            if token and secrets.compare_digest(token, auth.token):
-                response.set_cookie(
-                    key=COOKIE_NAME,
-                    value=token,
-                    httponly=True,
-                    samesite="lax",
-                    path="/",
-                )
-            return response
+    # Only add this middleware if auth is SingleUserToken (which has a token attribute).
+    if isinstance(auth, SingleUserToken):
 
-    app.add_middleware(_TokenCookieMiddleware)
+        class _TokenCookieMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                response = await call_next(request)
+                token = request.query_params.get("token")
+                if token and secrets.compare_digest(token, auth.token):
+                    response.set_cookie(
+                        key=COOKIE_NAME,
+                        value=token,
+                        httponly=True,
+                        samesite="lax",
+                        path="/",
+                    )
+                return response
+
+        app.add_middleware(_TokenCookieMiddleware)
 
     install_mpl_router(app, mpl, prefix=prefix)
 
@@ -130,9 +141,21 @@ def build_app(
     @app.on_event("startup")
     async def _log_urls() -> None:  # noqa: RUF029
         base = f"http://{_host}:{_port}"
-        logger.info("Plots list:  %s%s/?token=%s", base, prefix, auth.token)
-        for name in plots:
-            logger.info("  %-20s %s%s/plot/%s?token=%s", name, base, prefix, name, auth.token)
-        logger.info("Auth token:  %s", auth.token)
+        if isinstance(auth, SingleUserToken):
+            logger.info("Plots list:  %s%s/?token=%s", base, prefix, auth.token)
+            for name in plots:
+                logger.info(
+                    "  %-20s %s%s/plot/%s?token=%s",
+                    name,
+                    base,
+                    prefix,
+                    name,
+                    auth.token,
+                )
+            logger.info("Auth token:  %s", auth.token)
+        else:
+            logger.info("Plots list:  %s%s/", base, prefix)
+            for name in plots:
+                logger.info("  %-20s %s%s/plot/%s", name, base, prefix, name)
 
     return app

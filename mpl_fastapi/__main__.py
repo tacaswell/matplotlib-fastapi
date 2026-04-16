@@ -12,11 +12,18 @@ Examples::
 
     python -m mpl_fastapi demos.plots:plots --host 0.0.0.0 --port 8080 --reload
     python -m mpl_fastapi mypackage.figures:my_registry --port 8080
+    python -m mpl_fastapi demos.plots:plots --no-auth --reload
+
+Flags
+-----
+``--no-auth``
+    Disable authentication (serve without the bearer token requirement).
 
 Environment variables
 ---------------------
 ``MPL_FASTAPI_TOKEN``
     Pre-set the authentication token instead of generating a random one.
+    Set to an empty string (``MPL_FASTAPI_TOKEN=""``) to disable authentication.
 ``HOST`` / ``PORT``
     Override the host/port shown in the startup log (defaults: 127.0.0.1 / 8000).
 ``BACKEND_CORS_ORIGINS``
@@ -34,6 +41,7 @@ import importlib
 import sys
 
 from mpl_fastapi.router import PlotConfig
+
 
 def _load_plots(target: str) -> dict[str, PlotConfig]:
     """Resolve ``module:attr`` and return the validated plots dict."""
@@ -64,8 +72,9 @@ def _load_plots(target: str) -> dict[str, PlotConfig]:
         )
         sys.exit(1)
 
-
-    bad = {k: type(v).__name__ for k, v in plots.items() if not isinstance(v, PlotConfig)}
+    bad = {
+        k: type(v).__name__ for k, v in plots.items() if not isinstance(v, PlotConfig)
+    }
     if bad:
         print(
             f"error: all values in '{target}' must be PlotConfig instances.\n"
@@ -84,11 +93,16 @@ def main() -> None:
 
     if not args or args[0].startswith("-"):
         print(
-            "usage: python -m mpl_fastapi <module:attribute> [uvicorn options…]\n\n"
+            "usage: python -m mpl_fastapi <module:attribute> [options…]\n\n"
             "  examples:\n"
             "    python -m mpl_fastapi demos.plots:plots\n"
-            "    python -m mpl_fastapi mypackage.figures:registry --host 0.0.0.0 --port 8080 --reload\n\n"
-            "  CORS: set BACKEND_CORS_ORIGINS=https://a.com,http://localhost:3000",
+            "    python -m mpl_fastapi mypackage.figures:registry --host 0.0.0.0 --port 8080\n"
+            "    python -m mpl_fastapi demos.plots:plots --no-auth --reload\n\n"
+            "  options:\n"
+            "    --no-auth                   Disable bearer token authentication\n"
+            "    [other uvicorn options]\n\n"
+            "  CORS: set BACKEND_CORS_ORIGINS=https://a.com,http://localhost:3000\n"
+            "  Token: set MPL_FASTAPI_TOKEN='my-token' or MPL_FASTAPI_TOKEN='' (empty = no auth)",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -99,10 +113,16 @@ def main() -> None:
     _load_plots(target)
 
     import os
+
     os.environ["_MPL_FASTAPI_TARGET"] = target
+
+    # Extract --no-auth flag if present (before passing to uvicorn)
+    if "--no-auth" in uvicorn_args:
+        os.environ["_MPL_FASTAPI_NO_AUTH"] = "1"
+        uvicorn_args.remove("--no-auth")
+
     # Pass args directly to Click so sys.argv is never mutated.
     uvicorn.main(args=["mpl_fastapi._app:app", *uvicorn_args], standalone_mode=True)
-
 
 
 if __name__ == "__main__":
