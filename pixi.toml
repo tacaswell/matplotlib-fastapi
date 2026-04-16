@@ -36,6 +36,15 @@ setuptools-scm = ">=9.2.2,<10"
 mpl-fastapi = { path = ".", editable = true }
 sphinxcontrib-openapi = ">=0.8.4"
 
+[feature.otel.pypi-dependencies]
+opentelemetry-api = ">=1.20"
+opentelemetry-sdk = ">=1.20"
+opentelemetry-instrumentation-fastapi = ">=0.41b0"
+opentelemetry-exporter-otlp = ">=1.20"
+
+[feature.otel.dependencies]
+importlib-metadata = ">=6.0,<8.7"
+
 [feature.dev.dependencies]
 pytest = ">=7.0.0"
 pytest-asyncio = ">=0.21.0"
@@ -53,7 +62,7 @@ sphinx-copybutton = ">=0.5.0"
 ipython = ">=8.0.0"
 
 [environments]
-default = ["dev"]
+default = ["dev", "otel"]
 docs = ["docs"]
 
 [tasks]

@@ -28,7 +28,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from mpl_fastapi.auth import COOKIE_NAME, SingleUserToken
-from mpl_fastapi.router import PlotConfig, create_mpl_router, install_mpl_router
+from mpl_fastapi._otel import otel_lifespan
+from mpl_fastapi.router import PlotConfig, compose_lifespans, create_mpl_router, install_mpl_router
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,11 @@ def build_app(
     app.add_middleware(_TokenCookieMiddleware)
 
     install_mpl_router(app, mpl, prefix=prefix)
+
+    # Compose OTel lifespan (no-op when packages not installed).
+    app.router.lifespan_context = compose_lifespans(
+        otel_lifespan(), app.router.lifespan_context
+    )
 
     # Log convenience URLs at startup.
     _host = os.environ.get("HOST", "127.0.0.1")

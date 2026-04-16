@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import struct
+import time
 import uuid
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable
@@ -51,6 +52,14 @@ from starlette.websockets import WebSocketDisconnect
 from mpl_fastapi import __version__
 from mpl_fastapi.auth import AuthPolicy, NoAuth
 from mpl_fastapi.mpl_backend import FastAPICanvas, FastAPIManger
+from mpl_fastapi._otel import (
+    attach_context,
+    capture_context,
+    detach_context,
+    get_meter,
+    get_tracer,
+    set_span_error,
+)
 
 # Protocol constants
 PROTOCOL_VERSION = 0
@@ -210,6 +219,47 @@ def _build_image_header(
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+# OpenTelemetry tracer and meter (no-ops when OTel is not installed)
+_tracer = get_tracer(__name__)
+_meter = get_meter(__name__)
+
+# ── OTel metrics instruments ────────────────────────────────────────────────
+_connections_total = _meter.create_counter(
+    "mpl.connections.total",
+    description="Total WebSocket connections opened",
+)
+_connections_active = _meter.create_up_down_counter(
+    "mpl.connections.active",
+    description="Currently active WebSocket connections",
+)
+_render_duration = _meter.create_histogram(
+    "mpl.render.duration_ms",
+    description="Time spent rendering a figure (ms)",
+    unit="ms",
+)
+_render_size = _meter.create_histogram(
+    "mpl.render.size_bytes",
+    description="Rendered image payload size",
+    unit="By",
+)
+_save_duration = _meter.create_histogram(
+    "mpl.save.duration_ms",
+    description="Time spent saving a figure (ms)",
+    unit="ms",
+)
+_saves_total = _meter.create_counter(
+    "mpl.saves.total",
+    description="Total save operations",
+)
+_updates_total = _meter.create_counter(
+    "mpl.updates.total",
+    description="Total update_params calls",
+)
+_errors_total = _meter.create_counter(
+    "mpl.errors.total",
+    description="Total errors by type",
+)
 
 # Thread pool for blocking figure operations
 # Using a module-level executor to share threads across all routers
@@ -513,6 +563,7 @@ async def _send_render_response(
     executor: ThreadPoolExecutor,
     loop: asyncio.AbstractEventLoop,
     seq_state: ImageSequenceState,
+    plot_name: str = "",
 ) -> None:
     """Shared helper to render figure and send binary image with header.
 
@@ -533,14 +584,33 @@ async def _send_render_response(
         Event loop for running in executor
     seq_state : ImageSequenceState
         Sequence number tracker for this connection
+    plot_name : str
+        Plot name for telemetry attributes
     """
     logger.debug("Running draw() in background thread")
 
-    image_data, is_diff = await loop.run_in_executor(
-        executor,
-        _sync_draw_figure,
-        canvas,
-    )
+    ctx = capture_context()
+
+    def _draw_with_context() -> tuple[bytes, bool]:
+        token = attach_context(ctx)
+        try:
+            return _sync_draw_figure(canvas)
+        finally:
+            detach_context(token)
+
+    t0 = time.monotonic()
+    with _tracer.start_as_current_span("plot.render") as span:
+        span.set_attribute("plot.name", plot_name)
+
+        image_data, is_diff = await loop.run_in_executor(executor, _draw_with_context)
+
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        image_type = "diff" if is_diff else "full"
+        span.set_attribute("image.type", image_type)
+        span.set_attribute("image.size_bytes", len(image_data))
+
+        _render_duration.record(elapsed_ms, {"plot_name": plot_name, "image_type": image_type})
+        _render_size.record(len(image_data), {"plot_name": plot_name, "image_type": image_type})
 
     # Determine sequence numbers
     if is_diff:
@@ -698,6 +768,7 @@ def install_mpl_router(
     mpl: "MPLRouter",
     *,
     prefix: str = "",
+    instrument: bool = False,
 ) -> None:
     """Install an :class:`MPLRouter` onto a FastAPI application.
 
@@ -706,6 +777,7 @@ def install_mpl_router(
     1. ``app.include_router(mpl.router, prefix=prefix)``
     2. ``app.mount(mpl.static_mount_path, mpl.static_files, ...)``
     3. Compose the mpl shutdown lifespan with any existing app lifespan.
+    4. Optionally compose OpenTelemetry lifespan for auto-instrumentation.
 
     The function is idempotent with respect to the lifespan — calling it
     multiple times (e.g. to mount several ``MPLRouter`` instances) will
@@ -722,6 +794,12 @@ def install_mpl_router(
         URL prefix for the router (default ``""``).  For example,
         ``prefix="/plots"`` would make the list endpoint available at
         ``/plots/``.
+    instrument : bool, optional
+        When ``True``, compose an OpenTelemetry lifespan into the
+        application so that HTTP and WebSocket requests are automatically
+        traced.  This is a no-op when the ``opentelemetry`` packages are
+        not installed.  Users of :func:`~mpl_fastapi.build_app` do not
+        need this — ``build_app`` wires OTel automatically.
 
     Examples
     --------
@@ -744,6 +822,14 @@ def install_mpl_router(
     # 3. Chain the mpl lifespan with the existing app lifespan
     existing_lifespan = app.router.lifespan_context
     app.router.lifespan_context = compose_lifespans(existing_lifespan, _mpl_lifespan())
+
+    # 4. Optionally add OpenTelemetry lifespan
+    if instrument:
+        from mpl_fastapi._otel import otel_lifespan
+
+        app.router.lifespan_context = compose_lifespans(
+            otel_lifespan(), app.router.lifespan_context
+        )
 
 
 def create_mpl_router(
@@ -1105,6 +1191,8 @@ def create_mpl_router(
 
         # Track active connection
         router_state.connect(plot_name)
+        _connections_total.add(1, {"plot_name": plot_name})
+        _connections_active.add(1, {"plot_name": plot_name})
 
         # Generate unique connection ID for this WebSocket session
         connection_id = str(uuid.uuid4())
@@ -1206,22 +1294,42 @@ def create_mpl_router(
         loop = asyncio.get_event_loop()
         executor = _get_figure_executor()
 
+        # ── Start session-level OTel span ────────────────────────────────
+        session_span = _tracer.start_span(
+            "ws.session",
+            attributes={
+                "plot.name": plot_name,
+                "connection.id": connection_id,
+                "ws.protocol_version": PROTOCOL_VERSION,
+                "client.device_pixel_ratio": device_pixel_ratio,
+            },
+        )
+
         # Create figure and call generator to populate it in background thread
         fig = Figure()
         try:
             logger.debug("Initializing figure '%s' in background thread", plot_name)
-            state = await loop.run_in_executor(
-                executor,
-                config.init.function,
-                fig,
-                params,
-            )
+            ctx = capture_context()
+
+            def _init_with_context() -> Any:
+                token = attach_context(ctx)
+                try:
+                    return config.init.function(fig, params)
+                finally:
+                    detach_context(token)
+
+            with _tracer.start_as_current_span("plot.init") as init_span:
+                init_span.set_attribute("plot.name", plot_name)
+                state = await loop.run_in_executor(executor, _init_with_context)
         except Exception as e:
             logger.exception("Error generating plot '%s': %s", plot_name, e)
+            set_span_error(session_span, e)
+            _errors_total.add(1, {"plot_name": plot_name, "error_type": "init_failed"})
             await websocket.send_json(
                 {"type": "error", "message": f"Plot generation failed: {e}"}
             )
             await websocket.close(code=1011, reason=f"Plot generation failed: {e}")
+            session_span.end()
             return
 
         # If _update.* params were provided, apply them now
@@ -1231,22 +1339,28 @@ def create_mpl_router(
                     "Applying initial update params for '%s': %s",
                     plot_name, initial_update_params,
                 )
-                state = await loop.run_in_executor(
-                    executor,
-                    config.update.function,
-                    state,
-                    initial_update_params,
-                )
+                with _tracer.start_as_current_span("plot.update") as upd_span:
+                    upd_span.set_attribute("plot.name", plot_name)
+                    upd_span.set_attribute("update.initial", True)
+                    state = await loop.run_in_executor(
+                        executor,
+                        config.update.function,
+                        state,
+                        initial_update_params,
+                    )
             except Exception as e:
                 logger.exception(
                     "Error applying initial update for '%s': %s", plot_name, e
                 )
+                set_span_error(session_span, e)
+                _errors_total.add(1, {"plot_name": plot_name, "error_type": "update_failed"})
                 await websocket.send_json(
                     {"type": "error", "message": f"Initial update failed: {e}"}
                 )
                 await websocket.close(
                     code=1011, reason=f"Initial update failed: {e}"
                 )
+                session_span.end()
                 return
 
         # Attach FastAPICanvas after figure is populated
@@ -1360,14 +1474,28 @@ def create_mpl_router(
                                 "Saving figure '%s' to %s", plot_name, format_lower
                             )
 
-                            file_data = await loop.run_in_executor(
-                                executor,
-                                _sync_save_figure,
-                                fig,
-                                format_lower,
-                                dpi,
-                                transparent,
+                            t0 = time.monotonic()
+                            with _tracer.start_as_current_span("plot.save") as save_span:
+                                save_span.set_attribute("plot.name", plot_name)
+                                save_span.set_attribute("save.format", format_lower)
+
+                                ctx = capture_context()
+
+                                def _save_with_context() -> bytes:
+                                    token = attach_context(ctx)
+                                    try:
+                                        return _sync_save_figure(fig, format_lower, dpi, transparent)
+                                    finally:
+                                        detach_context(token)
+
+                                file_data = await loop.run_in_executor(
+                                    executor, _save_with_context,
+                                )
+                            _save_duration.record(
+                                (time.monotonic() - t0) * 1000,
+                                {"plot_name": plot_name, "format": format_lower},
                             )
+                            _saves_total.add(1, {"plot_name": plot_name, "format": format_lower})
 
                             # Create saved file entry
                             saved_file = SavedFile(
@@ -1409,6 +1537,7 @@ def create_mpl_router(
 
                         except ValueError as e:
                             logger.warning("Invalid save request: %s", e)
+                            _errors_total.add(1, {"plot_name": plot_name, "error_type": "save_failed"})
                             await websocket.send_json(
                                 {"type": "save_error", "message": str(e)}
                             )
@@ -1416,6 +1545,7 @@ def create_mpl_router(
                             logger.exception(
                                 "Error saving figure '%s': %s", plot_name, e
                             )
+                            _errors_total.add(1, {"plot_name": plot_name, "error_type": "save_failed"})
                             await websocket.send_json(
                                 {
                                     "type": "save_error",
@@ -1444,12 +1574,16 @@ def create_mpl_router(
                                 "Updating plot '%s' with params: %s", plot_name, update_params
                             )
 
-                            state = await loop.run_in_executor(
-                                executor,
-                                config.update.function,
-                                state,
-                                update_params,
-                            )
+                            with _tracer.start_as_current_span("plot.update") as upd_span:
+                                upd_span.set_attribute("plot.name", plot_name)
+                                state = await loop.run_in_executor(
+                                    executor,
+                                    config.update.function,
+                                    state,
+                                    update_params,
+                                )
+
+                            _updates_total.add(1, {"plot_name": plot_name})
 
                             # Track current update params
                             current_update_params = update_params
@@ -1461,11 +1595,13 @@ def create_mpl_router(
                             logger.exception(
                                 "Error updating plot '%s': %s", plot_name, e
                             )
+                            _errors_total.add(1, {"plot_name": plot_name, "error_type": "update_failed"})
 
                     elif e_type == "render":
                         # Client requests render with binary image response
                         await _send_render_response(
-                            websocket, canvas, executor, loop, seq_state
+                            websocket, canvas, executor, loop, seq_state,
+                            plot_name=plot_name,
                         )
                         continue  # Don't drain queue - response already sent
 
@@ -1473,7 +1609,8 @@ def create_mpl_router(
                         # Client requests full refresh
                         canvas._force_full = True
                         await _send_render_response(
-                            websocket, canvas, executor, loop, seq_state
+                            websocket, canvas, executor, loop, seq_state,
+                            plot_name=plot_name,
                         )
                         continue  # Don't drain queue - response already sent
 
@@ -1513,6 +1650,10 @@ def create_mpl_router(
 
             # Decrement connection counter
             router_state.disconnect(plot_name)
+            _connections_active.add(-1, {"plot_name": plot_name})
+
+            # End session span
+            session_span.end()
 
             # Clean up saved files for this connection
             if connection_id in router_state.connection_files:

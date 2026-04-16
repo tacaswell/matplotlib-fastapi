@@ -32,6 +32,7 @@ __version__ = _get_version()
 
 from .auth import AuthPolicy, NoAuth, SingleUserToken
 from ._server import build_app
+from ._otel import setup_telemetry
 from .router import (
     InitConfig,
     Lifespan,
@@ -59,6 +60,7 @@ __all__ = [
     "PlotGenerator",
     "PlotInfo",
     "PlotsListResponse",
+    "setup_telemetry",
     "SingleUserToken",
     "UpdateConfig",
     "UpdateFunction",
