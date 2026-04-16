@@ -23,7 +23,19 @@ if not _target:
     )
     sys.exit(1)
 
+import logging  # noqa: E402
+
+from uvicorn.logging import DefaultFormatter  # noqa: E402
+
 from mpl_fastapi.__main__ import _load_plots  # noqa: E402
 from mpl_fastapi._server import build_app  # noqa: E402
+
+# Configure logging for mpl_fastapi to print startup messages (URLs, tokens) by default
+# Use uvicorn's DefaultFormatter for visual consistency with uvicorn's own logs
+_logger = logging.getLogger("mpl_fastapi")
+_logger.setLevel(logging.INFO)
+_handler = logging.StreamHandler()
+_handler.setFormatter(DefaultFormatter("%(levelprefix)s %(message)s"))
+_logger.addHandler(_handler)
 
 app = build_app(_load_plots(_target))
