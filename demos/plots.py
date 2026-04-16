@@ -15,18 +15,26 @@ from pydantic import BaseModel, Field
 
 from mpl_fastapi import InitConfig, PlotConfig, UpdateConfig
 
-
 # ---------------------------------------------------------------------------
 # Sine wave
 # ---------------------------------------------------------------------------
 
+
 class SinePlotParams(BaseModel):
     """Parameters for sine wave visualization."""
 
-    frequency: float = Field(default=1.0, ge=0.1, le=10.0, description="Frequency of the sine wave")
-    amplitude: float = Field(default=1.0, ge=0.1, le=5.0, description="Amplitude of the sine wave")
-    phase: float = Field(default=0.0, ge=0.0, le=6.28, description="Phase shift in radians")
-    points: int = Field(default=200, ge=50, le=1000, description="Number of points to plot")
+    frequency: float = Field(
+        default=1.0, ge=0.1, le=10.0, description="Frequency of the sine wave"
+    )
+    amplitude: float = Field(
+        default=1.0, ge=0.1, le=5.0, description="Amplitude of the sine wave"
+    )
+    phase: float = Field(
+        default=0.0, ge=0.0, le=6.28, description="Phase shift in radians"
+    )
+    points: int = Field(
+        default=200, ge=50, le=1000, description="Number of points to plot"
+    )
 
 
 def create_sine_plot(fig: Figure, params: SinePlotParams) -> None:
@@ -39,7 +47,7 @@ def create_sine_plot(fig: Figure, params: SinePlotParams) -> None:
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_title(
-        fr"Sine Wave: y = ${params.amplitude}\sin({params.frequency}x + {params.phase:.2f})$"
+        rf"Sine Wave: y = ${params.amplitude}\sin({params.frequency}x + {params.phase:.2f})$"
     )
     ax.legend()
 
@@ -48,10 +56,13 @@ def create_sine_plot(fig: Figure, params: SinePlotParams) -> None:
 # Interactive sine wave (with live updates)
 # ---------------------------------------------------------------------------
 
+
 class SineUpdateParams(BaseModel):
     """Update parameters — only phase can be changed live."""
 
-    phase: float = Field(default=0.0, ge=0.0, le=6.28, description="Phase shift in radians")
+    phase: float = Field(
+        default=0.0, ge=0.0, le=6.28, description="Phase shift in radians"
+    )
 
 
 def create_interactive_sine(fig: Figure, params: SinePlotParams) -> dict:
@@ -65,7 +76,7 @@ def create_interactive_sine(fig: Figure, params: SinePlotParams) -> dict:
     ax.set_ylabel("y")
     ax.set_ylim(-params.amplitude * 1.2, params.amplitude * 1.2)
     title = ax.set_title(
-        fr"Interactive Sine: $y = {params.amplitude}\sin({params.frequency}x)$"
+        rf"Interactive Sine: $y = {params.amplitude}\sin({params.frequency}x)$"
     )
     return {
         "line": line,
@@ -80,7 +91,7 @@ def update_interactive_sine(state: dict, params: SineUpdateParams) -> dict:
     y = state["amplitude"] * np.sin(state["frequency"] * state["x"] + params.phase)
     state["line"].set_ydata(y)
     state["title"].set_text(
-        fr"Interactive Sine: $y = {state['amplitude']}\sin({state['frequency']}x + {params.phase:.2f})$"
+        rf"Interactive Sine: $y = {state['amplitude']}\sin({state['frequency']}x + {params.phase:.2f})$"
     )
     return state
 
@@ -88,6 +99,7 @@ def update_interactive_sine(state: dict, params: SineUpdateParams) -> dict:
 # ---------------------------------------------------------------------------
 # Cosine wave with optional damping
 # ---------------------------------------------------------------------------
+
 
 class CosinePlotParams(BaseModel):
     frequency: float = Field(default=1.0, ge=0.1, le=10.0)
@@ -108,16 +120,17 @@ def create_cosine_plot(fig: Figure, params: CosinePlotParams) -> None:
     ax.grid(True, alpha=0.3)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
-    rhs = fr"{params.amplitude}\cos({params.frequency}x)"
+    rhs = rf"{params.amplitude}\cos({params.frequency}x)"
     if params.damping > 0:
-        rhs += fr"e^{{-{params.damping}x}}"
-    ax.set_title(fr"Cosine Wave: y = ${rhs}$")
+        rhs += rf"e^{{-{params.damping}x}}"
+    ax.set_title(rf"Cosine Wave: y = ${rhs}$")
     ax.legend()
 
 
 # ---------------------------------------------------------------------------
 # Lissajous curves
 # ---------------------------------------------------------------------------
+
 
 class LissajousParams(BaseModel):
     freq_x: float = Field(default=3.0, ge=1.0, le=10.0, description="X frequency")
@@ -150,7 +163,9 @@ plots = {
     "interactive_sine": PlotConfig(
         description="Interactive sine wave with live phase adjustment",
         init=InitConfig(function=create_interactive_sine, params_model=SinePlotParams),
-        update=UpdateConfig(function=update_interactive_sine, params_model=SineUpdateParams),
+        update=UpdateConfig(
+            function=update_interactive_sine, params_model=SineUpdateParams
+        ),
     ),
     "cosine": PlotConfig(
         description="Cosine wave with optional exponential damping",
