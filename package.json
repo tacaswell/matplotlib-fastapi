@@ -51,8 +51,8 @@
     "format:check": "prettier --check mpl_fastapi/static/js/src/**/*.ts",
     "typecheck": "tsc --noEmit",
     "docs": "typedoc mpl_fastapi/static/js/src/index.ts --out docs/_ts_api",
-    "version:stamp": "npm version --no-git-tag-version \"$(git describe --tags --always)\"",
-    "prepublishOnly": "npm run version:stamp && npm run build"
+    "prepare": "npm run build",
+    "prepublishOnly": "node scripts/stamp-version.mjs"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^7.0.0",

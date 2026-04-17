@@ -1,9 +1,39 @@
 import esbuild from 'esbuild';
+import fs from 'fs';
+import { execSync } from 'child_process';
+
+// Resolve version from (in priority order):
+//   1. mpl_fastapi/_version.py  — present after `pip install` / Python build
+//   2. git describe --tags --always  — present in a git checkout
+//   3. fallback constant
+function resolveVersion() {
+  // 1. Read from the Python-generated _version.py (same source of truth as Python)
+  try {
+    const pyVersion = fs.readFileSync('mpl_fastapi/_version.py', 'utf-8');
+    const match = pyVersion.match(/version\s*=\s*"(.+)"/);
+    if (match) return match[1];
+  } catch (_) {}
+
+  // 2. Ask git
+  try {
+    return execSync('git describe --tags --always', { encoding: 'utf-8' }).trim();
+  } catch (_) {}
+
+  // 3. Give up
+  console.warn('⚠️  Could not determine version; using fallback 0.0.0-dev');
+  return '0.0.0-dev';
+}
+
+// Always regenerate so the version stays in sync with the current build.
+const version = resolveVersion();
+const versionFilePath = 'mpl_fastapi/static/js/src/_version.ts';
+fs.writeFileSync(versionFilePath, `export const VERSION = "${version}";\n`);
+console.log(`📝 _version.ts → ${version}`);
 
 const isWatch = process.argv.includes('--watch');
 
 const banner = {
-  js: `/* matplotlib-fastapi | BSD-3-Clause License */`
+  js: `/* matplotlib-fastapi | BSD-3-Clause License */`,
 };
 
 const commonOptions = {
@@ -15,7 +45,7 @@ const commonOptions = {
   define: {
     'process.env.NODE_ENV': isWatch ? '"development"' : '"production"',
   },
-  logLevel: 'info'
+  logLevel: 'info',
 };
 
 // Build for FastAPI static serving (IIFE bundle with global)
@@ -62,7 +92,7 @@ if (isWatch) {
     esbuild.context(esmBuildOptions),
     esbuild.context(cjsBuildOptions),
   ]);
-  await Promise.all(contexts.map(ctx => ctx.watch()));
+  await Promise.all(contexts.map((ctx) => ctx.watch()));
   console.log('👀 Watching for changes...');
   console.log('Press Ctrl+C to stop');
 } else {
@@ -75,8 +105,9 @@ if (isWatch) {
   ]);
   // Generate type declarations using tsc
   console.log('📝 Generating type declarations...');
-  const { execSync } = await import('child_process');
-  execSync('npx tsc --declaration --emitDeclarationOnly --outDir dist', { stdio: 'inherit' });
+  execSync('npx tsc --declaration --emitDeclarationOnly --outDir dist', {
+    stdio: 'inherit',
+  });
   // Create CJS type declaration
   const { readFileSync, writeFileSync } = await import('fs');
   const dtsContent = readFileSync('dist/index.d.ts', 'utf-8');

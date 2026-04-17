@@ -25,10 +25,6 @@ _ROOT = Path(__file__).parent
 # .in templates → generated files (all generated files should be gitignored)
 _VERSION_TEMPLATES = [
     (_ROOT / "mpl_fastapi" / "_version.py.in", _ROOT / "mpl_fastapi" / "_version.py"),
-    (
-        _ROOT / "mpl_fastapi" / "static" / "js" / "src" / "_version.ts.in",
-        _ROOT / "mpl_fastapi" / "static" / "js" / "src" / "_version.ts",
-    ),
 ]
 
 
@@ -116,10 +112,7 @@ def _build_javascript() -> None:
     # Check Node.js version
     try:
         result = subprocess.run(
-            [node_cmd, "--version"],
-            check=True,
-            capture_output=True,
-            text=True
+            [node_cmd, "--version"], check=True, capture_output=True, text=True
         )
         node_version = result.stdout.strip()
         print(f"✓ Found Node.js {node_version}")
@@ -131,10 +124,7 @@ def _build_javascript() -> None:
     print("\n📦 Installing npm dependencies...")
     try:
         subprocess.run(
-            [npm_cmd, "install", "--quiet"],
-            cwd=root,
-            check=True,
-            capture_output=True
+            [npm_cmd, "install", "--quiet"], cwd=root, check=True, capture_output=True
         )
         print("✓ npm dependencies installed")
     except subprocess.CalledProcessError as e:
@@ -145,11 +135,7 @@ def _build_javascript() -> None:
     # Build TypeScript
     print("\n🔨 Compiling TypeScript...")
     try:
-        subprocess.run(
-            [npm_cmd, "run", "build"],
-            cwd=root,
-            check=True
-        )
+        subprocess.run([npm_cmd, "run", "build"], cwd=root, check=True)
         print("✓ TypeScript compilation complete")
     except subprocess.CalledProcessError:
         print("\nERROR: TypeScript build failed:", file=sys.stderr)
