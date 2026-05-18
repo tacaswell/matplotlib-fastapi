@@ -83,10 +83,12 @@ run = "MPL_NO_CACHE_JS=1 uvicorn demos.demo_server:app --reload --host 127.0.0.1
 
 # Development mode with hot reload (TypeScript watch + React watch + Python server in parallel)
 # Note: Runs all processes; Ctrl+C will stop all
-dev = "MPL_NO_CACHE_JS=1 npm run watch & (cd demos/react-example && npm run dev) & MPL_NO_CACHE_JS=1 uvicorn demos.demo_server:app --reload --host 127.0.0.1 --port 8000"
+dev = "(cd demos/react-example && npm install && npm run build) && MPL_NO_CACHE_JS=1 npm run watch & (cd demos/react-example && npm run dev) & MPL_NO_CACHE_JS=1 uvicorn demos.demo_server:app --reload --host 127.0.0.1 --port 8000"
 
 # Documentation
-docs-build = "sphinx-build -b html docs docs/_build"
+docs-openapi = "python docs/export_openapi.py"
+docs-build = { cmd = "sphinx-build -b html docs/source docs/_build", depends-on = ["docs-openapi"] }
+docs-serve = { cmd = "sphinx-autobuild docs/source docs/_build --port 8001", depends-on = ["docs-openapi"] }
 docs-clean = "rm -rf docs/_build"
 
 # Clean up
