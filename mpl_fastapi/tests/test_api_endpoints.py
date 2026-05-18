@@ -278,18 +278,14 @@ class TestSplitQueryParams:
     def test_no_update_params(self) -> None:
         from mpl_fastapi.router import _split_query_params
 
-        init, update = _split_query_params(
-            {"frequency": "2.0", "amplitude": "1.5"}
-        )
+        init, update = _split_query_params({"frequency": "2.0", "amplitude": "1.5"})
         assert init == {"frequency": "2.0", "amplitude": "1.5"}
         assert update == {}
 
     def test_only_update_params(self) -> None:
         from mpl_fastapi.router import _split_query_params
 
-        init, update = _split_query_params(
-            {"_update.phase": "1.57"}
-        )
+        init, update = _split_query_params({"_update.phase": "1.57"})
         assert init == {}
         assert update == {"phase": "1.57"}
 

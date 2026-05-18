@@ -1078,9 +1078,7 @@ class TestInteractiveCallbacks:
 class TestUpdateOnInit:
     """Tests for _update.* query parameters applied on init."""
 
-    def test_update_params_in_url_applied_on_init(
-        self, client: TestClient
-    ) -> None:
+    def test_update_params_in_url_applied_on_init(self, client: TestClient) -> None:
         """Test that _update.* query params are applied after init."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -1101,9 +1099,7 @@ class TestUpdateOnInit:
                 "phase": 1.57,
             }
 
-    def test_config_message_echoes_init_params(
-        self, client: TestClient
-    ) -> None:
+    def test_config_message_echoes_init_params(self, client: TestClient) -> None:
         """Test that the config message includes init_params."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -1133,9 +1129,7 @@ class TestUpdateOnInit:
         with ws_client.connect():
             assert ws_client.server_update_params is None
 
-    def test_update_on_init_renders_correctly(
-        self, client: TestClient
-    ) -> None:
+    def test_update_on_init_renders_correctly(self, client: TestClient) -> None:
         """Test that the figure reflects update params applied on init."""
         adapter = create_fastapi_test_client_adapter(client)
         ws_client = MatplotlibWebSocketClient(
@@ -1151,16 +1145,12 @@ class TestUpdateOnInit:
             assert isinstance(image_data, bytes)
             assert len(image_data) > 0
 
-    def test_invalid_update_params_closes_connection(
-        self, client: TestClient
-    ) -> None:
+    def test_invalid_update_params_closes_connection(self, client: TestClient) -> None:
         """Test that invalid _update.* params close the connection."""
         adapter = ContextManagerWebSocketAdapter(client)
 
         # phase must be float; 'bad' will fail Pydantic validation
-        adapter.connect(
-            "/plots/ws/v0/updatable?value=1.0&_update.phase=bad"
-        )
+        adapter.connect("/plots/ws/v0/updatable?value=1.0&_update.phase=bad")
         adapter.send_json({"type": "init", "protocol_version": 0})
 
         msg = adapter.receive_json()

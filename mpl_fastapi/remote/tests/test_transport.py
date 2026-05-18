@@ -242,7 +242,9 @@ class TestTransportHandshake:
         """Config message should echo back _update.* params."""
         binaries, jsons, disconnects = _collected_messages()
         url = build_ws_url(
-            server_url, "updatable", {"value": 1.0},
+            server_url,
+            "updatable",
+            {"value": 1.0},
             update_params={"phase": 1.57},
         )
         transport = RemoteTransport(
@@ -428,9 +430,7 @@ class TestTransportReconnect:
             await transport.disconnect()
 
     @pytest.mark.asyncio
-    async def test_reconnect_disabled_when_zero_attempts(
-        self, server_url: str
-    ) -> None:
+    async def test_reconnect_disabled_when_zero_attempts(self, server_url: str) -> None:
         """No reconnect when reconnect_max_attempts=0."""
         disconnects: list[None] = []
         reconnects: list[ServerConfig] = []

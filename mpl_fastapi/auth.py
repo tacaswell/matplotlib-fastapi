@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 # Protocol
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class AuthPolicy(Protocol):
     """Protocol that auth policies must satisfy.
@@ -69,6 +70,7 @@ class AuthPolicy(Protocol):
 # ---------------------------------------------------------------------------
 # Built-in: no authentication
 # ---------------------------------------------------------------------------
+
 
 class NoAuth:
     """Accept every request without authentication (the default)."""

@@ -36,7 +36,13 @@ from PySide6.QtWidgets import (
     QLineEdit,
 )
 
-from mpl_fastapi import InitConfig, PlotConfig, UpdateConfig, create_mpl_router, install_mpl_router
+from mpl_fastapi import (
+    InitConfig,
+    PlotConfig,
+    UpdateConfig,
+    create_mpl_router,
+    install_mpl_router,
+)
 from mpl_fastapi.remote.backend_qtremote import (
     FigureCanvasQTRemote,
     FigureManagerQTRemote,
@@ -1406,9 +1412,7 @@ class TestSchemaFormBuilder:
     def test_build_boolean_widget(self, qtbot: Any) -> None:
         from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
 
-        schema = self._make_schema(
-            enabled={"type": "boolean", "default": True}
-        )
+        schema = self._make_schema(enabled={"type": "boolean", "default": True})
         builder = SchemaFormBuilder(schema)
 
         container = QtWidgets.QWidget()
@@ -1423,9 +1427,7 @@ class TestSchemaFormBuilder:
     def test_build_string_widget(self, qtbot: Any) -> None:
         from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
 
-        schema = self._make_schema(
-            label={"type": "string", "default": "hello"}
-        )
+        schema = self._make_schema(label={"type": "string", "default": "hello"})
         builder = SchemaFormBuilder(schema)
 
         container = QtWidgets.QWidget()
@@ -1441,7 +1443,11 @@ class TestSchemaFormBuilder:
         from mpl_fastapi.remote.backend_qtremote import SchemaFormBuilder
 
         schema = self._make_schema(
-            color={"type": "string", "enum": ["red", "green", "blue"], "default": "green"}
+            color={
+                "type": "string",
+                "enum": ["red", "green", "blue"],
+                "default": "green",
+            }
         )
         builder = SchemaFormBuilder(schema)
 
@@ -1547,7 +1553,12 @@ class TestFigureLauncherWindow:
                 init_schema={
                     "type": "object",
                     "properties": {
-                        "freq": {"type": "number", "default": 1.0, "minimum": 0.1, "maximum": 10.0}
+                        "freq": {
+                            "type": "number",
+                            "default": 1.0,
+                            "minimum": 0.1,
+                            "maximum": 10.0,
+                        }
                     },
                 },
                 update_schema=None,
@@ -1561,7 +1572,12 @@ class TestFigureLauncherWindow:
                 update_schema={
                     "type": "object",
                     "properties": {
-                        "phase": {"type": "number", "default": 0.0, "minimum": 0.0, "maximum": 6.28}
+                        "phase": {
+                            "type": "number",
+                            "default": 0.0,
+                            "minimum": 0.0,
+                            "maximum": 6.28,
+                        }
                     },
                 },
             ),
@@ -1572,9 +1588,7 @@ class TestFigureLauncherWindow:
 
         from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
 
-        with patch(
-            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
-        ):
+        with patch("mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"):
             win = FigureLauncherWindow("ws://localhost:8000/plots")
             qtbot.addWidget(win)
 
@@ -1587,9 +1601,7 @@ class TestFigureLauncherWindow:
 
         from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
 
-        with patch(
-            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
-        ):
+        with patch("mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"):
             win = FigureLauncherWindow("ws://localhost:8000/plots")
             qtbot.addWidget(win)
 
@@ -1605,9 +1617,7 @@ class TestFigureLauncherWindow:
 
         from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
 
-        with patch(
-            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
-        ):
+        with patch("mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"):
             win = FigureLauncherWindow("ws://localhost:8000/plots")
             qtbot.addWidget(win)
 
@@ -1619,9 +1629,7 @@ class TestFigureLauncherWindow:
 
         from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
 
-        with patch(
-            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
-        ):
+        with patch("mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"):
             win = FigureLauncherWindow("ws://localhost:8000/plots")
             qtbot.addWidget(win)
 
@@ -1634,9 +1642,7 @@ class TestFigureLauncherWindow:
 
         from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
 
-        with patch(
-            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
-        ):
+        with patch("mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"):
             win = FigureLauncherWindow("ws://localhost:8000/plots")
             qtbot.addWidget(win)
 
@@ -1650,9 +1656,7 @@ class TestFigureLauncherWindow:
 
         from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
 
-        with patch(
-            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
-        ):
+        with patch("mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"):
             win = FigureLauncherWindow("ws://localhost:8000/plots")
             qtbot.addWidget(win)
 
@@ -1669,9 +1673,7 @@ class TestFigureLauncherWindow:
 
         from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
 
-        with patch(
-            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
-        ):
+        with patch("mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"):
             win = FigureLauncherWindow("ws://localhost:8000/plots")
             qtbot.addWidget(win)
 
@@ -1688,9 +1690,7 @@ class TestFigureLauncherWindow:
 
         from mpl_fastapi.remote.backend_qtremote import FigureLauncherWindow
 
-        with patch(
-            "mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"
-        ):
+        with patch("mpl_fastapi.remote.backend_qtremote._DiscoveryWorker"):
             win = FigureLauncherWindow("ws://localhost:8000/plots")
             qtbot.addWidget(win)
 

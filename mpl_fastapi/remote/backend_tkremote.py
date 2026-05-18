@@ -277,9 +277,7 @@ class TransportWorker(threading.Thread):
         )
 
     def _handle_reconnected(self, config: ServerConfig) -> None:
-        self._dispatch(
-            lambda c=config: [cb(c) for cb in list(self._reconnected_cbs)]
-        )
+        self._dispatch(lambda c=config: [cb(c) for cb in list(self._reconnected_cbs)])
 
     # -- threading.Thread entry point ---------------------------------------
 
@@ -487,8 +485,13 @@ class FigureCanvasTkRemote(FigureCanvasRemote, FigureCanvasTk):
         if bbox:
             x0, y0, x1, y1 = bbox
             self._overlay_rect_id = self._tkcanvas.create_rectangle(
-                x0 - pad, y0 - pad, x1 + pad, y1 + pad,
-                fill="#000000", stipple="gray50", outline=""
+                x0 - pad,
+                y0 - pad,
+                x1 + pad,
+                y1 + pad,
+                fill="#000000",
+                stipple="gray50",
+                outline="",
             )
             # Raise text above background rectangle.
             self._tkcanvas.tag_raise(self._overlay_text_id, self._overlay_rect_id)
@@ -810,9 +813,7 @@ class UpdateParametersFrame(ttk.Frame):
             side=tk.LEFT, padx=4
         )
 
-    def _create_input(
-        self, name: str, prop: dict[str, Any]
-    ) -> tuple[Any, Any]:
+    def _create_input(self, name: str, prop: dict[str, Any]) -> tuple[Any, Any]:
         """Create an appropriate input widget for a JSON Schema property.
 
         Returns
@@ -826,9 +827,11 @@ class UpdateParametersFrame(ttk.Frame):
             var = tk.DoubleVar(value=float(default) if default is not None else 0.0)
             minimum = prop.get("minimum", prop.get("exclusiveMinimum", -1e9))
             maximum = prop.get("maximum", prop.get("exclusiveMaximum", 1e9))
-            increment = (float(maximum) - float(minimum)) / 100 if (
-                minimum is not None and maximum is not None
-            ) else (0.1 if prop_type == "number" else 1.0)
+            increment = (
+                (float(maximum) - float(minimum)) / 100
+                if (minimum is not None and maximum is not None)
+                else (0.1 if prop_type == "number" else 1.0)
+            )
             decimals = 4 if prop_type == "number" else 0
             widget = ttk.Spinbox(
                 self,
@@ -849,8 +852,15 @@ class UpdateParametersFrame(ttk.Frame):
         if prop_type == "string":
             enum_values = prop.get("enum")
             if enum_values is not None:
-                var = tk.StringVar(value=str(default) if default is not None else str(enum_values[0]))
-                widget = ttk.Combobox(self, textvariable=var, values=list(map(str, enum_values)), state="readonly")
+                var = tk.StringVar(
+                    value=str(default) if default is not None else str(enum_values[0])
+                )
+                widget = ttk.Combobox(
+                    self,
+                    textvariable=var,
+                    values=list(map(str, enum_values)),
+                    state="readonly",
+                )
                 return widget, var
             var = tk.StringVar(value=str(default) if default is not None else "")
             widget = ttk.Entry(self, textvariable=var)
@@ -1064,15 +1074,11 @@ def open_remote_figure(
     # Block until connected or error (up to 10 s).
     if not worker._connected_event.wait(timeout=10.0):
         worker.stop()
-        raise RuntimeError(
-            f"Connection to {url!r} timed out after 10 s"
-        )
+        raise RuntimeError(f"Connection to {url!r} timed out after 10 s")
 
     if worker._connection_error is not None:
         worker.stop()
-        raise RuntimeError(
-            f"Failed to connect to {url!r}: {worker._connection_error}"
-        )
+        raise RuntimeError(f"Failed to connect to {url!r}: {worker._connection_error}")
 
     config = worker._connected_config
     assert config is not None  # satisfied if _connected_event is set without error
@@ -1104,7 +1110,11 @@ def open_remote_figure(
 
 
 def open_remote_figures(
-    specs: Sequence[tuple[str, str] | tuple[str, str, dict[str, Any] | None] | tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]],
+    specs: Sequence[
+        tuple[str, str]
+        | tuple[str, str, dict[str, Any] | None]
+        | tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]
+    ],
     *,
     token: str | None = None,
     device_pixel_ratio: float = 1.0,
@@ -1177,9 +1187,7 @@ def open_remote_figures(
             )
             managers.append(mgr)
         except RuntimeError:
-            logger.warning(
-                "Could not open %r on %s — skipping", plot_name, url
-            )
+            logger.warning("Could not open %r on %s — skipping", plot_name, url)
             window.destroy()
 
     if not managers and root.winfo_exists():
@@ -1293,11 +1301,15 @@ class _LauncherFormFrame(ttk.Frame):
         default = prop.get("default")
 
         if prop_type in ("number", "integer"):
-            var: Any = tk.DoubleVar(value=float(default) if default is not None else 0.0)
+            var: Any = tk.DoubleVar(
+                value=float(default) if default is not None else 0.0
+            )
             minimum = prop.get("minimum", prop.get("exclusiveMinimum", -1e9))
             maximum = prop.get("maximum", prop.get("exclusiveMaximum", 1e9))
             span = float(maximum) - float(minimum)
-            increment = span / 100 if span > 0 else (0.1 if prop_type == "number" else 1.0)
+            increment = (
+                span / 100 if span > 0 else (0.1 if prop_type == "number" else 1.0)
+            )
             decimals = 4 if prop_type == "number" else 0
             widget: Any = ttk.Spinbox(
                 master,
@@ -1429,7 +1441,9 @@ class FigureLauncherWindow(tk.Toplevel):
         # --- Menu bar ---
         menu_bar = tk.Menu(self)
         help_menu = tk.Menu(menu_bar, tearoff=0)
-        help_menu.add_command(label="Version Info\u2026", command=self._show_version_dialog)
+        help_menu.add_command(
+            label="Version Info\u2026", command=self._show_version_dialog
+        )
         menu_bar.add_cascade(label="Help", menu=help_menu)
         self.configure(menu=menu_bar)
 
@@ -1440,16 +1454,19 @@ class FigureLauncherWindow(tk.Toplevel):
         left = ttk.Frame(paned, padding=4)
         paned.add(left, minsize=200, stretch="never")
 
-        ttk.Label(left, text="Available Figures", font=("TkDefaultFont", 10, "bold")).pack(
-            anchor="w", pady=(0, 4)
-        )
+        ttk.Label(
+            left, text="Available Figures", font=("TkDefaultFont", 10, "bold")
+        ).pack(anchor="w", pady=(0, 4))
 
         list_frame = ttk.Frame(left)
         list_frame.pack(fill=tk.BOTH, expand=True)
 
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
         self._listbox = tk.Listbox(
-            list_frame, yscrollcommand=scrollbar.set, selectmode=tk.SINGLE, activestyle="none"
+            list_frame,
+            yscrollcommand=scrollbar.set,
+            selectmode=tk.SINGLE,
+            activestyle="none",
         )
         scrollbar.config(command=self._listbox.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1467,7 +1484,9 @@ class FigureLauncherWindow(tk.Toplevel):
 
         # Scrollable canvas for the right panel content
         right_canvas = tk.Canvas(right_outer, borderwidth=0, highlightthickness=0)
-        right_scroll = ttk.Scrollbar(right_outer, orient=tk.VERTICAL, command=right_canvas.yview)
+        right_scroll = ttk.Scrollbar(
+            right_outer, orient=tk.VERTICAL, command=right_canvas.yview
+        )
         right_canvas.configure(yscrollcommand=right_scroll.set)
         right_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         right_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -1490,12 +1509,19 @@ class FigureLauncherWindow(tk.Toplevel):
         # Description label
         self._desc_var = tk.StringVar()
         ttk.Label(
-            self._right_frame, textvariable=self._desc_var, wraplength=380, justify=tk.LEFT
+            self._right_frame,
+            textvariable=self._desc_var,
+            wraplength=380,
+            justify=tk.LEFT,
         ).pack(anchor="w", pady=(0, 8))
 
         # Init params labelframe (hidden until a plot with params is selected)
-        self._init_lf = ttk.LabelFrame(self._right_frame, text="Init Parameters", padding=4)
-        self._update_lf = ttk.LabelFrame(self._right_frame, text="Update Parameters", padding=4)
+        self._init_lf = ttk.LabelFrame(
+            self._right_frame, text="Init Parameters", padding=4
+        )
+        self._update_lf = ttk.LabelFrame(
+            self._right_frame, text="Update Parameters", padding=4
+        )
 
         # Launch button (always visible, disabled until selection)
         btn_frame = ttk.Frame(self._right_frame)
@@ -1613,7 +1639,9 @@ class FigureLauncherWindow(tk.Toplevel):
     # -- cleanup ------------------------------------------------------------
 
     def _fetch_watermark_bg(
-        self, base_url: str, token: str | None,
+        self,
+        base_url: str,
+        token: str | None,
     ) -> None:
         """Background thread: fetch watermark and cache it."""
         self._remote_versions = fetch_watermark(base_url, token=token)
@@ -1629,8 +1657,13 @@ class FigureLauncherWindow(tk.Toplevel):
         dlg.resizable(False, False)
 
         txt = tk.Text(
-            dlg, wrap=tk.WORD, font=("liberation mono", 10),
-            width=70, height=12, relief=tk.FLAT, bg=dlg.cget("bg"),
+            dlg,
+            wrap=tk.WORD,
+            font=("liberation mono", 10),
+            width=70,
+            height=12,
+            relief=tk.FLAT,
+            bg=dlg.cget("bg"),
         )
         txt.insert("1.0", text)
         txt.configure(state=tk.DISABLED)
@@ -1717,9 +1750,7 @@ def _main() -> None:
         resolve_token,
     )
 
-    parser = build_arg_parser(
-        "Tk thin-client launcher for remote mpl_fastapi plots"
-    )
+    parser = build_arg_parser("Tk thin-client launcher for remote mpl_fastapi plots")
     args = parser.parse_args()
     token = resolve_token(args.token)
     init_params = parse_kv_pairs(args.params, parser, "Init parameters")

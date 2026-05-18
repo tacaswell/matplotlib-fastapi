@@ -489,7 +489,9 @@ class MatplotlibWebSocketClient:
 
         logger.debug(
             "Config received: connection_id=%s, figure_size=%s, toolbar_items=%d",
-            self.connection_id, self.figure_size, len(self.toolbar_items),
+            self.connection_id,
+            self.figure_size,
+            len(self.toolbar_items),
         )
 
         # Mark as initialized
@@ -541,7 +543,10 @@ class MatplotlibWebSocketClient:
 
         logger.debug(
             "Received image: %d bytes (mode=%s, seq=%s, base=%s)",
-            len(image_data), self.image_mode, header.seq_num, header.base_seq,
+            len(image_data),
+            self.image_mode,
+            header.seq_num,
+            header.base_seq,
         )
 
         return self._process_image(image_data, composite_diffs=True)
@@ -645,7 +650,8 @@ class MatplotlibWebSocketClient:
             )
         if invalidate_msg["type"] != "invalidate":
             logger.warning(
-                "Expected invalidate after update_params, got %s", invalidate_msg['type']
+                "Expected invalidate after update_params, got %s",
+                invalidate_msg["type"],
             )
 
     def send_mouse_event(
@@ -751,7 +757,7 @@ class MatplotlibWebSocketClient:
         # Wait for save_complete or save_error response
         response = self._receive_json()
         if response["type"] == "save_complete":
-            logger.info("Save complete: %s", response['filename'])
+            logger.info("Save complete: %s", response["filename"])
             return response
         if response["type"] == "error":
             raise RuntimeError(

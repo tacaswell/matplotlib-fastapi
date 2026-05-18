@@ -292,6 +292,7 @@ class RemoteTransport:
         # The convention for non-browser WebSocket clients is to use the
         # server's own origin (scheme + host + port).
         from urllib.parse import urlparse
+
         _parsed = urlparse(self._url)
         _scheme = "https" if _parsed.scheme in ("wss",) else "http"
         _origin = f"{_scheme}://{_parsed.netloc}"
@@ -452,9 +453,7 @@ class RemoteTransport:
             self._receive_task = None
             if not self._explicitly_disconnecting:
                 if self._reconnect_max_attempts > 0:
-                    self._reconnect_task = asyncio.ensure_future(
-                        self._reconnect_loop()
-                    )
+                    self._reconnect_task = asyncio.ensure_future(self._reconnect_loop())
                 else:
                     self._on_disconnect()
 

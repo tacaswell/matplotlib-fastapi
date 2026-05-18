@@ -162,7 +162,6 @@ class FigureCanvasRemote(FigureCanvasBase):
 
     # -- rendering (main thread, blit only) ---------------------------------
 
-
     def draw(self) -> None:
         """Request a server re-render and schedule a Qt repaint."""
         if self._is_drawing:
@@ -224,9 +223,7 @@ class FigureCanvasRemote(FigureCanvasBase):
         # Tell the new server-side figure to use the client's current
         # size, not the default it was created with.  The resize message
         # is in CSS pixels; the server multiplies by DPR internally.
-        self._transport.send_json(
-            {"type": "resize", "width": old_w, "height": old_h}
-        )
+        self._transport.send_json({"type": "resize", "width": old_w, "height": old_h})
         # Update _server_config to reflect the size we just requested
         self._server_config = ServerConfig(
             **{**self._server_config.__dict__, "figure_size": (old_w, old_h)}
@@ -419,15 +416,11 @@ class FigureCanvasRemote(FigureCanvasBase):
         if event.name == "motion_notify_event":
             self._forward_motion_notify(wire_x, wire_y)
         elif event.name == "scroll_event":
-            self._forward_mouse_event(
-                wire_type, wire_x, wire_y, step=event.step
-            )
+            self._forward_mouse_event(wire_type, wire_x, wire_y, step=event.step)
         else:
             # button_press / button_release
             button = int(event.button) - 1 if event.button is not None else 0
-            self._forward_mouse_event(
-                wire_type, wire_x, wire_y, button=button
-            )
+            self._forward_mouse_event(wire_type, wire_x, wire_y, button=button)
 
     def _forward_motion_notify(self, x: float, y: float) -> None:
         """Rate-limited motion_notify forwarding.
@@ -645,7 +638,6 @@ class FigureCanvasRemote(FigureCanvasBase):
             Absorbed for compatibility with ``Figure.savefig``.
         """
 
-
         if hasattr(filename, "write"):
             raise ValueError(
                 "Remote print_figure does not support file-like objects; "
@@ -722,9 +714,7 @@ class FigureCanvasRemote(FigureCanvasBase):
         # Guard against a malicious download_url redirecting to another host.
         resolved = urllib.parse.urlparse(full_url)
         if resolved.netloc != parsed.netloc:
-            raise ValueError(
-                f"download_url resolved to a different host: {full_url!r}"
-            )
+            raise ValueError(f"download_url resolved to a different host: {full_url!r}")
 
         # Forward auth token from WS query string via Authorization header.
         ws_qs = urllib.parse.parse_qs(parsed.query)
@@ -1144,7 +1134,7 @@ class FigureManagerRemote(FigureManagerBase):
     """
 
     canvas: FigureCanvasRemote  # type: ignore[assignment]
-    toolbar: RemoteNavigationToolbar2 # type: ignore[assignment]
+    toolbar: RemoteNavigationToolbar2  # type: ignore[assignment]
 
     def __init__(self, canvas: FigureCanvasRemote, num: int) -> None:
         super().__init__(canvas, num)

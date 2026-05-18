@@ -1120,7 +1120,9 @@ def open_remote_figure(
         screen = QtWidgets.QApplication.primaryScreen()
         device_pixel_ratio = screen.devicePixelRatio() if screen is not None else 1.0
 
-    ws_url = build_ws_url(url, plot_name, init_params, update_params=update_params, token=token)
+    ws_url = build_ws_url(
+        url, plot_name, init_params, update_params=update_params, token=token
+    )
 
     # We'll collect the server config from the connected signal
     result: dict[str, Any] = {}
@@ -1188,7 +1190,11 @@ def open_remote_figure(
 
 
 def open_remote_figures(
-    specs: Sequence[tuple[str, str] | tuple[str, str, dict[str, Any] | None] | tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]],
+    specs: Sequence[
+        tuple[str, str]
+        | tuple[str, str, dict[str, Any] | None]
+        | tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]
+    ],
     *,
     token: str | None = None,
     device_pixel_ratio: float | None = None,
@@ -1306,7 +1312,9 @@ def run_qt_app(
     if app is None:
         app = QtWidgets.QApplication(sys.argv)
 
-    managers = open_remote_figures(specs, token=token, device_pixel_ratio=device_pixel_ratio)
+    managers = open_remote_figures(
+        specs, token=token, device_pixel_ratio=device_pixel_ratio
+    )
 
     if not managers:
         logger.warning("No figures opened.")
@@ -1326,7 +1334,7 @@ def run_qt_app(
 class _DiscoveryWorker(QtCore.QThread):
     """Background thread that queries the server for available plots."""
 
-    finished = QtCore.Signal(list)   # list[RemotePlotInfo]
+    finished = QtCore.Signal(list)  # list[RemotePlotInfo]
     error = QtCore.Signal(str)
 
     def __init__(
@@ -1417,9 +1425,7 @@ class FigureLauncherWindow(QtWidgets.QMainWindow):
 
         # Cache for the remote watermark (fetched in background)
         self._remote_versions: dict[str, str] = {}
-        self._watermark_worker = _WatermarkWorker(
-            base_url, token=token, parent=self
-        )
+        self._watermark_worker = _WatermarkWorker(base_url, token=token, parent=self)
         self._watermark_worker.finished.connect(self._on_watermark_fetched)
         self._watermark_worker.start()
 
@@ -1430,7 +1436,11 @@ class FigureLauncherWindow(QtWidgets.QMainWindow):
         """Open a modal dialog showing local and remote version info."""
         from matplotlib.backends.qt_compat import QtCore
 
-        qt_binding = QtCore.__package__.split(".")[0] if hasattr(QtCore, "__package__") else "unknown"
+        qt_binding = (
+            QtCore.__package__.split(".")[0]
+            if hasattr(QtCore, "__package__")
+            else "unknown"
+        )
         ui_versions = {"Qt binding": qt_binding, "Qt": QtCore.qVersion()}
         text = _build_watermark_text(self._remote_versions, ui_versions)
         dlg = QtWidgets.QDialog(self)
@@ -1445,7 +1455,9 @@ class FigureLauncherWindow(QtWidgets.QMainWindow):
         text_edit.setMinimumHeight(120)
         layout.addWidget(text_edit)
 
-        button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok)
+        button_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+        )
         button_box.accepted.connect(dlg.accept)
         layout.addWidget(button_box)
 
@@ -1534,7 +1546,9 @@ class FigureLauncherWindow(QtWidgets.QMainWindow):
         for plot in plots:
             self._plot_list.addItem(f"{plot.name}  —  {plot.description}")
         count = len(plots)
-        self._status_label.setText(f"{count} figure{'s' if count != 1 else ''} available")
+        self._status_label.setText(
+            f"{count} figure{'s' if count != 1 else ''} available"
+        )
         if plots:
             self._plot_list.setCurrentRow(0)
 
@@ -1677,9 +1691,7 @@ def _main() -> None:
         resolve_token,
     )
 
-    parser = build_arg_parser(
-        "Qt thin-client launcher for remote mpl_fastapi plots"
-    )
+    parser = build_arg_parser("Qt thin-client launcher for remote mpl_fastapi plots")
     args = parser.parse_args()
     token = resolve_token(args.token)
     init_params = parse_kv_pairs(args.params, parser, "Init parameters")

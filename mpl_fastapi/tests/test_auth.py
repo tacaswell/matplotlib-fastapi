@@ -143,9 +143,7 @@ class TestSingleUserTokenRejection:
         resp = auth_client.get("/plots/plots")
         assert resp.headers.get("www-authenticate") == "Bearer"
 
-    def test_wrong_token_rejected(
-        self, auth_client: TestClient
-    ) -> None:
+    def test_wrong_token_rejected(self, auth_client: TestClient) -> None:
         resp = auth_client.get(
             "/plots/plots",
             headers={"Authorization": "Bearer wrong-token"},
@@ -166,33 +164,25 @@ class TestSingleUserTokenRejection:
 class TestSingleUserTokenAccess:
     """Protected endpoints accept requests with a valid token."""
 
-    def test_bearer_header(
-        self, auth_client: TestClient, token: str
-    ) -> None:
+    def test_bearer_header(self, auth_client: TestClient, token: str) -> None:
         resp = auth_client.get(
             "/plots/plots",
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200
 
-    def test_query_param(
-        self, auth_client: TestClient, token: str
-    ) -> None:
+    def test_query_param(self, auth_client: TestClient, token: str) -> None:
         resp = auth_client.get(f"/plots/plots?token={token}")
         assert resp.status_code == 200
 
-    def test_plot_view_with_token(
-        self, auth_client: TestClient, token: str
-    ) -> None:
+    def test_plot_view_with_token(self, auth_client: TestClient, token: str) -> None:
         resp = auth_client.get(
             "/plots/plot/simple",
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200
 
-    def test_schema_with_token(
-        self, auth_client: TestClient, token: str
-    ) -> None:
+    def test_schema_with_token(self, auth_client: TestClient, token: str) -> None:
         resp = auth_client.get(
             "/plots/api/plots/simple/schema",
             headers={"Authorization": f"Bearer {token}"},
@@ -217,28 +207,20 @@ class TestSingleUserTokenAccess:
 class TestSingleUserTokenWebSocket:
     """WebSocket endpoint respects token auth."""
 
-    def test_ws_rejected_without_token(
-        self, auth_client: TestClient
-    ) -> None:
+    def test_ws_rejected_without_token(self, auth_client: TestClient) -> None:
         with pytest.raises(Exception):
             with auth_client.websocket_connect("/plots/ws/v0/simple"):
                 pass  # Should not reach here
 
-    def test_ws_rejected_with_wrong_token(
-        self, auth_client: TestClient
-    ) -> None:
+    def test_ws_rejected_with_wrong_token(self, auth_client: TestClient) -> None:
         with pytest.raises(Exception):
-            with auth_client.websocket_connect(
-                "/plots/ws/v0/simple?token=wrong"
-            ):
+            with auth_client.websocket_connect("/plots/ws/v0/simple?token=wrong"):
                 pass
 
     def test_ws_accepted_with_query_token(
         self, auth_client: TestClient, token: str
     ) -> None:
-        with auth_client.websocket_connect(
-            f"/plots/ws/v0/simple?token={token}"
-        ) as ws:
+        with auth_client.websocket_connect(f"/plots/ws/v0/simple?token={token}") as ws:
             # Send init message
             ws.send_json(
                 {
@@ -277,9 +259,7 @@ class TestSingleUserTokenSources:
         assert isinstance(auth.token, str)
         assert len(auth.token) > 16
 
-    def test_explicit_overrides_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_explicit_overrides_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("MPL_FASTAPI_TOKEN", "env-token")
         auth = SingleUserToken(token="explicit-token")
         assert auth.token == "explicit-token"
@@ -315,9 +295,7 @@ class TestJSBundlesNoAuth:
 class TestDefaultAuth:
     """When auth is omitted, the router should behave like NoAuth."""
 
-    def test_no_auth_by_default(
-        self, client: TestClient
-    ) -> None:
+    def test_no_auth_by_default(self, client: TestClient) -> None:
         """The standard test_app fixture passes no auth — should work."""
         resp = client.get("/plots/plots")
         assert resp.status_code == 200
@@ -339,11 +317,13 @@ class TestCustomAuthPolicy:
             def http_dependency(self):
                 async def _dep():
                     calls.append("http")
+
                 return _dep
 
             def ws_dependency(self):
                 async def _dep():
                     calls.append("ws")
+
                 return _dep
 
         app = FastAPI()
