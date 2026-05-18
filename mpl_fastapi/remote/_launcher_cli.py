@@ -53,7 +53,11 @@ def build_arg_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--url",
         default=DEFAULT_URL,
-        help=f"Server WebSocket base URL (default: {DEFAULT_URL})",
+        help=(
+            "Base URL of the mpl-fastapi router mount point "
+            f"(default: {DEFAULT_URL}).  Must include the router prefix, "
+            "e.g. ws://host:8000/plots or http://host:8000/plots."
+        ),
     )
     parser.add_argument(
         "--plot",
