@@ -149,6 +149,8 @@ warn_unused_ignores = true
 
 [tool.pyright]
 pythonVersion = "3.12"
+venvPath = ".pixi/envs"
+venv = "default"
 reportUnknownParameterType = "none"
 reportUnknownMemberType = "none"
 reportUnknownArgumentType = "none"
