@@ -19,6 +19,7 @@ import numpy.typing as npt
 from fastapi import WebSocket
 from matplotlib.backend_bases import (
     FigureManagerBase,
+    KeyEvent,
     LocationEvent,
     MouseEvent,
     NavigationToolbar2,
@@ -345,6 +346,26 @@ class FastAPICanvas(FigureCanvasAgg):
     handle_button_press = handle_button_release = handle_dblclick = (
         handle_figure_enter
     ) = handle_figure_leave = handle_motion_notify = handle_scroll = _handle_mouse
+
+    async def _handle_key(self, event: dict[str, Any], _websocket: WebSocket) -> None:
+        """Handle key press/release events from the browser."""
+        key = event.get("key", "")
+        gui_event = event.get("guiEvent")
+        x = event.get("x", 0)
+        y = event.get("y", 0)
+        renderer_height = self.get_renderer().height
+        y = renderer_height - y
+        e_type = event["type"]
+        if e_type == "key_press":
+            KeyEvent(
+                "key_press_event", self, key, x, y, guiEvent=gui_event
+            )._process()  # type: ignore[attr-defined]
+        elif e_type == "key_release":
+            KeyEvent(
+                "key_release_event", self, key, x, y, guiEvent=gui_event
+            )._process()  # type: ignore[attr-defined]
+
+    handle_key_press = handle_key_release = _handle_key
 
     async def handle_toolbar_button(
         self, event: dict[str, Any], _websocket: WebSocket

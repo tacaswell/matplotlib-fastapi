@@ -694,7 +694,9 @@ class MatplotlibWebSocketClient:
         if event_type not in ("motion_notify", "figure_enter", "figure_leave"):
             logger.debug("Sent mouse event: %s", event_type)
 
-    def send_keyboard_event(self, event_type: str, key: str) -> None:
+    def send_keyboard_event(
+        self, event_type: str, key: str, x: float = 0, y: float = 0
+    ) -> None:
         """Send keyboard event to server.
 
         Keyboard events may trigger callbacks that queue messages. Use
@@ -706,10 +708,12 @@ class MatplotlibWebSocketClient:
             Event type (key_press, key_release)
         key : str
             Key name
+        x, y : float
+            Cursor position in wire-protocol coordinates (y from top).
         """
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
-        self.adapter.send_json({"type": event_type, "key": key})
+        self.adapter.send_json({"type": event_type, "key": key, "x": x, "y": y})
         logger.debug("Sent keyboard event: %s - %s", event_type, key)
 
     def send_save_figure(

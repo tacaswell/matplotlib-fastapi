@@ -186,6 +186,8 @@ export class Figure {
   // State
   supports_binary: boolean = true;
   private _key: string | null = null;
+  private _last_mouse_x: number = 0;
+  private _last_mouse_y: number = 0;
   private resizeObserverInstance: ResizeObserver | null = null;
   private _resize_canvas?: (width: number, height: number, forward: boolean) => void;
   private _server_size: [number, number] | null = null;
@@ -1481,6 +1483,9 @@ export class Figure {
     const x = canvas_pos.x * this.ratio;
     const y = canvas_pos.y * this.ratio;
 
+    this._last_mouse_x = x;
+    this._last_mouse_y = y;
+
     this.send_message(name, {
       x,
       y,
@@ -1537,11 +1542,16 @@ export class Figure {
       value += 'shift+';
     }
 
-    value += 'k' + event.key;
+    value += event.key;
 
     this._key_event_extra(event, name);
 
-    this.send_message(name, { key: value, guiEvent: simpleKeys(event as any) });
+    this.send_message(name, {
+      key: value,
+      x: this._last_mouse_x,
+      y: this._last_mouse_y,
+      guiEvent: simpleKeys(event as any),
+    });
     return false;
   }
 

@@ -466,7 +466,13 @@ class FigureCanvasRemote(FigureCanvasBase):
         wire_type = self._MPL_TO_WIRE_EVENT.get(event.name)
         if wire_type is None or event.key is None:
             return
-        self._forward_key_event(wire_type, event.key)
+        # Convert y from mpl coords (origin bottom) to wire coords (origin top)
+        x = event.x or 0
+        y = event.y or 0
+        fig = self.figure
+        if fig is not None:
+            y = fig.bbox.height - y
+        self._forward_key_event(wire_type, event.key, x, y)
 
     # -- event forwarding (main thread → transport) -------------------------
 
@@ -501,7 +507,9 @@ class FigureCanvasRemote(FigureCanvasBase):
             msg["step"] = step
         self._transport.send_json(msg)
 
-    def _forward_key_event(self, event_type: str, key: str) -> None:
+    def _forward_key_event(
+        self, event_type: str, key: str, x: float = 0, y: float = 0
+    ) -> None:
         """Forward a keyboard event to the server.
 
         Parameters
@@ -510,8 +518,12 @@ class FigureCanvasRemote(FigureCanvasBase):
             ``"key_press"`` or ``"key_release"``.
         key : str
             Key name (matplotlib format).
+        x, y : float
+            Cursor position in wire-protocol coordinates (y from top).
         """
-        self._transport.send_json({"type": event_type, "key": key})
+        self._transport.send_json(
+            {"type": event_type, "key": key, "x": x, "y": y}
+        )
 
     def _forward_resize(self, width: int, height: int) -> None:
         """Forward a resize event to the server.
@@ -957,6 +969,12 @@ def list_remote_figures(
     if scheme in ("ws", "wss"):
         scheme = "https" if scheme == "wss" else "http"
     http_base = f"{scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
+    if not parsed.path or parsed.path == "/":
+        logger.warning(
+            "base_url %r has no path — did you forget the router prefix "
+            "(e.g. ws://host:8000/plots)?",
+            base_url,
+        )
     url = f"{http_base}/plots"
 
     req = urllib.request.Request(url)
@@ -1015,6 +1033,12 @@ def fetch_watermark(
     if scheme in ("ws", "wss"):
         scheme = "https" if scheme == "wss" else "http"
     http_base = f"{scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
+    if not parsed.path or parsed.path == "/":
+        logger.warning(
+            "base_url %r has no path — did you forget the router prefix "
+            "(e.g. ws://host:8000/plots)?",
+            base_url,
+        )
     url = f"{http_base}/watermark"
 
     req = urllib.request.Request(url)

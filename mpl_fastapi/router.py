@@ -1512,6 +1512,8 @@ def create_mpl_router(
                             "motion_notify": canvas.handle_motion_notify,
                             "scroll": canvas.handle_scroll,
                             "toolbar_button": canvas.handle_toolbar_button,
+                            "key_press": canvas.handle_key_press,
+                            "key_release": canvas.handle_key_release,
                         }
                         handler = _canvas_handlers.get(
                             e_type, canvas.handle_unknown_event

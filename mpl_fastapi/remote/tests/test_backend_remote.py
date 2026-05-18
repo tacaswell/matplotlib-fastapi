@@ -335,7 +335,9 @@ class TestFigureCanvasRemoteEventForwarding:
         canvas = FigureCanvasRemote(fig, transport, config)
 
         canvas._forward_key_event("key_press", "a")
-        transport.send_json.assert_called_once_with({"type": "key_press", "key": "a"})
+        transport.send_json.assert_called_once_with(
+            {"type": "key_press", "key": "a", "x": 0, "y": 0}
+        )
 
     def test_forward_resize(self) -> None:
         fig = Figure()
