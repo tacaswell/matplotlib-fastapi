@@ -86,7 +86,7 @@ def _split_query_params(
     update_raw: dict[str, str] = {}
     for key, value in raw.items():
         if key.startswith(_UPDATE_PREFIX):
-            update_raw[key[len(_UPDATE_PREFIX):]] = value
+            update_raw[key[len(_UPDATE_PREFIX) :]] = value
         elif key not in _RESERVED_QUERY_KEYS:
             init_raw[key] = value
     return init_raw, update_raw
@@ -137,7 +137,9 @@ def _read_static_file_uncached(filename: str) -> tuple[str, str] | None:
     return None
 
 
-_read_static_file = _read_static_file_uncached if _NO_CACHE_JS else _read_static_file_cached
+_read_static_file = (
+    _read_static_file_uncached if _NO_CACHE_JS else _read_static_file_cached
+)
 
 
 def _get_js_hash(filename: str) -> str | None:
@@ -419,62 +421,6 @@ def _sync_save_figure(
     return buf.getvalue()
 
 
-def _sync_draw_figure(canvas: FastAPICanvas) -> tuple[bytes, bool]:
-    """Synchronous figure draw operation for thread pool execution.
-
-    This function runs in a background thread to avoid blocking the event loop.
-    Performs the matplotlib draw operation and generates the diff image.
-
-    Parameters
-    ----------
-    canvas : FastAPICanvas
-        The canvas to draw
-
-    Returns
-    -------
-    tuple[bytes, bool]
-        Tuple of (PNG image data, is_diff) where is_diff is True for diff mode
-    """
-    from io import BytesIO
-
-    import numpy as np
-    from PIL import Image
-
-    # Perform the blocking draw operation
-    canvas.draw()
-
-    # Generate diff image (this is also potentially slow)
-    renderer = canvas.get_renderer()
-
-    # Buffer as uint32 for pixel comparison
-    buff = np.frombuffer(renderer.buffer_rgba(), dtype=np.uint32).reshape(
-        (int(renderer.height), int(renderer.width))
-    )
-
-    # Check for transparency
-    pixels = buff.view(dtype=np.uint8).reshape((*buff.shape, 4))
-
-    if canvas._force_full or np.any(pixels[:, :, 3] != 255):
-        # Full image mode
-        is_diff = False
-        output = buff
-    else:
-        # Diff mode
-        is_diff = True
-        diff = buff != canvas._last_buff
-        output = np.where(diff, buff, 0)
-
-    # Store current buffer for next diff
-    np.copyto(canvas._last_buff, buff)
-    canvas._force_full = False
-
-    # Encode as PNG
-    data = output.view(dtype=np.uint8).reshape((*output.shape, 4))
-    png_buf = BytesIO()
-    Image.fromarray(data).save(png_buf, format="png")
-    return png_buf.getvalue(), is_diff
-
-
 @dataclass
 class ImageSequenceState:
     """Tracks image sequence numbers for a connection."""
@@ -507,6 +453,51 @@ class ImageSequenceState:
         return self.seq_num, base_seq
 
 
+async def _send_image_frame(
+    websocket: WebSocket,
+    image_data: bytes,
+    is_diff: bool,
+    seq_state: ImageSequenceState,
+) -> None:
+    """Build the 8-byte header and send a single binary image frame.
+
+    This is the single place where header construction and ``send_bytes`` live.
+    Both the render/refresh path and the blit drain path call this function.
+
+    Parameters
+    ----------
+    websocket : WebSocket
+        Active WebSocket connection.
+    image_data : bytes
+        PNG-encoded image data.
+    is_diff : bool
+        True if *image_data* is a diff frame; False for a full frame.
+    seq_state : ImageSequenceState
+        Sequence number tracker for this connection.
+    """
+    if is_diff:
+        seq_num, base_seq = seq_state.next_diff()
+        type_mode = ImageTypeMode.DIFF
+    else:
+        seq_num, base_seq = seq_state.next_full()
+        type_mode = ImageTypeMode.FULL
+
+    header = _build_image_header(
+        type_mode=type_mode,
+        image_format=ImageFormat.PNG,
+        seq_num=seq_num,
+        base_seq=base_seq,
+    )
+    await websocket.send_bytes(header + image_data)
+    logger.debug(
+        "Sent image: type=%s, seq=%s, base=%s, size=%d bytes",
+        type_mode.name,
+        seq_num,
+        base_seq,
+        len(image_data),
+    )
+
+
 async def _send_render_response(
     websocket: WebSocket,
     canvas: FastAPICanvas,
@@ -514,12 +505,7 @@ async def _send_render_response(
     loop: asyncio.AbstractEventLoop,
     seq_state: ImageSequenceState,
 ) -> None:
-    """Shared helper to render figure and send binary image with header.
-
-    This function handles the common pattern of:
-    1. Running draw in background thread
-    2. Building 8-byte binary header with sequence numbers
-    3. Sending header + PNG bytes as single binary message
+    """Render the figure in a background thread and send the binary frame.
 
     Parameters
     ----------
@@ -534,36 +520,37 @@ async def _send_render_response(
     seq_state : ImageSequenceState
         Sequence number tracker for this connection
     """
-    logger.debug("Running draw() in background thread")
-
+    logger.debug("Running draw_and_get_diff() in background thread")
     image_data, is_diff = await loop.run_in_executor(
         executor,
-        _sync_draw_figure,
-        canvas,
+        canvas.draw_and_get_diff,
     )
+    await _send_image_frame(websocket, image_data, is_diff, seq_state)
 
-    # Determine sequence numbers
-    if is_diff:
-        seq_num, base_seq = seq_state.next_diff()
-        type_mode = ImageTypeMode.DIFF
-    else:
-        seq_num, base_seq = seq_state.next_full()
-        type_mode = ImageTypeMode.FULL
 
-    # Build header
-    header = _build_image_header(
-        type_mode=type_mode,
-        image_format=ImageFormat.PNG,
-        seq_num=seq_num,
-        base_seq=base_seq,
-    )
+async def _drain_canvas(
+    canvas: FastAPICanvas,
+    websocket: WebSocket,
+    seq_state: ImageSequenceState,
+) -> None:
+    """Drain the canvas JSON message queue and any binary frames queued by blit().
 
-    # Send header + image as single binary message
-    await websocket.send_bytes(header + image_data)
-    logger.debug(
-        "Sent image: type=%s, seq=%s, base=%s, size=%d bytes",
-        type_mode.name, seq_num, base_seq, len(image_data),
-    )
+    Parameters
+    ----------
+    canvas : FastAPICanvas
+        The canvas whose queues should be flushed.
+    websocket : WebSocket
+        Active WebSocket connection to send messages on.
+    seq_state : ImageSequenceState
+        Sequence number tracker for this connection.
+    """
+    # JSON messages first (invalidate, message, rubberband, etc.)
+    await canvas.drain_queue(websocket)
+
+    # Binary images queued by blit()
+    while canvas._binary_queue:
+        image_data, is_diff = canvas._binary_queue.popleft()
+        await _send_image_frame(websocket, image_data, is_diff, seq_state)
 
 
 def shutdown_figure_executor() -> None:
@@ -851,6 +838,7 @@ def create_mpl_router(
         if origin not in _ws_allowed_origins:
             await websocket.close(code=1008, reason="Origin not allowed")
             from fastapi import WebSocketException
+
             raise WebSocketException(code=1008, reason="Origin not allowed")
 
     # Create state instance for this router
@@ -902,7 +890,9 @@ def create_mpl_router(
         )
 
     # Route: List all available plots (JSON API)
-    @router.get("/plots", response_model=PlotsListResponse, dependencies=[Depends(_http_auth)])
+    @router.get(
+        "/plots", response_model=PlotsListResponse, dependencies=[Depends(_http_auth)]
+    )
     async def list_plots(request: Request) -> PlotsListResponse:
         """List all available plots with their parameter schemas."""
         # Derive base URLs from the request so clients get absolute,
@@ -973,7 +963,11 @@ def create_mpl_router(
         return versions
 
     # Route: View a specific plot
-    @router.get("/plot/{plot_name}", response_class=HTMLResponse, dependencies=[Depends(_http_auth)])
+    @router.get(
+        "/plot/{plot_name}",
+        response_class=HTMLResponse,
+        dependencies=[Depends(_http_auth)],
+    )
     async def view_plot(
         request: Request,
         plot_name: str,
@@ -1080,7 +1074,10 @@ def create_mpl_router(
         )
 
     # Route: WebSocket connection for interactive plotting (v0 protocol)
-    @router.websocket("/ws/v0/{plot_name}", dependencies=[Depends(_ws_auth), Depends(_check_ws_origin)])
+    @router.websocket(
+        "/ws/v0/{plot_name}",
+        dependencies=[Depends(_ws_auth), Depends(_check_ws_origin)],
+    )
     async def websocket_endpoint_v0(websocket: WebSocket, plot_name: str) -> None:
         """Handle WebSocket connection for a plot using v0 protocol.
 
@@ -1144,7 +1141,9 @@ def create_mpl_router(
                     await websocket.send_json(
                         {"type": "error", "message": f"Invalid update parameters: {e}"}
                     )
-                    await websocket.close(code=1008, reason=f"Invalid update params: {e}")
+                    await websocket.close(
+                        code=1008, reason=f"Invalid update params: {e}"
+                    )
                     return
 
         # Wait for client `init` message as FIRST message (REQUIRED)
@@ -1159,7 +1158,7 @@ def create_mpl_router(
 
         # Validate this is the init message
         if data.get("type") != "init":
-            logger.error("Expected 'init' as first message, got '%s'", data.get('type'))
+            logger.error("Expected 'init' as first message, got '%s'", data.get("type"))
             await websocket.send_json(
                 {
                     "type": "error",
@@ -1180,7 +1179,9 @@ def create_mpl_router(
             return
         if client_version != PROTOCOL_VERSION:
             logger.error(
-                "Incompatible protocol: server=%s, client=%s", PROTOCOL_VERSION, client_version
+                "Incompatible protocol: server=%s, client=%s",
+                PROTOCOL_VERSION,
+                client_version,
             )
             await websocket.send_json(
                 {
@@ -1200,7 +1201,10 @@ def create_mpl_router(
 
         logger.info(
             "WebSocket initialized for plot '%s': params=%s, dpr=%s, binary=%s",
-            plot_name, params, device_pixel_ratio, supports_binary,
+            plot_name,
+            params,
+            device_pixel_ratio,
+            supports_binary,
         )
 
         loop = asyncio.get_event_loop()
@@ -1208,6 +1212,10 @@ def create_mpl_router(
 
         # Create figure and call generator to populate it in background thread
         fig = Figure()
+
+        # Attach FastAPICanvas before passing into user code
+        canvas = FastAPICanvas(fig)
+
         try:
             logger.debug("Initializing figure '%s' in background thread", plot_name)
             state = await loop.run_in_executor(
@@ -1229,7 +1237,8 @@ def create_mpl_router(
             try:
                 logger.debug(
                     "Applying initial update params for '%s': %s",
-                    plot_name, initial_update_params,
+                    plot_name,
+                    initial_update_params,
                 )
                 state = await loop.run_in_executor(
                     executor,
@@ -1244,13 +1253,8 @@ def create_mpl_router(
                 await websocket.send_json(
                     {"type": "error", "message": f"Initial update failed: {e}"}
                 )
-                await websocket.close(
-                    code=1011, reason=f"Initial update failed: {e}"
-                )
+                await websocket.close(code=1011, reason=f"Initial update failed: {e}")
                 return
-
-        # Attach FastAPICanvas after figure is populated
-        canvas = FastAPICanvas(fig)
 
         # Apply device pixel ratio
         if device_pixel_ratio != 1.0:
@@ -1322,9 +1326,7 @@ def create_mpl_router(
                     logger.info("WebSocket disconnected for plot '%s'", plot_name)
                     return
                 except Exception as e:
-                    logger.exception(
-                        "Error receiving WebSocket message: %s", e
-                    )
+                    logger.exception("Error receiving WebSocket message: %s", e)
                     return
 
                 e_type = data.get("type")
@@ -1405,7 +1407,9 @@ def create_mpl_router(
                                 }
                             )
 
-                            logger.info("Saved figure '%s' as %s", plot_name, format_lower)
+                            logger.info(
+                                "Saved figure '%s' as %s", plot_name, format_lower
+                            )
 
                         except ValueError as e:
                             logger.warning("Invalid save request: %s", e)
@@ -1436,12 +1440,16 @@ def create_mpl_router(
                             update_params = config.update.params_model(**data["params"])
                         except ValidationError as e:
                             logger.warning(
-                                "Invalid update parameters for plot %s: %s", plot_name, e
+                                "Invalid update parameters for plot %s: %s",
+                                plot_name,
+                                e,
                             )
                             continue
                         try:
                             logger.info(
-                                "Updating plot '%s' with params: %s", plot_name, update_params
+                                "Updating plot '%s' with params: %s",
+                                plot_name,
+                                update_params,
                             )
 
                             state = await loop.run_in_executor(
@@ -1454,8 +1462,14 @@ def create_mpl_router(
                             # Track current update params
                             current_update_params = update_params
 
-                            # Trigger redraw
-                            canvas.draw_idle()
+                            # Only queue an invalidate if the update function
+                            # did NOT already push a frame via blit().  When
+                            # blit() was called, the image is already in
+                            # _binary_queue and will be sent by _drain_canvas()
+                            # below — sending an invalidate on top would cause
+                            # the client to request a redundant render.
+                            if not canvas._binary_queue:
+                                canvas.draw_idle()
 
                         except Exception as e:
                             logger.exception(
@@ -1463,7 +1477,11 @@ def create_mpl_router(
                             )
 
                     elif e_type == "render":
-                        # Client requests render with binary image response
+                        # Client requests render with binary image response.
+                        # force_full=true means the client detected a gap and
+                        # needs a self-contained FULL frame to resync from.
+                        if data.get("force_full"):
+                            canvas._force_full = True
                         await _send_render_response(
                             websocket, canvas, executor, loop, seq_state
                         )
@@ -1500,13 +1518,11 @@ def create_mpl_router(
                         )
                         await handler(data, websocket)
 
-                    # Drain the message queue and send responses
-                    await canvas.drain_queue(websocket)
+                    # Drain JSON queue and any binary frames queued by blit()
+                    await _drain_canvas(canvas, websocket, seq_state)
 
                 except Exception as e:
-                    logger.exception(
-                        "Error handling event '%s': %s", e_type, e
-                    )
+                    logger.exception("Error handling event '%s': %s", e_type, e)
         finally:
             # Cleanup on disconnect
             logger.debug("Cleaning up resources for plot '%s'", plot_name)
@@ -1520,7 +1536,9 @@ def create_mpl_router(
                 for file_id in file_ids:
                     _remove_saved_file(router_state, file_id)
                 logger.debug(
-                    "Removed %d saved file(s) for connection %s", len(file_ids), connection_id
+                    "Removed %d saved file(s) for connection %s",
+                    len(file_ids),
+                    connection_id,
                 )
 
             try:
@@ -1545,9 +1563,14 @@ def create_mpl_router(
         content, etag = result
         actual_hash = etag.strip('"')
         if url_hash != actual_hash:
-            raise HTTPException(status_code=404, detail="Hash mismatch — bundle may have been redeployed")
+            raise HTTPException(
+                status_code=404,
+                detail="Hash mismatch — bundle may have been redeployed",
+            )
         if request.headers.get("if-none-match") == etag:
-            return Response(status_code=304, headers={**_JS_IMMUTABLE_HEADERS, "ETag": etag})
+            return Response(
+                status_code=304, headers={**_JS_IMMUTABLE_HEADERS, "ETag": etag}
+            )
         return PlainTextResponse(
             content,
             headers={
@@ -1570,12 +1593,16 @@ def create_mpl_router(
     @router.get("/component.{hash}.js.map")
     async def get_component_js_map_hashed(request: Request, hash: str) -> Response:
         """Serve the IIFE source map at a content-hashed URL."""
-        return _serve_hashed_js(request, "component.js.map", hash, content_type="application/json")
+        return _serve_hashed_js(
+            request, "component.js.map", hash, content_type="application/json"
+        )
 
     @router.get("/component.{hash}.esm.js.map")
     async def get_component_esm_js_map_hashed(request: Request, hash: str) -> Response:
         """Serve the ESM source map at a content-hashed URL."""
-        return _serve_hashed_js(request, "component.esm.js.map", hash, content_type="application/json")
+        return _serve_hashed_js(
+            request, "component.esm.js.map", hash, content_type="application/json"
+        )
 
     # ── Stable redirect routes ──────────────────────────────────────────
     # Hash-free URLs redirect to the current content-hashed URL.
@@ -1615,7 +1642,9 @@ def create_mpl_router(
     @router.get("/component.esm.js.map")
     async def get_component_esm_js_map() -> RedirectResponse:
         """Redirect stable /component.esm.js.map to the content-hashed source map."""
-        return _redirect_to_hashed("component.esm.js.map", "component.{hash}.esm.js.map")
+        return _redirect_to_hashed(
+            "component.esm.js.map", "component.{hash}.esm.js.map"
+        )
 
     # Route: Get schema for a specific plot
     @router.get("/api/plots/{plot_name}/schema", dependencies=[Depends(_http_auth)])

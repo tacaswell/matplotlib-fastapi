@@ -420,6 +420,13 @@ export interface RefreshMessage extends BaseMessage {
  */
 export interface RenderMessage extends BaseMessage {
   type: 'render';
+  /**
+   * When true the server must send a full (non-diff) image regardless of
+   * whether the buffer has changed since the last render.  The client sets
+   * this after detecting a missing/late diff frame so that it can resync from
+   * a self-contained baseline.
+   */
+  force_full?: boolean;
 }
 
 /**

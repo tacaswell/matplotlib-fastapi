@@ -28,6 +28,7 @@ import {
   parseBinaryImage,
   getImageMimeType,
 } from './types.js';
+// Note: getImageMimeType is used for the ArrayBuffer path only; legacy Blob/base64 paths removed.
 import { WebSocketManager } from './websocket-manager.js';
 
 // Static path configuration
@@ -88,8 +89,86 @@ export class Figure {
   rubberband_context: CanvasRenderingContext2D | undefined;
   ratio: number = 1;
   image_mode: ImageMode = 'full';
-  readonly imageObj: HTMLImageElement;
   waiting: boolean = false;
+
+  /**
+   * Offscreen backing canvas used for compositing.
+   *
+   * All frame compositing (full clear + draw, or diff draw) happens here
+   * instead of on the visible ``canvas``.  A ``requestAnimationFrame``
+   * callback then copies the backing canvas to the visible canvas in a
+   * single atomic ``drawImage`` call, eliminating the mid-update tearing
+   * that could occur when the browser compositor reads the visible canvas
+   * between a ``clearRect`` and the subsequent ``drawImage``.
+   */
+  private _backingCanvas: HTMLCanvasElement | undefined;
+  private _backingCtx: CanvasRenderingContext2D | undefined;
+
+  /**
+   * True when a ``requestAnimationFrame`` callback is already queued to
+   * copy the backing canvas to the visible canvas.  Prevents scheduling
+   * multiple redundant rAF callbacks when several frames arrive between
+   * display refreshes.
+   */
+  private _rafPending: boolean = false;
+
+  // ---------------------------------------------------------------------------
+  // Frame sequencing / ordering / gap-recovery state
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Milliseconds to wait for a predecessor frame's decode before declaring a
+   * stall and requesting a fresh full render.
+   */
+  private static readonly STALL_TIMEOUT_MS = 100;
+
+  /**
+   * Sequence number of the last frame fully composited onto ``_backingCanvas``.
+   * 0 = no frame painted yet (matches server's "no frames sent" state).
+   * Used to validate that a DIFF frame's ``baseSeq`` matches the canvas state
+   * before compositing.
+   */
+  private _lastPaintedSeq: number = 0;
+
+  /**
+   * Pending decoded frames keyed by their ``seqNum``.
+   *
+   * Frames arrive over the WebSocket in order but ``createImageBitmap``
+   * decodes them asynchronously and may finish in any order.  Each arriving
+   * frame is immediately inserted here with ``bitmap: null``; the bitmap is
+   * filled in when its decode resolves.  ``_tryDispatch`` walks the map in
+   * ascending seq order and composites whatever is ready.
+   */
+  private _pendingFrames: Map<
+    number,
+    {
+      header: import('./types.js').BinaryImageHeader;
+      bitmap: ImageBitmap | null;
+    }
+  > = new Map();
+
+  /**
+   * When true the client detected a sequence gap and has requested a fresh
+   * full render.  All incoming DIFF frames are silently dropped until the
+   * next FULL frame arrives and clears this flag.
+   */
+  private _resyncPending: boolean = false;
+
+  /**
+   * ``setTimeout`` handle for the stall timer, or ``null`` when disarmed.
+   * The timer fires when the head of ``_pendingFrames`` cannot be composited
+   * because a predecessor frame has not finished decoding (or never arrived).
+   */
+  private _stallTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Set to ``true`` when an ``invalidate`` message arrives while ``waiting``
+   * is still ``true`` (i.e. a render is in-flight or a frame is being
+   * decoded/painted).  When the paint dispatcher makes progress and clears
+   * ``waiting``, a fresh ``render`` request is sent immediately so the latest
+   * server state is always fetched after the current frame is fully displayed.
+   */
+  private _pendingInvalidate: boolean = false;
 
   // UI elements
   readonly root: HTMLDivElement;
@@ -140,8 +219,6 @@ export class Figure {
     this.id = figure_id;
     this.ws_manager = ws_manager;
 
-    this.imageObj = new Image();
-
     this.root = document.createElement('div');
     this.root.setAttribute('style', 'display: inline-block');
     this._root_extra_style(this.root);
@@ -157,16 +234,6 @@ export class Figure {
       // Update legacy ws property
       this.ws = this.ws_manager.rawSocket;
       this.supports_binary = this.ws?.binaryType !== undefined;
-
-      if (!this.supports_binary) {
-        const warnings = document.getElementById('mpl-warnings');
-        if (warnings) {
-          warnings.style.display = 'block';
-          warnings.textContent =
-            'This browser does not support binary websocket messages. ' +
-            'Performance may be slow.';
-        }
-      }
 
       // Send consolidated init message (v0 protocol - REQUIRED as first message)
       this.send_message('init', {
@@ -194,12 +261,30 @@ export class Figure {
       this.connection_id = null;
       this.image_mode = 'full';
       this.waiting = false;
+      this._pendingInvalidate = false;
+      this._lastPaintedSeq = 0;
+      this._resyncPending = false;
+      this._clearStallTimer();
+      // Close any decoded bitmaps and discard pending frames.
+      for (const frame of this._pendingFrames.values()) {
+        frame.bitmap?.close();
+      }
+      this._pendingFrames.clear();
+      this._rafPending = false;
       this._server_size = null;
 
-      // Clear the canvas so the user sees a blank plot rather than a
+      // Clear both canvases so the user sees a blank plot rather than a
       // stale image at the (possibly wrong) size.
       if (this.context && this.canvas) {
         this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      }
+      if (this._backingCtx && this._backingCanvas) {
+        this._backingCtx.clearRect(
+          0,
+          0,
+          this._backingCanvas.width,
+          this._backingCanvas.height
+        );
       }
     });
 
@@ -210,20 +295,6 @@ export class Figure {
 
     // Register message handler with WebSocketManager
     this.ws_manager.onMessage(this._make_on_message_function());
-
-    this.imageObj.onload = () => {
-      if (!this.context || !this.canvas) return;
-
-      if (this.image_mode === 'full') {
-        // Full images could contain transparency, clear canvas to avoid ghosting
-        this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      }
-      this.context.drawImage(this.imageObj, 0, 0);
-    };
-
-    this.imageObj.addEventListener('unload', () => {
-      this.ws_manager.close();
-    });
 
     this.ondownload = this._default_download_handler.bind(this);
   }
@@ -300,6 +371,16 @@ export class Figure {
 
     this.ratio = window.devicePixelRatio || 1;
 
+    // Offscreen backing canvas for tear-free compositing.
+    // All frame data is drawn here first; a requestAnimationFrame callback
+    // then copies it to the visible canvas in a single atomic drawImage call.
+    const backingCanvas = (this._backingCanvas = document.createElement('canvas'));
+    const backingCtx = backingCanvas.getContext('2d');
+    if (!backingCtx) {
+      throw new Error('Failed to get backing 2D context');
+    }
+    this._backingCtx = backingCtx;
+
     const rubberband_canvas = (this.rubberband_canvas =
       document.createElement('canvas'));
     rubberband_canvas.setAttribute(
@@ -346,6 +427,18 @@ export class Figure {
           canvas.setAttribute('height', String(height * this.ratio));
         }
         canvas.setAttribute('style', `width: ${width}px; height: ${height}px;`);
+
+        // Keep backing canvas dimensions in sync with visible canvas.
+        if (this._backingCanvas) {
+          this._backingCanvas.setAttribute(
+            'width',
+            canvas.getAttribute('width') ?? '0'
+          );
+          this._backingCanvas.setAttribute(
+            'height',
+            canvas.getAttribute('height') ?? '0'
+          );
+        }
 
         rubberband_canvas.setAttribute('width', String(width));
         rubberband_canvas.setAttribute('height', String(height));
@@ -547,11 +640,17 @@ export class Figure {
    * Request the server to render and send a new image frame.
    *
    * The ``waiting`` flag prevents duplicate in-flight render requests.
+   *
+   * @param forceFull - When ``true``, ask the server for a self-contained FULL
+   *   frame even if only minor changes occurred.  Used after the client detects
+   *   a sequence gap and needs to resync from a fresh baseline.
    */
-  send_render_request(): void {
+  send_render_request(forceFull = false): void {
     if (!this.waiting) {
       this.waiting = true;
-      this.ws_manager.send(JSON.stringify({ type: 'render', figure_id: this.id }));
+      const msg: Record<string, unknown> = { type: 'render', figure_id: this.id };
+      if (forceFull) msg['force_full'] = true;
+      this.ws_manager.send(JSON.stringify(msg));
     }
   }
 
@@ -909,14 +1008,21 @@ export class Figure {
   /**
    * Handle an invalidation notification from the server.
    *
-   * Triggers a new render request, allowing the client to pull the latest
-   * frame after server-side state has changed.
+   * If no render is in-flight, immediately requests a new frame.  If a render
+   * is already in-flight (or a frame is being decoded/painted), records the
+   * invalidate so that a fresh render is sent as soon as the canvas is up to
+   * date.  This prevents invalidates from being silently dropped during fast
+   * interactions while also preventing a backlog of redundant render requests.
    *
    * @param fig - The Figure instance.
    * @param _msg - Unused payload.
    */
   handle_invalidate(fig: Figure, _msg: unknown): void {
-    fig.send_render_request();
+    if (!fig.waiting) {
+      fig.send_render_request();
+    } else {
+      fig._pendingInvalidate = true;
+    }
   }
 
   /**
@@ -1071,67 +1177,105 @@ export class Figure {
 
   private _make_on_message_function(): (evt: MessageEvent) => void {
     return (evt: MessageEvent) => {
-      // Handle binary image data (v0 protocol with 8-byte header)
+      // Only ArrayBuffer binary frames are supported (v0 protocol with 8-byte header).
+      // Legacy Blob and base64 paths have been removed.
       if (evt.data instanceof ArrayBuffer) {
         const { header, imageData } = parseBinaryImage(evt.data);
+        const isFull = header.typeMode === ImageTypeMode.FULL;
 
-        // Update image mode based on header
-        this.image_mode = header.typeMode === ImageTypeMode.FULL ? 'full' : 'diff';
+        // Update the public image_mode for any synchronous readers (e.g. tests).
+        this.image_mode = isFull ? 'full' : 'diff';
 
-        // Get correct MIME type from header
-        const mimeType = getImageMimeType(header.format);
-
-        // Create blob with correct type.
-        // imageData is a Uint8Array *view* into the original ArrayBuffer
-        // (offset past the 8-byte header), so we must NOT use .buffer here
-        // — that would include the header bytes and corrupt the image.
-        // The `as any` satisfies TS 5.9 which widens Uint8Array's backing
-        // store to ArrayBufferLike (incompatible with BlobPart).
-        const blob = new Blob([imageData as any], {
-          type: mimeType,
-        });
-
-        // Free memory for previous frames
-        if (this.imageObj.src) {
-          URL.revokeObjectURL(this.imageObj.src);
+        // ── Resync gate ──────────────────────────────────────────────────────
+        // While _resyncPending is true we requested a fresh FULL from the
+        // server.  Drop all arriving DIFFs until the FULL arrives.
+        if (this._resyncPending) {
+          if (!isFull) {
+            // Drop stale diff; a full is on its way.
+            return;
+          }
+          // FULL arrived — clear resync state and fall through to normal handling.
+          this._resyncPending = false;
+          // Discard any still-pending frames (bitmaps already being decoded);
+          // they'll resolve into no-ops via the seq-mismatch guard below.
+          for (const frame of this._pendingFrames.values()) {
+            frame.bitmap?.close();
+          }
+          this._pendingFrames.clear();
+          this._clearStallTimer();
         }
 
-        this.imageObj.src = URL.createObjectURL(blob);
-        this.updated_canvas_event();
-        this.waiting = false;
+        // ── FULL supersedes pending DIFFs ─────────────────────────────────
+        // A FULL frame is self-contained and clears the canvas, so any earlier
+        // diffs still in the queue are obsolete.
+        if (isFull) {
+          for (const [seq, frame] of this._pendingFrames) {
+            if (seq < header.seqNum) {
+              frame.bitmap?.close();
+              this._pendingFrames.delete(seq);
+            }
+          }
+          this._clearStallTimer();
+        } else {
+          // ── Immediate gap detection for DIFFs ──────────────────────────
+          // Compute the expected base: either _lastPaintedSeq (nothing pending)
+          // or the highest pending seq (the diff chain tip).
+          const expectedBase =
+            this._pendingFrames.size === 0
+              ? this._lastPaintedSeq
+              : Math.max(...this._pendingFrames.keys());
 
-        // Hide reconnect overlay on first image after reconnection
+          if (header.baseSeq !== expectedBase) {
+            // Gap detected — the base frame we need will never arrive (WebSocket
+            // delivers in order, so if it hasn't arrived it was never sent).
+            console.warn(
+              `Frame gap: expected baseSeq=${expectedBase}, got baseSeq=${header.baseSeq} (seqNum=${header.seqNum}). Requesting resync.`
+            );
+            this._triggerResync();
+            return;
+          }
+        }
+
+        // ── Enqueue and decode in parallel ───────────────────────────────
+        const entry: { header: typeof header; bitmap: ImageBitmap | null } = {
+          header,
+          bitmap: null,
+        };
+        this._pendingFrames.set(header.seqNum, entry);
+
+        const mimeType = getImageMimeType(header.format);
+        // imageData is a Uint8Array *view* into the original ArrayBuffer
+        // (offset past the 8-byte header), so we must NOT use .buffer here —
+        // that would include the header bytes and corrupt the image data.
+        // The `as any` satisfies TS which widens Uint8Array's backing store to
+        // ArrayBufferLike (incompatible with BlobPart).
+        const blob = new Blob([imageData as any], { type: mimeType });
+
+        createImageBitmap(blob).then(
+          (bitmap) => {
+            // The entry may have been evicted by a resync or a superseding FULL.
+            const current = this._pendingFrames.get(header.seqNum);
+            if (!current) {
+              bitmap.close();
+              return;
+            }
+            current.bitmap = bitmap;
+            this._tryDispatch();
+          },
+          (err) => {
+            console.error(`createImageBitmap failed for seq=${header.seqNum}:`, err);
+            this._pendingFrames.delete(header.seqNum);
+            this._triggerResync();
+          }
+        );
+
+        this.updated_canvas_event();
+
+        // Hide reconnect overlay on first binary frame after reconnection
         if (this._reconnecting) {
           this._reconnecting = false;
           this._hideReconnectOverlay();
         }
-        return;
-      }
-
-      // Handle legacy Blob format (for backward compatibility)
-      if (evt.data instanceof Blob) {
-        let img = evt.data;
-        if (img.type !== 'image/png') {
-          // Force PNG type
-          img = new Blob([img], { type: 'image/png' });
-        }
-
-        // Free memory for previous frames
-        if (this.imageObj.src) {
-          URL.revokeObjectURL(this.imageObj.src);
-        }
-
-        this.imageObj.src = URL.createObjectURL(img);
-        this.updated_canvas_event();
-        this.waiting = false;
-        return;
-      } else if (
-        typeof evt.data === 'string' &&
-        evt.data.startsWith('data:image/png;base64')
-      ) {
-        this.imageObj.src = evt.data;
-        this.updated_canvas_event();
-        this.waiting = false;
         return;
       }
 
@@ -1153,6 +1297,169 @@ export class Figure {
         }
       }
     };
+  }
+
+  /**
+   * Walk ``_pendingFrames`` in ascending seq order and composite every frame
+   * whose predecessor has already been painted.
+   *
+   * A FULL frame is self-contained (``baseSeq`` is 0) — it can always be
+   * composited once its bitmap is ready, regardless of ``_lastPaintedSeq``.
+   *
+   * A DIFF frame requires ``frame.baseSeq === _lastPaintedSeq``.  If the head
+   * DIFF is still being decoded (``bitmap === null``) or its base is wrong, we
+   * arm the stall timer and return.
+   *
+   * After each successfully composited frame we clear the stall timer (steady
+   * progress) and try the next one.
+   */
+  private _tryDispatch(): void {
+    if (!this._backingCtx || !this._backingCanvas) return;
+
+    // Process frames in ascending seq order.
+    const sortedSeqs = Array.from(this._pendingFrames.keys()).sort((a, b) => a - b);
+
+    for (const seq of sortedSeqs) {
+      const frame = this._pendingFrames.get(seq)!;
+      const isFull = frame.header.typeMode === ImageTypeMode.FULL;
+
+      if (isFull) {
+        // FULL frames are self-contained — no predecessor requirement.
+        if (frame.bitmap === null) {
+          // Still decoding; arm stall timer and wait.
+          this._armStallTimer();
+          return;
+        }
+        // Composite.
+        this._clearStallTimer();
+        this._backingCtx.clearRect(
+          0,
+          0,
+          this._backingCanvas.width,
+          this._backingCanvas.height
+        );
+        this._backingCtx.drawImage(frame.bitmap, 0, 0);
+        frame.bitmap.close();
+        this._pendingFrames.delete(seq);
+        this._lastPaintedSeq = seq;
+        this.image_mode = 'full';
+        this._scheduleCanvasUpdate();
+        this._onFramePainted();
+      } else {
+        // DIFF frame: base must match what we last painted.
+        if (!this._isImmediateSuccessor(this._lastPaintedSeq, seq)) {
+          // Still waiting for an earlier frame to be composited first.
+          if (frame.bitmap === null) {
+            this._armStallTimer();
+          }
+          return;
+        }
+        if (frame.bitmap === null) {
+          // Head is the right frame but still decoding.
+          this._armStallTimer();
+          return;
+        }
+        // Composite diff.
+        this._clearStallTimer();
+        this._backingCtx.drawImage(frame.bitmap, 0, 0);
+        frame.bitmap.close();
+        this._pendingFrames.delete(seq);
+        this._lastPaintedSeq = seq;
+        this.image_mode = 'diff';
+        this._scheduleCanvasUpdate();
+        this._onFramePainted();
+      }
+    }
+  }
+
+  /**
+   * Called after each frame is successfully composited.  Clears ``waiting``
+   * and flushes any pending invalidate (identical semantics to the old
+   * ``_paintChain`` callback).
+   */
+  private _onFramePainted(): void {
+    this.waiting = false;
+    if (this._pendingInvalidate) {
+      this._pendingInvalidate = false;
+      this.send_render_request();
+    }
+  }
+
+  /**
+   * Arm the stall timer if not already armed.  When it fires, the client has
+   * waited ``STALL_TIMEOUT_MS`` ms for a predecessor frame that never arrived;
+   * we give up and request a fresh full render.
+   */
+  private _armStallTimer(): void {
+    if (this._stallTimer !== null) return;
+    this._stallTimer = setTimeout(() => {
+      this._stallTimer = null;
+      console.warn(
+        `Frame stall: waited ${Figure.STALL_TIMEOUT_MS} ms for seq after ` +
+          `_lastPaintedSeq=${this._lastPaintedSeq}. Requesting resync.`
+      );
+      this._triggerResync();
+    }, Figure.STALL_TIMEOUT_MS);
+  }
+
+  /** Disarm the stall timer without triggering resync. */
+  private _clearStallTimer(): void {
+    if (this._stallTimer !== null) {
+      clearTimeout(this._stallTimer);
+      this._stallTimer = null;
+    }
+  }
+
+  /**
+   * Drop all pending frames, set ``_resyncPending``, and ask the server for a
+   * fresh FULL frame.  Resets ``waiting`` first so the render request is
+   * actually sent.
+   */
+  private _triggerResync(): void {
+    for (const frame of this._pendingFrames.values()) {
+      frame.bitmap?.close();
+    }
+    this._pendingFrames.clear();
+    this._clearStallTimer();
+    this._resyncPending = true;
+    // Force waiting=false so send_render_request fires immediately.
+    this.waiting = false;
+    this._pendingInvalidate = false;
+    this.send_render_request(/* forceFull= */ true);
+  }
+
+  /**
+   * Return true when ``next`` is the immediate successor of ``prev`` in the
+   * server's 1-based wraparound sequence space (1 … 65535, 0 is reserved).
+   *
+   * Examples:
+   *   _isImmediateSuccessor(5, 6)     → true
+   *   _isImmediateSuccessor(65535, 1) → true  (wrap)
+   *   _isImmediateSuccessor(0, 1)     → true  (initial state)
+   *   _isImmediateSuccessor(5, 7)     → false (gap)
+   */
+  private _isImmediateSuccessor(prev: number, next: number): boolean {
+    if (prev === 0) return next === 1; // initial state: any seq=1 is fine
+    return next === (prev % 65535) + 1;
+  }
+
+  /**
+   * Schedule a ``requestAnimationFrame`` to copy the backing canvas to the
+   * visible canvas.
+   *
+   * If a rAF is already pending (``_rafPending === true``), this is a no-op —
+   * the already-scheduled callback will copy whatever is on the backing canvas
+   * at the time it runs, which will be the latest composite state.
+   */
+  private _scheduleCanvasUpdate(): void {
+    if (this._rafPending) return;
+    this._rafPending = true;
+    requestAnimationFrame(() => {
+      this._rafPending = false;
+      if (this.context && this._backingCanvas) {
+        this.context.drawImage(this._backingCanvas, 0, 0);
+      }
+    });
   }
 
   /**
@@ -1333,11 +1640,6 @@ export class Figure {
     // Close WebSocket if still open
     if (this.ws_manager) {
       this.ws_manager.close();
-    }
-
-    // Revoke any object URLs to free memory
-    if (this.imageObj.src && this.imageObj.src.startsWith('blob:')) {
-      URL.revokeObjectURL(this.imageObj.src);
     }
 
     // Remove DOM elements

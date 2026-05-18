@@ -11,6 +11,7 @@ efficient differential image updates to minimize data transfer.
 
 import logging
 from collections import deque
+from io import BytesIO
 from typing import Any
 
 import numpy as np
@@ -24,6 +25,7 @@ from matplotlib.backend_bases import (
     _Backend,
 )
 from matplotlib.backends.backend_agg import FigureCanvasAgg, RendererAgg
+from PIL import Image
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -57,15 +59,22 @@ class FastAPICanvas(FigureCanvasAgg):
     - Differential image updates to reduce bandwidth
     - Event queue for async WebSocket messages
     - Mouse and keyboard event handling from browser
+    - Server-side blitting support: ``blit()`` immediately encodes the
+      current renderer buffer as a diff PNG and enqueues it in
+      ``_binary_queue`` for the router to push to the client, bypassing
+      the usual invalidate → render round-trip.
     """
 
     # Attributes from this class
     _force_full: bool
+    _png_is_old: bool
     _current_image_mode: str
     _msg_queue: deque[dict[str, Any]]
+    _binary_queue: deque[tuple[bytes, bool]]
     _last_buff: npt.NDArray[np.uint32]
     _renderer: RendererAgg
     supports_binary: bool = True
+    supports_blit: bool = True
 
     # Declare attributes from parent FigureCanvasBase that we use
     call_info: dict[str, Any]
@@ -73,8 +82,12 @@ class FastAPICanvas(FigureCanvasAgg):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._force_full = False
+        self._png_is_old = False
         self._current_image_mode = "full"
         self._msg_queue = deque()
+        # Queued (png_bytes, is_diff) tuples pushed by blit(); drained by the
+        # router's _drain_canvas() helper and sent as unsolicited binary frames.
+        self._binary_queue: deque[tuple[bytes, bool]] = deque()
 
     def start_event_loop(self, timeout: float = 0) -> None:
         self.call_info["start_event_loop"] = {"timeout": timeout}
@@ -84,7 +97,7 @@ class FastAPICanvas(FigureCanvasAgg):
         ev: dict[str, Any],
         websocket: WebSocket,  # noqa: ARG002
     ) -> None:
-        logger.debug("Unknown event type: %s, data: %s", ev['type'], ev)
+        logger.debug("Unknown event type: %s, data: %s", ev["type"], ev)
         return
 
     async def handle_ack(self, ev: dict[str, Any], websocket: WebSocket) -> None: ...
@@ -149,6 +162,139 @@ class FastAPICanvas(FigureCanvasAgg):
             self._renderer.clear()
 
         return self._renderer
+
+    def draw(self) -> None:
+        """Render the figure and mark the PNG buffer as stale.
+
+        Sets ``_png_is_old = True`` so that the next call to
+        :meth:`get_diff_image` (from either the render/refresh path or
+        :meth:`blit`) will re-encode the buffer.
+        """
+        self._png_is_old = True
+        super().draw()
+
+    def get_diff_image(self) -> tuple[bytes, bool] | None:
+        """Encode the current renderer buffer as a diff or full PNG.
+
+        Matches ``FigureCanvasWebAggCore.get_diff_image()`` semantics from
+        upstream matplotlib's WebAgg backend.
+
+        Returns ``None`` when the buffer has not changed since the last call
+        (i.e. ``_png_is_old`` is False).  Otherwise returns a
+        ``(png_bytes, is_diff)`` tuple where *is_diff* is ``True`` when only
+        changed pixels are encoded (transparent elsewhere).
+
+        Notes
+        -----
+        This method is intentionally synchronous — it runs in a thread-pool
+        worker via :meth:`draw_and_get_diff` for the render/refresh path, and
+        directly on the caller's thread for :meth:`blit`.
+        """
+        if not self._png_is_old:
+            return None
+
+        renderer = self.get_renderer()
+
+        # Buffer as uint32 for whole-pixel comparison (one call vs. per-plane).
+        buff = np.frombuffer(renderer.buffer_rgba(), dtype=np.uint32).reshape(
+            (int(renderer.height), int(renderer.width))
+        )
+        pixels = buff.view(dtype=np.uint8).reshape((*buff.shape, 4))
+
+        if (
+            self._force_full
+            or buff.shape != self._last_buff.shape
+            or np.any(pixels[:, :, 3] != 255)
+        ):
+            is_diff = False
+            output = buff
+        else:
+            is_diff = True
+            diff = buff != self._last_buff
+            output = np.where(diff, buff, 0)
+
+        # Store current buffer for the next diff.
+        np.copyto(self._last_buff, buff)
+        self._force_full = False
+        self._png_is_old = False
+
+        # Update tracked image mode for send_image_mode responses.
+        self._current_image_mode = "diff" if is_diff else "full"
+
+        data = output.view(dtype=np.uint8).reshape((*output.shape, 4))
+        png_buf = BytesIO()
+        Image.fromarray(data).save(png_buf, format="png")
+        return png_buf.getvalue(), is_diff
+
+    def draw_and_get_diff(self) -> tuple[bytes, bool]:
+        """Draw the figure and return a diff or full PNG.
+
+        Combines :meth:`draw` and :meth:`get_diff_image` in a single call
+        suitable for running in a thread-pool worker via
+        ``loop.run_in_executor``.
+
+        This is the canonical entry-point for the render/refresh path in the
+        router — all rendering logic stays on the canvas rather than leaking
+        into the router module.
+
+        Returns
+        -------
+        tuple[bytes, bool]
+            ``(png_bytes, is_diff)`` — same contract as :meth:`get_diff_image`
+            but always returns a result (forces a full render if needed).
+        """
+        self.draw()
+        result = self.get_diff_image()
+        if result is None:
+            # Defensive fallback: draw() should always set _png_is_old, but
+            # guard here so callers never receive None.
+            self._force_full = True
+            self._png_is_old = True
+            result = self.get_diff_image()
+            assert result is not None  # guaranteed after force_full + png_is_old
+        return result
+
+    def blit(self, bbox: Any = None) -> None:  # noqa: ARG002
+        """Push the current renderer state to connected clients immediately.
+
+        Encodes the renderer buffer as a diff PNG (via :meth:`get_diff_image`)
+        and places it in ``_binary_queue`` (at most one entry at a time).
+        The router's ``_drain_canvas()`` helper will pick this up after
+        processing each client message and send it as an unsolicited binary
+        frame, bypassing the usual ``invalidate`` → client ``render``
+        round-trip.
+
+        **Coalescing rule:** if a previous blit has not yet been drained from
+        the queue, that frame is discarded and ``_force_full`` is set so that
+        the replacement frame is a full image.  This guarantees the queue
+        never holds more than one entry and the client never receives a diff
+        chain whose base has not arrived yet.
+
+        Parameters
+        ----------
+        bbox : `~matplotlib.transforms.BboxBase` or None
+            Region to blit.  Ignored — the full renderer buffer is always
+            encoded, matching upstream WebAgg behaviour (partial blits cannot
+            be expressed in the PNG diff protocol).
+        """
+        self._png_is_old = True
+
+        if self._binary_queue:
+            # A previous blit is still pending — discard it and force a full
+            # frame so the client receives a self-contained image rather than
+            # a diff whose base may not have been painted yet.
+            logger.debug("blit(): coalescing pending blit into full frame")
+            self._binary_queue.clear()
+            self._force_full = True
+
+        result = self.get_diff_image()
+        if result is not None:
+            logger.debug(
+                "blit(): queuing %s image (%d bytes)",
+                "diff" if result[1] else "full",
+                len(result[0]),
+            )
+            self._binary_queue.append(result)
 
     async def _handle_mouse(self, event: dict[str, Any], _websocket: WebSocket) -> None:
         """Handle mouse events from the browser."""
@@ -223,10 +369,10 @@ class FastAPICanvas(FigureCanvasAgg):
         self.queue_event("invalidate")
 
     async def drain_queue(self, websocket: WebSocket) -> None:
-        """Send all queued messages to the client."""
+        """Send all queued JSON messages to the client."""
         while len(self._msg_queue):
             payload = self._msg_queue.popleft()
-            logger.debug("Sending message to client: type=%s", payload.get('type'))
+            logger.debug("Sending message to client: type=%s", payload.get("type"))
             await websocket.send_json(payload)
 
 
