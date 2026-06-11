@@ -30,9 +30,9 @@ def _get_version() -> str:
 
 __version__ = _get_version()
 
-from .auth import AuthPolicy, NoAuth, SingleUserToken
-from ._server import build_app
-from .router import (
+from ._server import build_app  # noqa: E402  (after __version__ computation)
+from .auth import AuthPolicy, NoAuth, SingleUserToken  # noqa: E402
+from .router import (  # noqa: E402
     InitConfig,
     Lifespan,
     MPLRouter,
@@ -50,7 +50,6 @@ from .router import (
 
 __all__ = [
     "AuthPolicy",
-    "build_app",
     "InitConfig",
     "Lifespan",
     "MPLRouter",
@@ -63,6 +62,7 @@ __all__ = [
     "UpdateConfig",
     "UpdateFunction",
     "__version__",
+    "build_app",
     "compose_lifespans",
     "create_mpl_router",
     "install_mpl_router",

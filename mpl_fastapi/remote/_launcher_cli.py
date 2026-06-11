@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import os
 
-
 ENV_TOKEN = "MPL_FASTAPI_TOKEN"
 """Environment variable used to supply the authentication token.
 

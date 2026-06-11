@@ -18,7 +18,6 @@ Protocol v0 uses a simplified message flow:
 import asyncio
 import hashlib
 import io
-import json
 import logging
 import os
 import struct
@@ -1373,9 +1372,6 @@ def create_mpl_router(
         await websocket.send_json(config_msg)
         logger.debug("Sent consolidated config message")
 
-        # Track current update params for this connection
-        current_update_params = initial_update_params
-
         # Event loop
         try:
             while True:
@@ -1515,9 +1511,6 @@ def create_mpl_router(
                                 state,
                                 update_params,
                             )
-
-                            # Track current update params
-                            current_update_params = update_params
 
                             # Only queue an invalidate if the update function
                             # did NOT already push a frame via blit().  When

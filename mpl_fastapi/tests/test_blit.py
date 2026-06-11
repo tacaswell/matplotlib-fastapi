@@ -40,7 +40,6 @@ from mpl_fastapi.ws_client import (
     create_fastapi_test_client_adapter,
 )
 
-
 # ---------------------------------------------------------------------------
 # Unit tests for FastAPICanvas.get_diff_image() and blit()
 # ---------------------------------------------------------------------------
@@ -68,7 +67,7 @@ class TestGetDiffImage:
         canvas.draw()  # sets _png_is_old = True
         result = canvas.get_diff_image()
         assert result is not None
-        png_bytes, is_diff = result
+        png_bytes, _is_diff = result
         assert isinstance(png_bytes, bytes)
         assert len(png_bytes) > 0
         # Should be valid PNG
@@ -173,7 +172,7 @@ class TestBlit:
         canvas.blit()
 
         assert len(canvas._binary_queue) == 1
-        png_bytes, is_diff = canvas._binary_queue[0]
+        png_bytes, _is_diff = canvas._binary_queue[0]
         assert isinstance(png_bytes, bytes)
         assert len(png_bytes) > 0
 
@@ -275,7 +274,7 @@ class BlitUpdateParams(BaseModel):
     phase: float = Field(default=0.0, ge=0.0, le=6.28)
 
 
-def _create_blit_plot(fig: Figure, params: "SimpleParams") -> dict:  # type: ignore[name-defined]
+def _create_blit_plot(fig: Figure, _params: "SimpleParamsBlit") -> dict:
     """Init function for blit integration tests."""
     ax = fig.add_subplot(111)
     x = np.linspace(0, 4 * np.pi, 100)
@@ -296,7 +295,6 @@ def _update_with_blit(state: dict, params: BlitUpdateParams) -> dict:
     x = state["x"]
     fig = line.figure
     canvas = fig.canvas
-    ax = state["ax"]
 
     # Phase-shifted sine
     line.set_ydata(np.sin(x + params.phase))

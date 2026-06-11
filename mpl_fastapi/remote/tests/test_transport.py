@@ -56,7 +56,7 @@ def _create_simple_plot(fig: Figure, params: SimpleParams) -> dict[str, object]:
 
 
 def _update_simple_plot(
-    state: dict[str, object], params: UpdateParams
+    state: dict[str, object], _params: UpdateParams
 ) -> dict[str, object]:
     return state
 

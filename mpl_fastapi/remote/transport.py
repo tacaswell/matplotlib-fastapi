@@ -235,8 +235,8 @@ class RemoteTransport:
         reconnect_backoff_base: float = 2.0,
     ) -> None:
         self._url = url
-        self._on_binary = on_binary or (lambda data: None)
-        self._on_json = on_json or (lambda msg: None)
+        self._on_binary = on_binary or (lambda _data: None)
+        self._on_json = on_json or (lambda _msg: None)
         self._on_disconnect = on_disconnect or (lambda: None)
         self._on_reconnect = on_reconnect
         self._on_reconnecting = on_reconnecting

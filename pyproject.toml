@@ -134,6 +134,20 @@ unfixable = [
   "F841" # Removes unused variables
 ]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection markers are designed to be used as argument
+# defaults, so they are not the mutable-default antipattern B008 targets.
+extend-immutable-calls = [
+  "fastapi.Depends",
+  "fastapi.Query",
+  "fastapi.Path",
+  "fastapi.Header",
+  "fastapi.Cookie",
+  "fastapi.Body",
+  "fastapi.Form",
+  "fastapi.File",
+]
+
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = true

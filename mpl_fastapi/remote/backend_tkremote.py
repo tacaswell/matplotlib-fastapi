@@ -36,7 +36,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 import threading
 import tkinter as tk
 import tkinter.filedialog
@@ -95,7 +94,7 @@ def _detect_screen_dpi(root: Any) -> float:
     of the actual physical display DPI, so it cannot be used to detect HiDPI
     scaling.  This function queries more reliable sources in preference order:
 
-    1. ``GDK_DPI_SCALE`` × ``GDK_SCALE`` environment variables (GNOME/GTK).
+    1. ``GDK_DPI_SCALE`` x ``GDK_SCALE`` environment variables (GNOME/GTK).
     2. ``Xft.dpi`` from ``xrdb`` (set by most desktop environments on login).
     3. ``QT_FONT_DPI`` environment variable (KDE / explicitly set).
     4. The ``tk scaling`` value Tk itself computed (fallback, always available).
@@ -125,7 +124,11 @@ def _detect_screen_dpi(root: Any) -> float:
         import subprocess
 
         result = subprocess.run(
-            ["xrdb", "-query"], capture_output=True, text=True, timeout=1
+            ["xrdb", "-query"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
         )
         for line in result.stdout.splitlines():
             if line.startswith("Xft.dpi:"):
@@ -1503,7 +1506,7 @@ class FigureLauncherWindow(tk.Toplevel):
         right_canvas.bind("<Configure>", _on_configure)
         self._right_frame.bind(
             "<Configure>",
-            lambda e: right_canvas.configure(scrollregion=right_canvas.bbox("all")),
+            lambda _e: right_canvas.configure(scrollregion=right_canvas.bbox("all")),
         )
 
         # Description label
@@ -1671,8 +1674,8 @@ class FigureLauncherWindow(tk.Toplevel):
 
         ok_btn = ttk.Button(dlg, text="OK", command=dlg.destroy)
         ok_btn.pack(pady=(4, 12))
-        dlg.bind("<Return>", lambda e: dlg.destroy())
-        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.bind("<Return>", lambda _e: dlg.destroy())
+        dlg.bind("<Escape>", lambda _e: dlg.destroy())
         ok_btn.focus_set()
 
     def _on_close(self) -> None:

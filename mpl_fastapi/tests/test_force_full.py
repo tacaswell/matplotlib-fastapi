@@ -54,8 +54,6 @@ class SimpleForcefulParams(BaseModel):
 
 
 def _make_simple_plot(fig: Figure, params: SimpleForcefulParams):
-    import numpy as np
-
     ax = fig.add_subplot(111)
     ax.plot([0, 1], [0, params.value])
     return {"ax": ax, "params": params}
@@ -90,7 +88,6 @@ class TestForceFull:
     def _make_canvas(self) -> FastAPICanvas:
         fig = Figure()
         canvas = FastAPICanvas(fig)
-        import numpy as np
 
         ax = fig.add_subplot(111)
         ax.plot([0, 1], [0, 1])
@@ -119,7 +116,6 @@ class TestForceFull:
 
     def test_plain_render_after_change_may_be_diff(self) -> None:
         """Without force_full, a changed figure can produce a diff frame."""
-        import numpy as np
 
         canvas = self._make_canvas()
         # First render establishes baseline.
@@ -130,7 +126,7 @@ class TestForceFull:
         ax.plot([0, 1], [1, 0], "r-")
         canvas._png_is_old = True
 
-        png_bytes, is_diff = canvas.draw_and_get_diff()
+        png_bytes, _is_diff = canvas.draw_and_get_diff()
         # The result is a diff (True) OR a full (False) depending on canvas state;
         # the important thing is we got a valid response either way.
         assert len(png_bytes) > 0

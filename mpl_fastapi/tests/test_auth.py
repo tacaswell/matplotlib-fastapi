@@ -3,6 +3,7 @@
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from mpl_fastapi import (
     NoAuth,
@@ -12,7 +13,6 @@ from mpl_fastapi import (
     install_mpl_router,
 )
 from mpl_fastapi.auth import AuthPolicy
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -232,14 +232,18 @@ class TestSingleUserTokenWebSocket:
     """WebSocket endpoint respects token auth."""
 
     def test_ws_rejected_without_token(self, auth_client: TestClient) -> None:
-        with pytest.raises(Exception):
-            with auth_client.websocket_connect("/plots/ws/v0/simple"):
-                pass  # Should not reach here
+        with (
+            pytest.raises(WebSocketDisconnect),
+            auth_client.websocket_connect("/plots/ws/v0/simple"),
+        ):
+            pass  # Should not reach here
 
     def test_ws_rejected_with_wrong_token(self, auth_client: TestClient) -> None:
-        with pytest.raises(Exception):
-            with auth_client.websocket_connect("/plots/ws/v0/simple?token=wrong"):
-                pass
+        with (
+            pytest.raises(WebSocketDisconnect),
+            auth_client.websocket_connect("/plots/ws/v0/simple?token=wrong"),
+        ):
+            pass
 
     def test_ws_accepted_with_query_token(
         self, auth_client: TestClient, token: str

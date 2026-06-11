@@ -50,13 +50,17 @@ from matplotlib.backends.backend_qt import (  # type: ignore[import-untyped]
     MainWindow,
     NavigationToolbar2QT,
 )
-from matplotlib.backends.qt_compat import QtCore, QtGui, QtWidgets  # type: ignore[import-untyped]
+from matplotlib.backends.qt_compat import (  # type: ignore[import-untyped]
+    QtCore,
+    QtGui,
+    QtWidgets,
+)
 from matplotlib.figure import Figure
 
 from mpl_fastapi.remote.backend_remote import (
     FigureCanvasRemote,
-    RemotePlotInfo,
     RemoteNavigationToolbar2,
+    RemotePlotInfo,
     _build_watermark_text,
     fetch_watermark,
     list_remote_figures,

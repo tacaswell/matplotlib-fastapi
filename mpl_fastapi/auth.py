@@ -3,8 +3,8 @@
 This module provides an :class:`AuthPolicy` protocol and two built-in
 implementations:
 
-* :class:`NoAuth` – accepts every request (the default).
-* :class:`SingleUserToken` – validates a bearer token supplied via the
+* :class:`NoAuth` - accepts every request (the default).
+* :class:`SingleUserToken` - validates a bearer token supplied via the
   ``Authorization`` header **or** a ``token`` query parameter.
 
 Custom policies
@@ -13,8 +13,8 @@ Any object that satisfies the :class:`AuthPolicy` protocol can be passed
 to :func:`~mpl_fastapi.create_mpl_router` via the ``auth`` keyword.
 The object must expose two methods that return FastAPI dependencies:
 
-* ``http_dependency`` – for regular HTTP endpoints.
-* ``ws_dependency`` – for WebSocket endpoints (must work with
+* ``http_dependency`` - for regular HTTP endpoints.
+* ``ws_dependency`` - for WebSocket endpoints (must work with
   ``WebSocket`` instead of ``Request``).
 
 Both dependencies should raise ``HTTPException(status_code=401)`` (HTTP)
@@ -133,7 +133,7 @@ class SingleUserToken:
             else:
                 self._token = secrets.token_urlsafe(24)
                 logger.warning(
-                    "No token configured – generated ephemeral token: %s",
+                    "No token configured - generated ephemeral token: %s",
                     self._token,
                 )
 

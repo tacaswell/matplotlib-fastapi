@@ -975,7 +975,7 @@ class TestReconnection:
         transport = _make_mock_transport()
         canvas = FigureCanvasRemote(fig, transport, config)
 
-        # Server reconnects with default 640×480, but client was at 800×600
+        # Server reconnects with default 640x480, but client was at 800x600
         new_config = _make_server_config(
             connection_id="new-conn", figure_size=(640, 480)
         )
@@ -1044,11 +1044,9 @@ class TestListRemoteFigures:
     def test_parses_server_response(self) -> None:
         """list_remote_figures returns RemotePlotInfo from a valid response."""
         import json
-        from io import BytesIO
         from unittest.mock import patch
 
         from mpl_fastapi.remote.backend_remote import (
-            RemotePlotInfo,
             list_remote_figures,
         )
 

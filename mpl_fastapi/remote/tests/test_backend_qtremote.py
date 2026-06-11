@@ -26,8 +26,8 @@ from fastapi import FastAPI
 from matplotlib.figure import Figure
 from PIL import Image
 from pydantic import BaseModel, Field
-from PySide6.QtCore import QSize, Qt
 from PySide6 import QtWidgets
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -815,7 +815,7 @@ class TestRunQtApp:
         so we verify the show + exec machinery indirectly by patching
         app.exec and checking that managers get shown.
         """
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         managers_shown: list[FigureManagerQTRemote] = []
         original_show = FigureManagerQTRemote.show
