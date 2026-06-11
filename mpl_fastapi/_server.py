@@ -20,15 +20,21 @@ from __future__ import annotations
 import logging
 import os
 import secrets
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from mpl_fastapi.auth import COOKIE_NAME, AuthPolicy, NoAuth, SingleUserToken
-from mpl_fastapi.router import PlotConfig, create_mpl_router, install_mpl_router
+from mpl_fastapi import __version__
+from mpl_fastapi.auth import COOKIE_NAME, AuthPolicy, SingleUserToken
+from mpl_fastapi.router import (
+    PlotConfig,
+    compose_lifespans,
+    create_mpl_router,
+    install_mpl_router,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +44,7 @@ def build_app(
     *,
     title: str = "Matplotlib FastAPI",
     description: str = "Interactive matplotlib plots served via FastAPI and WebSockets",
-    version: str = "1.0.0",
+    version: str | None = None,
     prefix: str = "/plots",
     auth: AuthPolicy | None = None,
     allowed_origins: list[str] | None = None,
@@ -54,7 +60,8 @@ def build_app(
     description:
         FastAPI application description shown in the OpenAPI docs.
     version:
-        Application version string.
+        Application version string shown in the OpenAPI docs.  When ``None``
+        (the default) the installed ``mpl_fastapi`` package version is used.
     prefix:
         URL prefix under which all plot routes are mounted.
     auth:
@@ -84,6 +91,9 @@ def build_app(
     """
     if auth is None:
         auth = SingleUserToken()
+
+    if version is None:
+        version = __version__
 
     # Resolve origins from env var when not supplied programmatically.
     # Wildcards are forbidden: credentialled requests (cookies) require an
@@ -134,12 +144,13 @@ def build_app(
 
     install_mpl_router(app, mpl, prefix=prefix)
 
-    # Log convenience URLs at startup.
+    # Log convenience URLs at startup via a lifespan handler (the modern
+    # replacement for the deprecated ``@app.on_event("startup")``).
     _host = os.environ.get("HOST", "127.0.0.1")
     _port = int(os.environ.get("PORT", "8000"))
 
-    @app.on_event("startup")
-    async def _log_urls() -> None:  # noqa: RUF029
+    @asynccontextmanager
+    async def _log_urls_lifespan(_app: FastAPI) -> AsyncIterator[None]:
         base = f"http://{_host}:{_port}"
         if isinstance(auth, SingleUserToken):
             logger.info("Plots list:  %s%s/?token=%s", base, prefix, auth.token)
@@ -157,5 +168,13 @@ def build_app(
             logger.info("Plots list:  %s%s/", base, prefix)
             for name in plots:
                 logger.info("  %-20s %s%s/plot/%s", name, base, prefix, name)
+        yield
+
+    # Compose the logging lifespan with whatever install_mpl_router already
+    # set (the figure-executor cleanup lifespan) so all hooks run correctly.
+    existing_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = compose_lifespans(
+        existing_lifespan, _log_urls_lifespan
+    )
 
     return app
