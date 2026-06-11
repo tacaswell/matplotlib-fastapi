@@ -879,6 +879,24 @@ def create_mpl_router(
     # Create state instance for this router
     router_state = RouterState()
 
+    # Precompute the JSON schemas for every plot once at construction time.
+    # Pydantic schemas are static for a given model, so generating them per
+    # request (in the list/view/schema endpoints and the WebSocket config
+    # handshake) is wasted work under load.  ``_update_schemas[name]`` is
+    # ``None`` for plots without an update function.
+    _init_schemas: dict[str, dict[str, Any]] = {
+        name: config.init.params_model.model_json_schema()
+        for name, config in plot_generators.items()
+    }
+    _update_schemas: dict[str, dict[str, Any] | None] = {
+        name: (
+            config.update.params_model.model_json_schema()
+            if config.update is not None
+            else None
+        )
+        for name, config in plot_generators.items()
+    }
+
     # Setup templates
     if template_dir is None:
         template_dir = Path(__file__).parent / "templates"
@@ -908,7 +926,7 @@ def create_mpl_router(
         for name, config in plot_generators.items():
             plots_info[name] = {
                 "description": config.description,
-                "parameters": config.init.params_model.model_json_schema(),
+                "parameters": _init_schemas[name],
             }
 
         # Extract base path from request URL
@@ -942,14 +960,10 @@ def create_mpl_router(
 
         plots_info = {}
         for name, config in plot_generators.items():
-            update_schema = None
-            if config.update is not None:
-                update_schema = config.update.params_model.model_json_schema()
-
             plots_info[name] = PlotInfo(
                 description=config.description,
-                parameters=config.init.params_model.model_json_schema(),
-                update_schema=update_schema,
+                parameters=_init_schemas[name],
+                update_schema=_update_schemas[name],
                 ws_url=f"{ws_scheme}://{host}{prefix}/ws/v0/{name}",
                 view_url=f"{http_scheme}://{host}{prefix}/plot/{name}",
             )
@@ -1017,12 +1031,8 @@ def create_mpl_router(
         _: None = Depends(validate_plot_name),
     ) -> HTMLResponse:
         """Render the plot viewer HTML."""
-        config = plot_generators[plot_name]
-
-        # Check if update functionality is available
-        update_params_schema: dict[str, Any] | None = None
-        if config.update is not None:
-            update_params_schema = config.update.params_model.model_json_schema()
+        # Check if update functionality is available (precomputed schema).
+        update_params_schema = _update_schemas[plot_name]
 
         # Derive the router mount prefix (e.g. "/plots") from the request
         # path "/plots/plot/{name}".
@@ -1239,7 +1249,7 @@ def create_mpl_router(
             supports_binary,
         )
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         executor = _get_figure_executor()
 
         # Create figure and call generator to populate it in background thread
@@ -1339,9 +1349,8 @@ def create_mpl_router(
             ),
         }
 
-        # Include update schema if available
-        if config.update is not None:
-            config_msg["update_schema"] = config.update.params_model.model_json_schema()
+        # Include update schema if available (precomputed at construction).
+        config_msg["update_schema"] = _update_schemas[plot_name]
 
         await websocket.send_json(config_msg)
         logger.debug("Sent consolidated config message")
@@ -1685,17 +1694,12 @@ def create_mpl_router(
         """Get the parameter schemas for a specific plot."""
         config = plot_generators[plot_name]
 
-        response = {
+        return {
             "plot_name": plot_name,
             "description": config.description,
-            "init_schema": config.init.params_model.model_json_schema(),
-            "update_schema": None,
+            "init_schema": _init_schemas[plot_name],
+            "update_schema": _update_schemas[plot_name],
         }
-
-        if config.update is not None:
-            response["update_schema"] = config.update.params_model.model_json_schema()
-
-        return response
 
     return MPLRouter(
         router=router,
