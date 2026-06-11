@@ -233,7 +233,7 @@ class TestParameterValidation:
 
 
 class TestHealthCheckAPI:
-    """Tests for the /health endpoint."""
+    """Tests for the /health and /health/details endpoints."""
 
     def test_health_check_returns_200(self, client: TestClient) -> None:
         """Test that health check returns 200 OK."""
@@ -245,12 +245,20 @@ class TestHealthCheckAPI:
         response = client.get("/plots/health")
         assert response.headers["content-type"].startswith("application/json")
 
-    def test_health_check_structure(self, client: TestClient) -> None:
-        """Test that health check has expected structure."""
+    def test_health_check_is_minimal(self, client: TestClient) -> None:
+        """Public /health leaks no operational detail."""
         response = client.get("/plots/health")
         data = response.json()
 
-        assert "status" in data
+        # Only a bare status — no connection counts or plot names.
+        assert data == {"status": "ok"}
+
+    def test_health_details_structure(self, client: TestClient) -> None:
+        """Test that /health/details has the expected structure."""
+        response = client.get("/plots/health/details")
+        assert response.status_code == 200
+        data = response.json()
+
         assert data["status"] == "ok"
 
         assert "connections" in data
@@ -262,9 +270,9 @@ class TestHealthCheckAPI:
         assert "cached_files" in data
         assert isinstance(data["cached_files"], int)
 
-    def test_health_check_initial_state(self, client: TestClient) -> None:
-        """Test that health check shows zero connections initially."""
-        response = client.get("/plots/health")
+    def test_health_details_initial_state(self, client: TestClient) -> None:
+        """Test that /health/details shows zero connections initially."""
+        response = client.get("/plots/health/details")
         data = response.json()
 
         # No WebSocket connections in this test

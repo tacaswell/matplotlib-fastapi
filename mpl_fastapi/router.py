@@ -311,13 +311,26 @@ class RouterState:
         if self.active_connections[plot_name] <= 0:
             del self.active_connections[plot_name]
 
-    def get_health_stats(self) -> dict[str, Any]:
-        """Get health statistics.
+    def get_health_status(self) -> dict[str, Any]:
+        """Get the minimal, public health status.
+
+        This payload is intentionally free of operational details so it can
+        be exposed without authentication (e.g. to load balancers).
 
         Returns
         -------
         dict
-            Health status with connection counts and cached file count
+            ``{"status": "ok"}``
+        """
+        return {"status": "ok"}
+
+    def get_health_details(self) -> dict[str, Any]:
+        """Get detailed health statistics (authenticated callers only).
+
+        Returns
+        -------
+        dict
+            Health status with connection counts and cached file count.
         """
         return {
             "status": "ok",
@@ -942,10 +955,23 @@ def create_mpl_router(
             )
         return PlotsListResponse(plots=plots_info)
 
-    # Route: Health check endpoint
+    # Route: Public health check endpoint (unauthenticated).
+    # Deliberately returns only a bare status so it leaks no operational
+    # detail (connection counts, plot names) to unauthenticated callers.
     @router.get("/health")
     async def health_check() -> dict[str, Any]:
-        """Health check endpoint with connection statistics.
+        """Liveness probe returning a bare ``{"status": "ok"}``.
+
+        This endpoint is intentionally unauthenticated so it can be used by
+        load balancers and uptime checks.  Detailed statistics live behind
+        the authenticated ``/health/details`` route.
+        """
+        return router_state.get_health_status()
+
+    # Route: Detailed health check (authenticated).
+    @router.get("/health/details", dependencies=[Depends(_http_auth)])
+    async def health_details() -> dict[str, Any]:
+        """Health check with connection statistics (requires auth).
 
         Returns
         -------
@@ -956,7 +982,7 @@ def create_mpl_router(
             - connections_by_plot: Breakdown of connections per plot
             - cached_files: Number of cached save files
         """
-        return router_state.get_health_stats()
+        return router_state.get_health_details()
 
     @router.get("/watermark", dependencies=[Depends(_http_auth)])
     async def watermark() -> dict[str, str]:

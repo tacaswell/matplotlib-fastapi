@@ -110,6 +110,10 @@ class TestNoAuth:
         resp = open_client.get("/plots/health")
         assert resp.status_code == 200
 
+    def test_health_details_open(self, open_client: TestClient) -> None:
+        resp = open_client.get("/plots/health/details")
+        assert resp.status_code == 200
+
 
 # ---------------------------------------------------------------------------
 # SingleUserToken — unauthenticated (should be rejected)
@@ -151,9 +155,19 @@ class TestSingleUserTokenRejection:
         assert resp.status_code == 401
 
     def test_health_no_auth_needed(self, auth_client: TestClient) -> None:
-        """Health check is always accessible, even with auth enabled."""
+        """Public health check is always accessible, even with auth enabled."""
         resp = auth_client.get("/plots/health")
         assert resp.status_code == 200
+
+    def test_public_health_is_minimal(self, auth_client: TestClient) -> None:
+        """The unauthenticated /health leaks no operational detail."""
+        resp = auth_client.get("/plots/health")
+        assert resp.json() == {"status": "ok"}
+
+    def test_health_details_requires_token(self, auth_client: TestClient) -> None:
+        """Detailed health stats require authentication."""
+        resp = auth_client.get("/plots/health/details")
+        assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +202,16 @@ class TestSingleUserTokenAccess:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200
+
+    def test_health_details_with_token(
+        self, auth_client: TestClient, token: str
+    ) -> None:
+        resp = auth_client.get(
+            "/plots/health/details",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert "connections" in resp.json()
 
     def test_plots_list_html_with_token(
         self, auth_client: TestClient, token: str
