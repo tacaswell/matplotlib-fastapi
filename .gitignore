@@ -62,6 +62,10 @@ docs/source/generated/
 .pytest_cache/
 test_results/
 
+# Type checker / linter caches
+.mypy_cache/
+.ruff_cache/
+
 # PyBuilder
 target/
 
