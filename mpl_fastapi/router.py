@@ -173,6 +173,17 @@ def _ws_scheme(request: Request) -> str:
     return "wss" if _http_scheme(request) == "https" else "ws"
 
 
+def _normalize_origin(origin: str) -> str:
+    """Normalize an HTTP ``Origin`` for case/slash-insensitive comparison.
+
+    An Origin is ``scheme://host[:port]`` whose scheme and host are
+    case-insensitive (RFC 6454).  Lowercase the value and strip any
+    trailing slash so that, e.g., ``https://Example.com/`` and
+    ``https://example.com`` compare equal.
+    """
+    return origin.strip().rstrip("/").lower()
+
+
 class ImageTypeMode(IntEnum):
     """Combined image type and mode byte values."""
 
@@ -863,13 +874,20 @@ def create_mpl_router(
     # Resolve WebSocket origin allow-list.
     # None / [] → no restriction (any origin accepted).
     # Non-empty list → only those origins may open connections.
-    _ws_allowed_origins: frozenset[str] = frozenset(allowed_origins or [])
+    #
+    # An Origin is ``scheme://host[:port]`` with no path or trailing slash.
+    # The scheme and host are case-insensitive (RFC 6454), so normalize both
+    # the configured list and the incoming header to a lowercase form without
+    # a trailing slash to avoid surprising case/slash mismatches.
+    _ws_allowed_origins: frozenset[str] = frozenset(
+        _normalize_origin(o) for o in (allowed_origins or [])
+    )
 
     async def _check_ws_origin(websocket: WebSocket) -> None:
         """Dependency: reject WebSocket upgrades from disallowed origins."""
         if not _ws_allowed_origins:
             return  # no restriction configured
-        origin = websocket.headers.get("origin", "")
+        origin = _normalize_origin(websocket.headers.get("origin", ""))
         if origin not in _ws_allowed_origins:
             await websocket.close(code=1008, reason="Origin not allowed")
             from fastapi import WebSocketException

@@ -312,3 +312,24 @@ class TestSplitQueryParams:
         init, update = _split_query_params({})
         assert init == {}
         assert update == {}
+
+
+class TestNormalizeOrigin:
+    """Tests for the _normalize_origin utility."""
+
+    def test_lowercases_and_strips_trailing_slash(self) -> None:
+        from mpl_fastapi.router import _normalize_origin
+
+        assert _normalize_origin("https://Example.com/") == "https://example.com"
+
+    def test_idempotent_on_canonical_form(self) -> None:
+        from mpl_fastapi.router import _normalize_origin
+
+        assert (
+            _normalize_origin("https://example.com:3000") == "https://example.com:3000"
+        )
+
+    def test_strips_whitespace(self) -> None:
+        from mpl_fastapi.router import _normalize_origin
+
+        assert _normalize_origin("  http://localhost  ") == "http://localhost"
