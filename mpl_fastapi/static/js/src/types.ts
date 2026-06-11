@@ -313,11 +313,17 @@ export interface InvalidateMessage extends BaseMessage {
 
 /**
  * Server → Client: Resize notification
+ *
+ * The server sends the new canvas size as a ``[width, height]`` tuple
+ * (in CSS pixels) along with a ``forward`` flag indicating whether the
+ * client should apply the size to its canvas wrapper.
  */
 export interface ResizeMessage extends BaseMessage {
   type: 'resize';
-  width: number;
-  height: number;
+  /** New canvas size [width, height] in CSS pixels */
+  size: [number, number];
+  /** Whether the client should apply the size to its canvas wrapper */
+  forward: boolean;
 }
 
 /**

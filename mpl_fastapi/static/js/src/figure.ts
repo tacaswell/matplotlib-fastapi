@@ -11,12 +11,12 @@
 import type {
   ImageMode,
   ConfigMessage,
-  ConnectionIdMessage,
   CursorMessage,
   ErrorMessage,
   FigureLabelMessage,
   ImageModeMessage,
   NavigateModeMessage,
+  ResizeMessage,
   RubberbandMessage,
   SaveCompleteMessage,
   SaveErrorMessage,
@@ -142,7 +142,6 @@ export class Figure {
   readonly id: string;
   connection_id: string | null = null;
   readonly ws_manager: WebSocketManager;
-  ws: WebSocket | null = null; // Legacy property
 
   // Canvas and rendering
   canvas: HTMLCanvasElement | undefined;
@@ -255,7 +254,6 @@ export class Figure {
   private _resize_canvas?: (width: number, height: number, forward: boolean) => void;
   private _server_size: [number, number] | null = null;
   private _initialized: boolean = false;
-  private _initial_size: [number, number] | null = null;
 
   // Echoed params from config message (for reconstructing state URLs)
   server_init_params: Record<string, unknown> = {};
@@ -296,9 +294,8 @@ export class Figure {
 
     // Register open handler with WebSocketManager
     this.ws_manager.onOpen(() => {
-      // Update legacy ws property
-      this.ws = this.ws_manager.rawSocket;
-      this.supports_binary = this.ws?.binaryType !== undefined;
+      // The WebSocketManager always sets binaryType = 'arraybuffer', so
+      // supports_binary is always true (its default value).
 
       // Send consolidated init message (v0 protocol - REQUIRED as first message)
       this.send_message('init', {
@@ -663,7 +660,7 @@ export class Figure {
     for (const fmt of this.save_formats) {
       const option = document.createElement('option');
       option.selected = fmt === this.default_save_format;
-      option.innerHTML = fmt;
+      option.textContent = fmt;
       fmt_picker.appendChild(option);
     }
 
@@ -855,12 +852,12 @@ export class Figure {
    * @param fig - The Figure instance.
    * @param msg - Message containing ``size`` ([width, height]) and ``forward`` flag.
    */
-  handle_resize(fig: Figure, msg: any): void {
-    const size = msg['size'];
+  handle_resize(fig: Figure, msg: ResizeMessage): void {
+    const size = msg.size;
     if (!fig.canvas || !fig._resize_canvas) return;
 
     if (size[0] !== fig.canvas.width || size[1] !== fig.canvas.height) {
-      fig._resize_canvas(size[0], size[1], msg['forward']);
+      fig._resize_canvas(size[0], size[1], msg.forward);
       fig.send_render_request();
     }
   }
@@ -991,7 +988,6 @@ export class Figure {
 
     // Apply figure size
     const [width, height] = msg.figure.size;
-    fig._initial_size = [width, height];
     fig._server_size = [width, height];
 
     // Set initial size on canvas
@@ -1042,35 +1038,6 @@ export class Figure {
   }
 
   /**
-   * Validate the server protocol version.
-   *
-   * @deprecated Replaced by the consolidated ``config`` message in v0 protocol.
-   *   Kept for backward compatibility with older servers.
-   * @param fig - The Figure instance.
-   * @param msg - Message containing ``version`` number.
-   * @throws {Error} If the server protocol version does not match the client.
-   */
-  handle_protocol_version(fig: Figure, msg: any): void {
-    const server_version = msg['version'];
-    // Protocol version is REQUIRED
-    if (server_version == null) {
-      console.error('Protocol version missing from server message');
-      fig.ws_manager.close();
-      throw new Error('Protocol version is required');
-    }
-    if (server_version !== PROTOCOL_VERSION) {
-      console.error(
-        `Protocol version mismatch: client expects ${PROTOCOL_VERSION}, server sent ${server_version}`
-      );
-      fig.ws_manager.close();
-      throw new Error(
-        `Incompatible protocol version. Client expects ${PROTOCOL_VERSION}, got ${server_version}`
-      );
-    }
-    console.log(`Server protocol version validated: ${server_version}`);
-  }
-
-  /**
    * Handle an invalidation notification from the server.
    *
    * If no render is in-flight, immediately requests a new frame.  If a render
@@ -1098,99 +1065,6 @@ export class Figure {
    */
   handle_image_mode(fig: Figure, msg: ImageModeMessage): void {
     fig.image_mode = msg.mode;
-  }
-
-  /**
-   * Store the server-assigned connection ID.
-   *
-   * @deprecated Replaced by the ``connection_id`` field in the ``config`` message.
-   * @param fig - The Figure instance.
-   * @param msg - Message containing the ``id`` string.
-   */
-  handle_connection_id(fig: Figure, msg: ConnectionIdMessage): void {
-    fig.connection_id = msg.id;
-  }
-
-  /**
-   * Apply an initial figure size received from the server (legacy protocol).
-   *
-   * @deprecated Replaced by the ``figure.size`` field in the ``config`` message.
-   * @param fig - The Figure instance.
-   * @param msg - Message containing ``size`` ([width, height]) array.
-   */
-  // Legacy handler - config message now includes figure size
-  handle_figure_size(fig: Figure, msg: any): void {
-    // Store initial size to be applied before first render
-    const size: [number, number] = msg['size'];
-    fig._initial_size = size;
-    fig._server_size = size;
-
-    // Set initial size on canvas before requesting first render
-    if (fig.canvas_div && fig._initial_size) {
-      const [width, height] = fig._initial_size;
-      fig.canvas_div.style.width = `${width}px`;
-      fig.canvas_div.style.height = `${height}px`;
-    }
-
-    // Mark as initialized before first refresh to prevent ResizeObserver feedback
-    fig._initialized = true;
-
-    // Request initial render now that canvas is properly sized
-    // Only do this for legacy protocol - v0 config handler does this
-    if (!fig.toolbar_ready) {
-      // Legacy path - need to wait for toolbar config
-      fig.send_message('supports_binary', { value: fig.supports_binary });
-      fig.send_message('send_image_mode', {});
-      fig.send_message('refresh', {});
-    }
-  }
-
-  /**
-   * Store toolbar item configuration and initialise the toolbar when ready.
-   *
-   * @deprecated Replaced by the ``toolbar`` field in the ``config`` message.
-   * @param fig - The Figure instance.
-   * @param msg - Message containing ``items`` array.
-   */
-  handle_toolbar_config(fig: Figure, msg: any): void {
-    fig.toolbar_items = msg['items'] as Array<[string, string, string, string]>;
-    fig._check_toolbar_ready();
-  }
-
-  /**
-   * Store supported save formats and initialise the toolbar when ready.
-   *
-   * @deprecated Replaced by the ``save.formats`` field in the ``config`` message.
-   * @param fig - The Figure instance.
-   * @param msg - Message containing ``formats`` array.
-   */
-  handle_save_formats(fig: Figure, msg: any): void {
-    fig.save_formats = msg['formats'] as string[];
-    fig._check_toolbar_ready();
-  }
-
-  /**
-   * Store the default save format and initialise the toolbar when ready.
-   *
-   * @deprecated Replaced by the ``save.default_format`` field in the ``config`` message.
-   * @param fig - The Figure instance.
-   * @param msg - Message containing the ``format`` string.
-   */
-  handle_default_save_format(fig: Figure, msg: any): void {
-    fig.default_save_format = msg['format'] as string;
-    fig._check_toolbar_ready();
-  }
-
-  private _check_toolbar_ready(): void {
-    // Initialize toolbar once we have all config
-    if (
-      !this.toolbar_ready &&
-      this.toolbar_items.length > 0 &&
-      this.save_formats.length > 0
-    ) {
-      this.toolbar_ready = true;
-      this._init_toolbar();
-    }
   }
 
   /**
