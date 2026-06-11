@@ -236,16 +236,27 @@ Request a full (non-diff) render.
 ### Mouse Events
 
 ```json
-{"type": "button_press", "x": 100, "y": 200, "button": 1}
-{"type": "button_release", "x": 100, "y": 200, "button": 1}
-{"type": "motion_notify", "x": 150, "y": 250}
-{"type": "scroll", "x": 100, "y": 200, "step": 1}
-{"type": "dblclick", "x": 100, "y": 200, "button": 1}
-{"type": "figure_enter", "x": 0, "y": 0}
-{"type": "figure_leave", "x": 0, "y": 0}
+{"type": "button_press", "x": 100, "y": 200, "button": 0, "buttons": 1}
+{"type": "button_release", "x": 100, "y": 200, "button": 0, "buttons": 0}
+{"type": "motion_notify", "x": 150, "y": 250, "button": -1, "buttons": 0}
+{"type": "scroll", "x": 100, "y": 200, "button": 0, "buttons": 0, "step": 1}
+{"type": "dblclick", "x": 100, "y": 200, "button": 0, "buttons": 1}
+{"type": "figure_enter", "x": 0, "y": 0, "button": -1, "buttons": 0}
+{"type": "figure_leave", "x": 0, "y": 0, "button": -1, "buttons": 0}
 ```
 
 **Response:** Queued messages (if any) from event handlers
+
+#### Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `x`, `y` | yes | Cursor position in CSS pixels, origin at the **top-left** of the canvas. The server flips `y` to matplotlib's bottom-left origin. |
+| `button` | **yes** | Browser [`MouseEvent.button`](https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/button) value (`0`=left, `1`=middle, `2`=right, `3`=back, `4`=forward; `-1` when no button is associated, e.g. for motion). The server reads this on **every** mouse event and adds 1 to obtain the matplotlib button number, so it must always be present — including for `motion_notify`, `figure_enter`, and `figure_leave`. |
+| `buttons` | no (default `0`) | Browser [`MouseEvent.buttons`](https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/buttons) bitmask of buttons currently held (`1`=left, `2`=right, `4`=middle, `8`=back, `16`=forward). Decoded into the matplotlib `buttons` set. |
+| `step` | scroll only | Scroll amount for `scroll` events. |
+| `modifiers` | no (default `[]`) | List of held modifier keys (`"ctrl"`, `"alt"`, `"shift"`, `"meta"`, …). |
+| `guiEvent` | no | Opaque serialization of the raw DOM event, stored unmodified on the matplotlib event object. On `motion_notify` (which fires at a high rate) the reference client sends only the **user-input** fields (`altKey`, `ctrlKey`, `shiftKey`, `metaKey`, `button`, `buttons`) and drops the static positional/timing fields; on discrete events it sends the full serialization. Clients may send any subset, or omit it entirely. |
 
 ---
 

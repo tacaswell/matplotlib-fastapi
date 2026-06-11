@@ -72,6 +72,36 @@ function simpleKeys(original: Record<string, any>): Record<string, any> {
 }
 
 /**
+ * DOM ``MouseEvent`` fields that reflect *user input* (held modifier keys
+ * and mouse buttons).  Used to build a trimmed ``guiEvent`` for
+ * high-frequency ``motion_notify`` events, where the static positional and
+ * timing fields are not worth re-sending on every move.
+ */
+const INPUT_GUI_EVENT_KEYS = [
+  'altKey',
+  'ctrlKey',
+  'shiftKey',
+  'metaKey',
+  'button',
+  'buttons',
+] as const;
+
+/**
+ * Build a ``guiEvent`` payload containing only the user-input fields
+ * (modifier keys and mouse buttons) from a DOM ``MouseEvent``, dropping the
+ * static positional/timing fields.
+ */
+function inputGuiEvent(event: Record<string, any>): Record<string, any> {
+  const obj: Record<string, any> = {};
+  for (const key of INPUT_GUI_EVENT_KEYS) {
+    if (key in event) {
+      obj[key] = event[key];
+    }
+  }
+  return obj;
+}
+
+/**
  * Extract active modifier keys from a DOM event as an array of matplotlib
  * modifier names.  Uses independent ``if`` checks so that multiple
  * simultaneous modifiers are all reported.
@@ -1423,15 +1453,25 @@ export class Figure {
     this._last_mouse_x = x;
     this._last_mouse_y = y;
 
-    this.send_message(name, {
+    const payload: Record<string, unknown> = {
       x,
       y,
       button: event.button,
       buttons: event.buttons,
       step: (event as any).step,
       modifiers: getModifiers(event),
-      guiEvent: simpleKeys(event as any),
-    });
+    };
+
+    // ``guiEvent`` is a fairly large serialization of the raw DOM event that
+    // matplotlib stores opaquely on the event object.  ``motion_notify`` fires
+    // at a high rate, so we send only the user-input fields (modifier keys and
+    // mouse buttons) there and drop the static positional/timing fields;
+    // discrete events (press/release/click/scroll/enter/leave) carry the full
+    // serialization.
+    payload.guiEvent =
+      name === 'motion_notify' ? inputGuiEvent(event as any) : simpleKeys(event as any);
+
+    this.send_message(name, payload);
 
     event.preventDefault();
     return false;
