@@ -79,9 +79,6 @@ class FastAPICanvas(FigureCanvasAgg):
     supports_binary: bool = True
     supports_blit: bool = True
 
-    # Declare attributes from parent FigureCanvasBase that we use
-    call_info: dict[str, Any]
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._force_full = False
@@ -93,7 +90,26 @@ class FastAPICanvas(FigureCanvasAgg):
         self._binary_queue: deque[tuple[bytes, bool]] = deque()
 
     def start_event_loop(self, timeout: float = 0) -> None:
-        self.call_info["start_event_loop"] = {"timeout": timeout}
+        """Run a blocking GUI event loop — unsupported on this canvas.
+
+        ``start_event_loop`` exists to service interactive figures that own
+        a real GUI event loop (e.g. when a backend drives a terminal
+        session).  This canvas is driven by the FastAPI server's asyncio
+        loop and never owns a blocking event loop of its own, so calling
+        this method is always a programming error.  It is kept only to
+        satisfy Matplotlib's ``FigureCanvasBase`` API.
+
+        Raises
+        ------
+        NotImplementedError
+            Always, because this canvas has no blocking event loop to run.
+        """
+        raise NotImplementedError(
+            "FastAPICanvas.start_event_loop() is not supported: this canvas "
+            "is driven by the FastAPI server's asyncio event loop and does "
+            "not own a blocking GUI event loop. It should not be called "
+            "during normal server operation."
+        )
 
     async def handle_unknown_event(
         self,
@@ -427,6 +443,14 @@ class FastAPICanvas(FigureCanvasAgg):
         self, event: dict[str, Any], _websocket: WebSocket
     ) -> None:
         """Handle toolbar button clicks from the browser."""
+        # NOTE(B5): this guard needs follow-up investigation.  ``None`` is a
+        # member of ``_ALLOWED_TOOL_ITEMS`` (it models the toolbar-separator
+        # entry in ``NavigationToolbar2.toolitems``), so the ``name is None``
+        # clause never actually rejects ``None`` — a ``None`` name would pass
+        # the ``not in`` check and then ``getattr(self.toolbar, None)`` would
+        # raise.  In practice the wire protocol never sends ``None``, but the
+        # allow-list, this guard, and the ``getattr`` dispatch should be
+        # reviewed together to make the rejection logic correct and obvious.
         name = event.get("name", "")
         if name not in _ALLOWED_TOOL_ITEMS or name is None:
             logger.warning("Blocked unknown toolbar action: %r", name)
