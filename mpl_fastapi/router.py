@@ -16,7 +16,6 @@ Protocol v0 uses a simplified message flow:
 """
 
 import asyncio
-import functools
 import hashlib
 import io
 import json
@@ -92,10 +91,10 @@ def _split_query_params(
     return init_raw, update_raw
 
 
-# JS caching control: set MPL_NO_CACHE_JS=1 (or any truthy value) to disable
-# in-process JS caching and aggressive Cache-Control headers.  This is
-# essential during development so that rebuilding the JS bundle is
-# immediately reflected without restarting the Python server.
+# JS caching control: set MPL_NO_CACHE_JS=1 (or any truthy value) to relax
+# the aggressive Cache-Control headers on content-hashed bundles.  This is
+# useful during development so that rebuilding the JS bundle is immediately
+# reflected in the browser without a hard refresh.
 # This only affects static JS serving — it does not change logging levels
 # or any other server behaviour.
 _NO_CACHE_JS: bool = os.environ.get("MPL_NO_CACHE_JS", "").strip() not in ("", "0")
@@ -116,30 +115,19 @@ _JS_IMMUTABLE_HEADERS: dict[str, str] = (
 _JS_REDIRECT_HEADERS: dict[str, str] = {"Cache-Control": "no-cache"}
 
 
-@functools.lru_cache(maxsize=64)
-def _read_static_file_cached(filename: str) -> tuple[str, str] | None:
-    """Read and permanently cache a static JS file (production path)."""
+def _read_static_file(filename: str) -> tuple[str, str] | None:
+    """Read a static JS file from disk, returning ``(content, etag)``.
+
+    The file is read fresh on every call so a rebuilt bundle is picked up
+    without restarting the server.  The ETag is derived from a content
+    hash, which also drives the content-hashed URL scheme.
+    """
     path = Path(__file__).parent / "static/js/dist" / filename
     if path.exists():
         content = path.read_text(encoding="utf-8")
         etag = hashlib.sha256(content.encode()).hexdigest()[:16]
         return content, f'"{etag}"'
     return None
-
-
-def _read_static_file_uncached(filename: str) -> tuple[str, str] | None:
-    """Read a static JS file from disk every time (dev-mode path)."""
-    path = Path(__file__).parent / "static/js/dist" / filename
-    if path.exists():
-        content = path.read_text(encoding="utf-8")
-        etag = hashlib.sha256(content.encode()).hexdigest()[:16]
-        return content, f'"{etag}"'
-    return None
-
-
-_read_static_file = (
-    _read_static_file_uncached if _NO_CACHE_JS else _read_static_file_cached
-)
 
 
 def _get_js_hash(filename: str) -> str | None:
@@ -149,6 +137,40 @@ def _get_js_hash(filename: str) -> str | None:
         return None
     # ETag is '"<hex>"'; strip the quotes to get the bare hash.
     return result[1].strip('"')
+
+
+def _prefix_before(path: str, marker: str) -> str:
+    """Return the router-mount prefix that precedes *marker* in *path*.
+
+    The router exposes its routes under a mount prefix (e.g. ``/plots``),
+    so a request path looks like ``/plots/plot/sine`` or
+    ``/plots/ws/v0/sine``.  Given the marker segment that begins the
+    router-internal portion of the path (``/plot/``, ``/ws/``, ``/plots``),
+    return everything before it (``/plots``), or ``""`` when the router is
+    mounted at the application root.
+
+    This is the single source of truth for deriving the mount prefix from
+    a request URL so that the HTML, JSON, and save handlers all agree.
+    """
+    idx = path.find(marker)
+    if idx == -1:
+        return path.rstrip("/")
+    return path[:idx].rstrip("/")
+
+
+def _http_scheme(request: Request) -> str:
+    """Return the effective HTTP scheme, honoring a reverse proxy."""
+    return request.headers.get("x-forwarded-proto", request.url.scheme)
+
+
+def _request_host(request: Request) -> str:
+    """Return the effective host:port, honoring a reverse proxy."""
+    return request.headers.get("x-forwarded-host", request.headers.get("host", ""))
+
+
+def _ws_scheme(request: Request) -> str:
+    """Return ``wss`` when the page is served over HTTPS, else ``ws``."""
+    return "wss" if _http_scheme(request) == "https" else "ws"
 
 
 class ImageTypeMode(IntEnum):
@@ -897,18 +919,13 @@ def create_mpl_router(
         """List all available plots with their parameter schemas."""
         # Derive base URLs from the request so clients get absolute,
         # ready-to-use WebSocket and HTTP addresses for each plot.
-        http_scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-        host = request.headers.get("x-forwarded-host", request.headers.get("host", ""))
-        ws_scheme = "wss" if http_scheme == "https" else "ws"
+        http_scheme = _http_scheme(request)
+        host = _request_host(request)
+        ws_scheme = _ws_scheme(request)
 
         # Extract the router prefix from the request path.
-        # request.url.path for this endpoint is e.g. "/plots/plots";
-        # stripping the trailing "/plots" gives the prefix.
-        req_path = request.url.path.rstrip("/")
-        if req_path.endswith("/plots"):
-            prefix = req_path[: -len("/plots")]
-        else:
-            prefix = req_path
+        # request.url.path for this endpoint is e.g. "/plots/plots".
+        prefix = _prefix_before(request.url.path, "/plots")
 
         plots_info = {}
         for name, config in plot_generators.items():
@@ -977,38 +994,27 @@ def create_mpl_router(
         config = plot_generators[plot_name]
 
         # Check if update functionality is available
-        update_params_schema = None
+        update_params_schema: dict[str, Any] | None = None
         if config.update is not None:
             update_params_schema = config.update.params_model.model_json_schema()
 
-        # Build WebSocket URI including the router prefix
-        ws_uri = f"ws://{request.url.hostname}:{request.url.port}"
-        # Extract the prefix from the request path
-        # If request path is /plots/plot/name, we want /plots
-        path_parts = request.url.path.rstrip("/").split("/")
-        base_path = ""
-        if len(path_parts) >= 2:
-            # Get everything before /plot/name
-            prefix_parts = []
-            for part in path_parts[1:]:  # Skip empty string from leading /
-                if part == "plot":
-                    break
-                prefix_parts.append(part)
-            if prefix_parts:
-                base_path = "/" + "/".join(prefix_parts)
-                ws_uri += base_path
+        # Derive the router mount prefix (e.g. "/plots") from the request
+        # path "/plots/plot/{name}".
+        base_path = _prefix_before(request.url.path, "/plot/")
+
+        # Build the WebSocket origin honoring TLS and any reverse proxy.
+        # Using the forwarded scheme/host fixes mixed-content failures when
+        # the page itself is served over HTTPS (ws:// would be blocked).
+        ws_uri = f"{_ws_scheme(request)}://{_request_host(request)}{base_path}"
 
         # Extract _update.* values from the page URL so the form can
         # be pre-populated with them instead of schema defaults.
-        _, update_values = _split_query_params(dict(request.query_params))
+        _init_values, update_values = _split_query_params(dict(request.query_params))
+        del _init_values
 
-        # Build content-hashed JS URL for cache-busting.
-        # Falls back to the stable redirect URL if the hash is unavailable.
-        _component_hash = _get_js_hash("component.js")
-        if _component_hash is not None:
-            js_url = f"{base_path}/component.{_component_hash}.js"
-        else:
-            js_url = f"{base_path}/component.js"
+        # Reference the stable JS URL; the redirect route resolves it to the
+        # current content-hashed bundle (single source of truth for the hash).
+        js_url = f"{base_path}/component.js"
 
         return templates.TemplateResponse(
             request,
@@ -1389,11 +1395,9 @@ def create_mpl_router(
                             # Clean old files
                             _clean_old_saved_files(router_state)
 
-                            # Extract base path from WebSocket path
-                            base_path = ""
-                            ws_path = websocket.url.path
-                            if "/ws/" in ws_path:
-                                base_path = ws_path.split("/ws/")[0]
+                            # Extract the router mount prefix from the
+                            # WebSocket path "/{prefix}/ws/v0/{name}".
+                            base_path = _prefix_before(websocket.url.path, "/ws/")
 
                             download_url = f"{base_path}/download/{file_id}"
 
@@ -1621,32 +1625,30 @@ def create_mpl_router(
             headers=_JS_REDIRECT_HEADERS,
         )
 
-    @router.get("/js/mpl.js")
-    async def get_mpl_js() -> RedirectResponse:
-        """Redirect legacy /js/mpl.js to the content-hashed IIFE bundle."""
-        return _redirect_to_hashed("component.js", "component.{hash}.js")
+    def _register_redirect(route: str, filename: str, url_template: str) -> None:
+        """Register a stable hash-free URL that 302s to the hashed bundle."""
 
-    @router.get("/component.js")
-    async def get_component_js() -> RedirectResponse:
-        """Redirect stable /component.js to the content-hashed IIFE bundle."""
-        return _redirect_to_hashed("component.js", "component.{hash}.js")
+        async def _redirect() -> RedirectResponse:
+            return _redirect_to_hashed(filename, url_template)
 
-    @router.get("/component.esm.js")
-    async def get_component_esm_js() -> RedirectResponse:
-        """Redirect stable /component.esm.js to the content-hashed ESM bundle."""
-        return _redirect_to_hashed("component.esm.js", "component.{hash}.esm.js")
+        _redirect.__doc__ = f"Redirect {route} to the content-hashed bundle."
+        router.add_api_route(route, _redirect, methods=["GET"])
 
-    @router.get("/component.js.map")
-    async def get_component_js_map() -> RedirectResponse:
-        """Redirect stable /component.js.map to the content-hashed source map."""
-        return _redirect_to_hashed("component.js.map", "component.{hash}.js.map")
-
-    @router.get("/component.esm.js.map")
-    async def get_component_esm_js_map() -> RedirectResponse:
-        """Redirect stable /component.esm.js.map to the content-hashed source map."""
-        return _redirect_to_hashed(
-            "component.esm.js.map", "component.{hash}.esm.js.map"
-        )
+    # (stable route, source file, hashed URL template).  The legacy
+    # ``/js/mpl.js`` path is kept as an alias for the IIFE bundle.
+    _redirect_routes: list[tuple[str, str, str]] = [
+        ("/js/mpl.js", "component.js", "component.{hash}.js"),
+        ("/component.js", "component.js", "component.{hash}.js"),
+        ("/component.esm.js", "component.esm.js", "component.{hash}.esm.js"),
+        ("/component.js.map", "component.js.map", "component.{hash}.js.map"),
+        (
+            "/component.esm.js.map",
+            "component.esm.js.map",
+            "component.{hash}.esm.js.map",
+        ),
+    ]
+    for _route, _filename, _template in _redirect_routes:
+        _register_redirect(_route, _filename, _template)
 
     # Route: Get schema for a specific plot
     @router.get("/api/plots/{plot_name}/schema", dependencies=[Depends(_http_auth)])
