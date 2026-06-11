@@ -472,23 +472,28 @@ See `demos/embeddable_demo.html` for comprehensive examples including:
 ## Key Technical Details
 
 ### WebSocket Protocol
-1. Client connects to `/ws/{plot_name}?param1=value1&param2=value2`
-2. Server validates plot exists BEFORE accepting connection (rejects with code 1008 if invalid)
-3. Server accepts WebSocket connection
-4. Server generates unique UUID connection ID
-5. Server validates parameters using Pydantic model
-6. Server creates Figure and calls generator function
-7. Generator returns opaque state object (cached for connection lifetime)
-8. Server attaches FastAPICanvas and stores (Figure, Canvas) in cache with connection ID
-9. Server sends initial messages:
-   - `image_mode` - current image mode
-   - `connection_id` - UUID for download endpoint access
-10. Client (via WebSocketManager) sends initialization messages:
-   - `supports_binary` - binary message support flag
-   - `send_image_mode` - request current image mode
-   - `set_device_pixel_ratio` - device pixel ratio for high-DPI rendering
-   - `refresh` - request initial render
-11. Server sends initial image and figure label
+ 1. Client connects to `/{prefix}/ws/v0/{plot_name}?param1=value1&param2=value2`
+    (the `v0` segment is the protocol version)
+ 2. Server validates plot exists BEFORE accepting connection (rejects with code 1008 if invalid)
+ 3. Server validates the request `Origin` against the allow-list and accepts the WebSocket connection
+ 4. Client (via `WebSocketManager`) sends a single consolidated `init` message as the
+    REQUIRED first message:
+    - `protocol_version` - client protocol version
+    - `device_pixel_ratio` - device pixel ratio for high-DPI rendering
+    - `supports_binary` - binary message support flag (always `true` in the reference client)
+ 5. Server generates a unique UUID connection ID
+ 6. Server validates query parameters (and any `_update.*` params) using the Pydantic model(s)
+ 7. Server creates Figure and calls the generator function
+ 8. Generator returns an opaque state object (cached for the connection lifetime)
+ 9. Server attaches FastAPICanvas and stores (Figure, Canvas) in cache with the connection ID
+ 10. Server replies with a single consolidated `config` message containing:
+    - `protocol_version`, `connection_id`
+    - `figure` (size, dpi, label)
+    - `toolbar` (items, history state)
+    - `save` (formats, default_format)
+    - `image` (format), `update_schema`, `init_params`, `update_params`
+ 11. Client applies the config (builds toolbar, resizes canvas) and sends `refresh`;
+     server responds with the initial image
 12. Client sends events (mouse, toolbar buttons, update requests, save requests)
 13. For update requests:
     - Server validates update parameters
