@@ -21,8 +21,10 @@ from matplotlib.backend_bases import (
     FigureManagerBase,
     KeyEvent,
     LocationEvent,
+    MouseButton,
     MouseEvent,
     NavigationToolbar2,
+    ResizeEvent,
     _Backend,
 )
 from matplotlib.backends.backend_agg import FigureCanvasAgg, RendererAgg
@@ -108,6 +110,7 @@ class FastAPICanvas(FigureCanvasAgg):
         h = int(ev["height"] * self.device_pixel_ratio)
         fig = self.figure
         fig.set_size_inches(w / fig.dpi, h / fig.dpi, forward=False)
+        ResizeEvent("resize_event", self)._process()  # type: ignore[attr-defined]
         px_w, px_h = fig.bbox.size
         await websocket.send_json(
             {
@@ -310,9 +313,33 @@ class FastAPICanvas(FigureCanvasAgg):
 
         e_type = event["type"]
         gui_event = event.get("guiEvent")
+        modifiers = event.get("modifiers", [])
+
+        # Parse the JS ``MouseEvent.buttons`` bitmask into a set of
+        # ``MouseButton`` values (JS bitmask order differs from mpl
+        # button numbers).
+        buttons_bitmask = event.get("buttons", 0)
+        buttons = {
+            btn
+            for btn, mask in [
+                (MouseButton.LEFT, 1),
+                (MouseButton.RIGHT, 2),
+                (MouseButton.MIDDLE, 4),
+                (MouseButton.BACK, 8),
+                (MouseButton.FORWARD, 16),
+            ]
+            if buttons_bitmask & mask
+        }
+
         if e_type == "button_press":
             MouseEvent(
-                "button_press_event", self, x, y, button, guiEvent=gui_event
+                "button_press_event",
+                self,
+                x,
+                y,
+                button,
+                modifiers=modifiers,
+                guiEvent=gui_event,
             )._process()  # type: ignore[attr-defined]
         elif e_type == "dblclick":
             MouseEvent(
@@ -322,25 +349,56 @@ class FastAPICanvas(FigureCanvasAgg):
                 y,
                 button,
                 dblclick=True,
+                modifiers=modifiers,
                 guiEvent=gui_event,
             )._process()  # type: ignore[attr-defined]
         elif e_type == "button_release":
             MouseEvent(
-                "button_release_event", self, x, y, button, guiEvent=gui_event
+                "button_release_event",
+                self,
+                x,
+                y,
+                button,
+                modifiers=modifiers,
+                guiEvent=gui_event,
             )._process()  # type: ignore[attr-defined]
         elif e_type == "motion_notify":
-            MouseEvent("motion_notify_event", self, x, y, guiEvent=gui_event)._process()  # type: ignore[attr-defined]
+            MouseEvent(
+                "motion_notify_event",
+                self,
+                x,
+                y,
+                buttons=buttons,
+                modifiers=modifiers,
+                guiEvent=gui_event,
+            )._process()  # type: ignore[attr-defined]
         elif e_type == "figure_enter":
             LocationEvent(
-                "figure_enter_event", self, x, y, guiEvent=gui_event
+                "figure_enter_event",
+                self,
+                x,
+                y,
+                modifiers=modifiers,
+                guiEvent=gui_event,
             )._process()  # type: ignore[attr-defined]
         elif e_type == "figure_leave":
             LocationEvent(
-                "figure_leave_event", self, x, y, guiEvent=gui_event
+                "figure_leave_event",
+                self,
+                x,
+                y,
+                modifiers=modifiers,
+                guiEvent=gui_event,
             )._process()  # type: ignore[attr-defined]
         elif e_type == "scroll":
             MouseEvent(
-                "scroll_event", self, x, y, step=event["step"], guiEvent=gui_event
+                "scroll_event",
+                self,
+                x,
+                y,
+                step=event["step"],
+                modifiers=modifiers,
+                guiEvent=gui_event,
             )._process()  # type: ignore[attr-defined]
 
     handle_button_press = handle_button_release = handle_dblclick = (
@@ -357,9 +415,7 @@ class FastAPICanvas(FigureCanvasAgg):
         y = renderer_height - y
         e_type = event["type"]
         if e_type == "key_press":
-            KeyEvent(
-                "key_press_event", self, key, x, y, guiEvent=gui_event
-            )._process()  # type: ignore[attr-defined]
+            KeyEvent("key_press_event", self, key, x, y, guiEvent=gui_event)._process()  # type: ignore[attr-defined]
         elif e_type == "key_release":
             KeyEvent(
                 "key_release_event", self, key, x, y, guiEvent=gui_event

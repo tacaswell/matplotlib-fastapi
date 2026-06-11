@@ -39,7 +39,9 @@ import { Figure } from './figure.js';
  * All fields are required except `token` which stays optional since
  * not every deployment uses authentication.
  */
-type ResolvedConfig = Required<Omit<EmbeddableConfig, 'token'>> & { token: string | undefined };
+type ResolvedConfig = Required<Omit<EmbeddableConfig, 'token'>> & {
+  token: string | undefined;
+};
 
 /**
  * Main embeddable matplotlib component class

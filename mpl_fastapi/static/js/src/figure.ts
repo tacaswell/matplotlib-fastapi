@@ -72,6 +72,69 @@ function simpleKeys(original: Record<string, any>): Record<string, any> {
 }
 
 /**
+ * Extract active modifier keys from a DOM event as an array of matplotlib
+ * modifier names.  Uses independent ``if`` checks so that multiple
+ * simultaneous modifiers are all reported.
+ */
+function getModifiers(event: MouseEvent | KeyboardEvent): string[] {
+  const mods: string[] = [];
+  if (event.ctrlKey) mods.push('ctrl');
+  if (event.altKey) mods.push('alt');
+  if (event.shiftKey) mods.push('shift');
+  if (event.metaKey) mods.push('meta');
+  return mods;
+}
+
+/**
+ * Lookup table mapping DOM ``KeyboardEvent.key`` values to the
+ * corresponding matplotlib key names.  Only keys whose browser name
+ * differs from the matplotlib convention need an entry here.
+ *
+ * This is the client-side equivalent of ``_SPECIAL_KEYS_LUT`` in
+ * matplotlib's ``backend_webagg_core.py``.
+ */
+const _SPECIAL_KEYS_LUT: Record<string, string> = {
+  Alt: 'alt',
+  AltGraph: 'alt',
+  CapsLock: 'caps_lock',
+  Control: 'control',
+  Meta: 'meta',
+  NumLock: 'num_lock',
+  ScrollLock: 'scroll_lock',
+  Shift: 'shift',
+  Super: 'super',
+  Enter: 'enter',
+  Tab: 'tab',
+  ArrowDown: 'down',
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+  ArrowUp: 'up',
+  End: 'end',
+  Home: 'home',
+  PageDown: 'pagedown',
+  PageUp: 'pageup',
+  Backspace: 'backspace',
+  Delete: 'delete',
+  Insert: 'insert',
+  Escape: 'escape',
+  Pause: 'pause',
+  Select: 'select',
+  Dead: 'dead',
+  F1: 'f1',
+  F2: 'f2',
+  F3: 'f3',
+  F4: 'f4',
+  F5: 'f5',
+  F6: 'f6',
+  F7: 'f7',
+  F8: 'f8',
+  F9: 'f9',
+  F10: 'f10',
+  F11: 'f11',
+  F12: 'f12',
+};
+
+/**
  * Main Figure class for rendering matplotlib plots
  */
 export class Figure {
@@ -1490,7 +1553,9 @@ export class Figure {
       x,
       y,
       button: event.button,
+      buttons: event.buttons,
       step: (event as any).step,
+      modifiers: getModifiers(event),
       guiEvent: simpleKeys(event as any),
     });
 
@@ -1542,7 +1607,17 @@ export class Figure {
       value += 'shift+';
     }
 
-    value += event.key;
+    // Normalize the key name: look up in the special-keys table first,
+    // otherwise use the raw event.key value.  When shift is the only
+    // modifier and the key is a single (already-shifted) character, drop
+    // the "shift+" prefix — the uppercase letter already encodes the
+    // shift (matching upstream Matplotlib convention).
+    let keyName = _SPECIAL_KEYS_LUT[event.key] ?? event.key;
+    if (value === 'shift+' && keyName.length === 1) {
+      value = '';
+    }
+
+    value += keyName;
 
     this._key_event_extra(event, name);
 

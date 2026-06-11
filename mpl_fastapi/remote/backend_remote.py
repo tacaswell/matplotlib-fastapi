@@ -85,7 +85,7 @@ class FigureCanvasRemote(FigureCanvasBase):
     # Motion-notify throttle state
     _mouse_move_interval: float = 1.0 / 30  # 30 Hz max
     _last_mouse_move_time: float = 0.0
-    _pending_mouse_move: tuple[float, float] | None = None
+    _pending_mouse_move: tuple[float, float, int, list[str] | None] | None = None
     _mouse_move_timer: threading.Timer | None = None
 
     def __init__(
@@ -413,16 +413,37 @@ class FigureCanvasRemote(FigureCanvasBase):
         wire_x = event.x
         wire_y = self.figure.bbox.height - event.y
 
+        modifiers = list(event.modifiers) if event.modifiers else []
+
         if event.name == "motion_notify_event":
-            self._forward_motion_notify(wire_x, wire_y)
+            # Convert the mpl ``buttons`` frozenset to the JS bitmask
+            # convention used by the wire protocol.
+            buttons_bitmask = 0
+            _MPL_BUTTON_TO_JS_MASK = {1: 1, 3: 2, 2: 4, 8: 8, 9: 16}
+            if event.buttons:
+                for btn in event.buttons:
+                    buttons_bitmask |= _MPL_BUTTON_TO_JS_MASK.get(int(btn), 0)
+            self._forward_motion_notify(
+                wire_x, wire_y, buttons=buttons_bitmask, modifiers=modifiers
+            )
         elif event.name == "scroll_event":
-            self._forward_mouse_event(wire_type, wire_x, wire_y, step=event.step)
+            self._forward_mouse_event(
+                wire_type, wire_x, wire_y, step=event.step, modifiers=modifiers
+            )
         else:
             # button_press / button_release
             button = int(event.button) - 1 if event.button is not None else 0
-            self._forward_mouse_event(wire_type, wire_x, wire_y, button=button)
+            self._forward_mouse_event(
+                wire_type, wire_x, wire_y, button=button, modifiers=modifiers
+            )
 
-    def _forward_motion_notify(self, x: float, y: float) -> None:
+    def _forward_motion_notify(
+        self,
+        x: float,
+        y: float,
+        buttons: int = 0,
+        modifiers: list[str] | None = None,
+    ) -> None:
         """Rate-limited motion_notify forwarding.
 
         Discrete events (press, release, scroll) are forwarded
@@ -439,11 +460,13 @@ class FigureCanvasRemote(FigureCanvasBase):
                 self._mouse_move_timer.cancel()
                 self._mouse_move_timer = None
             self._last_mouse_move_time = now
-            self._forward_mouse_event("motion_notify", x, y)
+            self._forward_mouse_event(
+                "motion_notify", x, y, buttons=buttons, modifiers=modifiers
+            )
         else:
             # Too soon — stash and schedule a trailing send so the
             # server always sees the final position.
-            self._pending_mouse_move = (x, y)
+            self._pending_mouse_move = (x, y, buttons, modifiers)
             if self._mouse_move_timer is None:
                 remaining = self._mouse_move_interval - elapsed
                 self._mouse_move_timer = threading.Timer(
@@ -456,10 +479,12 @@ class FigureCanvasRemote(FigureCanvasBase):
         """Send the most recent throttled motion_notify."""
         self._mouse_move_timer = None
         if self._pending_mouse_move is not None:
-            wx, wy = self._pending_mouse_move
+            wx, wy, buttons, modifiers = self._pending_mouse_move
             self._pending_mouse_move = None
             self._last_mouse_move_time = time.monotonic()
-            self._forward_mouse_event("motion_notify", wx, wy)
+            self._forward_mouse_event(
+                "motion_notify", wx, wy, buttons=buttons, modifiers=modifiers
+            )
 
     def _on_mpl_key_event(self, event: KeyEvent) -> None:
         """Translate an mpl KeyEvent → wire-protocol key message."""
@@ -482,7 +507,9 @@ class FigureCanvasRemote(FigureCanvasBase):
         x: float,
         y: float,
         button: int = 0,
+        buttons: int = 0,
         step: float = 0,
+        modifiers: list[str] | None = None,
     ) -> None:
         """Forward a mouse event to the server.
 
@@ -499,12 +526,22 @@ class FigureCanvasRemote(FigureCanvasBase):
             Mouse button, **0-indexed** (wire protocol / JS convention:
             0 = left, 1 = middle, 2 = right).  The server adds 1 to
             convert to matplotlib's 1-indexed ``MouseButton`` values.
+        buttons : int
+            Bitmask of currently pressed buttons (JS ``MouseEvent.buttons``
+            convention: 1=left, 2=right, 4=middle, 8=back, 16=forward).
+            Only meaningful for ``motion_notify`` events.
         step : float
             Scroll step (for scroll events).
+        modifiers : list of str, optional
+            Active modifier keys (e.g. ``["ctrl", "shift"]``).
         """
         msg: dict[str, Any] = {"type": event_type, "x": x, "y": y, "button": button}
         if event_type == "scroll":
             msg["step"] = step
+        if event_type == "motion_notify":
+            msg["buttons"] = buttons
+        if modifiers:
+            msg["modifiers"] = modifiers
         self._transport.send_json(msg)
 
     def _forward_key_event(
@@ -521,9 +558,7 @@ class FigureCanvasRemote(FigureCanvasBase):
         x, y : float
             Cursor position in wire-protocol coordinates (y from top).
         """
-        self._transport.send_json(
-            {"type": event_type, "key": key, "x": x, "y": y}
-        )
+        self._transport.send_json({"type": event_type, "key": key, "x": x, "y": y})
 
     def _forward_resize(self, width: int, height: int) -> None:
         """Forward a resize event to the server.

@@ -660,7 +660,9 @@ class MatplotlibWebSocketClient:
         x: float,
         y: float,
         button: int | None = None,
+        buttons: int | None = None,
         step: int | None = None,
+        modifiers: list[str] | None = None,
     ) -> None:
         """Send mouse event to server.
 
@@ -676,9 +678,15 @@ class MatplotlibWebSocketClient:
         y : float
             Y coordinate
         button : int, optional
-            Mouse button (1=left, 2=middle, 3=right)
+            Mouse button (0=left, 1=middle, 2=right in wire protocol).
+        buttons : int, optional
+            Bitmask of currently pressed buttons (JS ``MouseEvent.buttons``
+            convention: 1=left, 2=right, 4=middle, 8=back, 16=forward).
+            Only meaningful for ``motion_notify`` events.
         step : int, optional
             Scroll step (for scroll events)
+        modifiers : list of str, optional
+            Active modifier keys (e.g. ``["ctrl", "shift"]``).
         """
         if not self._initialized:
             raise RuntimeError("Client not initialized. Use connect() context manager.")
@@ -686,8 +694,12 @@ class MatplotlibWebSocketClient:
         msg: dict[str, Any] = {"type": event_type, "x": x, "y": y}
         if button is not None:
             msg["button"] = button
+        if buttons is not None:
+            msg["buttons"] = buttons
         if step is not None:
             msg["step"] = step
+        if modifiers is not None:
+            msg["modifiers"] = modifiers
 
         self.adapter.send_json(msg)
         # Don't log motion events to reduce noise

@@ -437,6 +437,8 @@ export interface ButtonPressMessage extends BaseMessage {
   x: number;
   y: number;
   button: number;
+  buttons: number;
+  modifiers: string[];
   guiEvent?: Record<string, unknown>;
 }
 
@@ -447,6 +449,8 @@ export interface MotionNotifyMessage extends BaseMessage {
   type: 'motion_notify';
   x: number;
   y: number;
+  buttons: number;
+  modifiers: string[];
   guiEvent?: Record<string, unknown>;
 }
 
@@ -458,6 +462,8 @@ export interface ButtonReleaseMessage extends BaseMessage {
   x: number;
   y: number;
   button: number;
+  buttons: number;
+  modifiers: string[];
   guiEvent?: Record<string, unknown>;
 }
 
@@ -469,6 +475,8 @@ export interface ScrollMessage extends BaseMessage {
   x: number;
   y: number;
   step: number;
+  buttons: number;
+  modifiers: string[];
   guiEvent?: Record<string, unknown>;
 }
 

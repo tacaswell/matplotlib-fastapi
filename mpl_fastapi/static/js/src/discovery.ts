@@ -30,7 +30,7 @@ import type { PlotsListResponse } from './types.js';
  */
 export async function listPlots(
   baseUrl: string,
-  token?: string,
+  token?: string
 ): Promise<PlotsListResponse> {
   const headers: Record<string, string> = {};
   if (token) {
@@ -41,9 +41,7 @@ export async function listPlots(
   const response = await fetch(url, { headers });
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to list plots: ${response.status} ${response.statusText}`,
-    );
+    throw new Error(`Failed to list plots: ${response.status} ${response.statusText}`);
   }
 
   return (await response.json()) as PlotsListResponse;

@@ -44,7 +44,9 @@ export class WebSocketManager {
   private readonly errorHandlers: Array<(event: Event) => void>;
 
   // Reconnection handlers
-  private readonly reconnectingHandlers: Array<(attempt: number, maxAttempts: number) => void>;
+  private readonly reconnectingHandlers: Array<
+    (attempt: number, maxAttempts: number) => void
+  >;
   private readonly reconnectedHandlers: Array<() => void>;
   private readonly reconnectFailedHandlers: Array<() => void>;
 
@@ -277,9 +279,7 @@ export class WebSocketManager {
 
     if (this._reconnectAttempt > maxAttempts) {
       // All attempts exhausted
-      console.warn(
-        `WebSocketManager: reconnect failed after ${maxAttempts} attempts`
-      );
+      console.warn(`WebSocketManager: reconnect failed after ${maxAttempts} attempts`);
       this._reconnectAttempt = 0;
       this.reconnectFailedHandlers.forEach((handler) => handler());
       return;
