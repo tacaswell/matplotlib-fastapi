@@ -112,7 +112,7 @@ def server_url() -> str:
         raise RuntimeError("Server did not start in time")
 
     # Get the actual port
-    sockets = server.servers[0].sockets  # type: ignore[union-attr]
+    sockets = server.servers[0].sockets
     actual_port = sockets[0].getsockname()[1]
     yield f"ws://{host}:{actual_port}/plots"
 

@@ -704,7 +704,7 @@ def compose_lifespans(
                 async with first(app), compose_lifespans(*rest)(app):
                     yield
 
-    return composed  # type: ignore[return-value]
+    return composed
 
 
 def _mpl_lifespan() -> Lifespan:
@@ -722,7 +722,7 @@ def _mpl_lifespan() -> Lifespan:
         yield
         shutdown_figure_executor()
 
-    return lifespan  # type: ignore[return-value]
+    return lifespan
 
 
 def install_mpl_router(

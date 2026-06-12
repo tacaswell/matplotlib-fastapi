@@ -44,13 +44,13 @@ from matplotlib.backend_bases import (
     CloseEvent,
     ResizeEvent,
 )
-from matplotlib.backends.backend_qt import (  # type: ignore[import-untyped]
+from matplotlib.backends.backend_qt import (
     FigureCanvasQT,
     FigureManagerQT,
     MainWindow,
     NavigationToolbar2QT,
 )
-from matplotlib.backends.qt_compat import (  # type: ignore[import-untyped]
+from matplotlib.backends.qt_compat import (  # type: ignore[attr-defined]
     QtCore,
     QtGui,
     QtWidgets,
@@ -192,7 +192,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
       thread via ``run_coroutine_threadsafe``.
     """
 
-    toolbar: NavigationToolbar2QTRemote  # type: ignore[assignment]
+    toolbar: NavigationToolbar2QTRemote
     manager_class = property(lambda self: FigureManagerQTRemote)  # noqa: ARG005
 
     def __init__(
@@ -292,7 +292,7 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
             data, img.width, img.height, QtGui.QImage.Format.Format_RGBA8888
         )
         # Keep a reference to *data* so it isn't GC'd while qimage exists
-        qimage._mpl_data_ref = data  # type: ignore[attr-defined]
+        qimage._mpl_data_ref = data
         qimage.setDevicePixelRatio(self.devicePixelRatioF() or 1)
         self._remote_qpixmap = QtGui.QPixmap.fromImage(qimage)
 
@@ -481,7 +481,7 @@ class NavigationToolbar2QTRemote(RemoteNavigationToolbar2, NavigationToolbar2QT)
     (rubberband drawing, status label, save dialogs) are defined here.
     """
 
-    canvas: FigureCanvasQTRemote  # type: ignore[assignment]
+    canvas: FigureCanvasQTRemote
 
     def __init__(
         self,
@@ -954,8 +954,8 @@ class FigureManagerQTRemote(FigureManagerQT):
     * Cleaning up the transport thread on window close.
     """
 
-    canvas: FigureCanvasQTRemote  # type: ignore[assignment]
-    toolbar: NavigationToolbar2QTRemote  # type: ignore[assignment]
+    canvas: FigureCanvasQTRemote
+    toolbar: NavigationToolbar2QTRemote
 
     # Prevent FigureManagerBase.__init__ from creating a default toolbar;
     # we create our own NavigationToolbar2QTRemote below.
@@ -972,7 +972,7 @@ class FigureManagerQTRemote(FigureManagerQT):
         self.window.closing.connect(self._widgetclosed)
 
         # Create our custom toolbar
-        self.toolbar = NavigationToolbar2QTRemote(canvas, self.window)  # type: ignore[assignment]
+        self.toolbar = NavigationToolbar2QTRemote(canvas, self.window)
         self.window.addToolBar(self.toolbar)
         if self.toolbar is not None:
             tbs_height = self.toolbar.sizeHint().height()
@@ -1244,14 +1244,14 @@ def open_remote_figures(
     managers: list[FigureManagerQTRemote] = []
     for spec in specs:
         if len(spec) == 2:
-            url, plot_name = spec  # type: ignore[misc]
+            url, plot_name = spec
             init_params: dict[str, Any] | None = None
             update_params: dict[str, Any] | None = None
         elif len(spec) == 3:
-            url, plot_name, init_params = spec  # type: ignore[misc]
+            url, plot_name, init_params = spec
             update_params = None
         else:
-            url, plot_name, init_params, update_params = spec  # type: ignore[misc]
+            url, plot_name, init_params, update_params = spec
 
         try:
             mgr = open_remote_figure(
@@ -1438,8 +1438,6 @@ class FigureLauncherWindow(QtWidgets.QMainWindow):
 
     def _show_version_dialog(self) -> None:
         """Open a modal dialog showing local and remote version info."""
-        from matplotlib.backends.qt_compat import QtCore
-
         qt_binding = (
             QtCore.__package__.split(".")[0]
             if hasattr(QtCore, "__package__")

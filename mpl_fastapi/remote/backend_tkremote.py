@@ -50,7 +50,7 @@ from matplotlib.backend_bases import (
     CloseEvent,
     ResizeEvent,
 )
-from matplotlib.backends._backend_tk import (  # type: ignore[import-untyped]
+from matplotlib.backends._backend_tk import (
     FigureCanvasTk,
     NavigationToolbar2Tk,
 )
@@ -355,7 +355,7 @@ class FigureCanvasTkRemote(FigureCanvasRemote, FigureCanvasTk):
         Parent window for the canvas widget.
     """
 
-    toolbar: NavigationToolbar2TkRemote  # type: ignore[assignment]
+    toolbar: NavigationToolbar2TkRemote
 
     def __init__(
         self,
@@ -588,7 +588,7 @@ class NavigationToolbar2TkRemote(RemoteNavigationToolbar2, NavigationToolbar2Tk)
     (rubberband drawing, status label, save dialogs) are defined here.
     """
 
-    canvas: FigureCanvasTkRemote  # type: ignore[assignment]
+    canvas: FigureCanvasTkRemote
 
     def __init__(
         self,
@@ -944,7 +944,7 @@ class FigureManagerTkRemote:
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         # Associate toolbar with canvas for message dispatch.
-        canvas.toolbar = self.toolbar  # type: ignore[assignment]
+        canvas.toolbar = self.toolbar
 
         # Create update parameters panel if the server supports it.
         self.update_frame: UpdateParametersFrame | None = None
@@ -1167,14 +1167,14 @@ def open_remote_figures(
     managers: list[FigureManagerTkRemote] = []
     for spec in specs:
         if len(spec) == 2:
-            url, plot_name = spec  # type: ignore[misc]
+            url, plot_name = spec
             init_params: dict[str, Any] | None = None
             update_params: dict[str, Any] | None = None
         elif len(spec) == 3:
-            url, plot_name, init_params = spec  # type: ignore[misc]
+            url, plot_name, init_params = spec
             update_params = None
         else:
-            url, plot_name, init_params, update_params = spec  # type: ignore[misc]
+            url, plot_name, init_params, update_params = spec
 
         window = tk.Toplevel(root)
         window.withdraw()
@@ -1251,7 +1251,7 @@ def run_tk_app(
     # Walk up to the Tk root.
     root = first_window
     while isinstance(root, tk.Toplevel):
-        root = root.master  # type: ignore[assignment]
+        root = root.master
     root.mainloop()
 
 
@@ -1690,12 +1690,12 @@ class FigureLauncherWindow(tk.Toplevel):
         if self._tk_root is not None:
             self._tk_root.destroy()
 
-    def mainloop(self, n: int = 0) -> None:  # type: ignore[override]
+    def mainloop(self, n: int = 0) -> None:
         """Enter the Tk event loop (convenience for standalone use)."""
         if self._tk_root is not None:
             self._tk_root.mainloop(n)
         else:
-            super().mainloop()  # type: ignore[call-arg]
+            super().mainloop()
 
 
 def open_launcher(

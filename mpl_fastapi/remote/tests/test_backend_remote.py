@@ -654,7 +654,7 @@ class TestPrintFigure:
         canvas = FigureCanvasRemote(fig, transport, config)
 
         with pytest.raises(ValueError, match="file-like"):
-            canvas.print_figure(io.BytesIO())  # type: ignore[arg-type]
+            canvas.print_figure(io.BytesIO())
 
     def test_registers_pending_callback(self) -> None:
         fig = Figure()

@@ -16,7 +16,7 @@ import io
 import struct
 import threading
 import time
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -24,6 +24,7 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 from PIL import Image
 from pydantic import BaseModel, Field
 from PySide6 import QtWidgets
@@ -140,7 +141,7 @@ def _update_simple_figure(
     x = state["x"]
     value = state["value"]
     y = np.sin(np.asarray(x) * float(value) + params.phase)  # type: ignore[arg-type]
-    state["line"].set_ydata(y)  # type: ignore[union-attr]
+    cast(Line2D, state["line"]).set_ydata(y)
     return state
 
 
@@ -190,7 +191,7 @@ def server_url() -> str:
     else:
         raise RuntimeError("Server did not start in time")
 
-    sockets = server.servers[0].sockets  # type: ignore[union-attr]
+    sockets = server.servers[0].sockets
     actual_port = sockets[0].getsockname()[1]
     return f"ws://127.0.0.1:{actual_port}/plots"
 

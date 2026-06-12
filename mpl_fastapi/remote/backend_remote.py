@@ -77,7 +77,7 @@ class FigureCanvasRemote(FigureCanvasBase):
     _remote_image: Image.Image | None
     _transport: RemoteTransport
     _server_config: ServerConfig
-    toolbar: RemoteNavigationToolbar2 | None  # type: ignore[assignment]
+    toolbar: RemoteNavigationToolbar2 | None
 
     # Rubberband state (set by server "rubberband" messages)
     _rubberband_rect: tuple[float, float, float, float] | None
@@ -690,7 +690,7 @@ class FigureCanvasRemote(FigureCanvasBase):
                 "Remote print_figure does not support file-like objects; "
                 "pass a file path instead."
             )
-        path = Path(filename)  # type: ignore[arg-type]
+        path = Path(filename)
 
         # Resolve format
         if format is None:
@@ -707,7 +707,7 @@ class FigureCanvasRemote(FigureCanvasBase):
         if dpi == "figure":
             resolved_dpi = float(getattr(self.figure, "_original_dpi", self.figure.dpi))
         else:
-            resolved_dpi = float(dpi)  # type: ignore[arg-type]
+            resolved_dpi = float(dpi)
 
         # Register a callback so _on_json_message routes save_complete here
         def on_complete(msg: dict[str, Any]) -> None:
@@ -795,7 +795,7 @@ class RemoteNavigationToolbar2(NavigationToolbar2):
     because there are no local axes to manipulate.
     """
 
-    canvas: FigureCanvasRemote  # type: ignore[assignment]
+    canvas: FigureCanvasRemote
 
     # Keep the standard toolitems but drop Subplots / Customize
     # (those require local axes which we don't have).
@@ -1192,12 +1192,12 @@ class FigureManagerRemote(FigureManagerBase):
     management, toolbar wiring, and lifecycle handling.
     """
 
-    canvas: FigureCanvasRemote  # type: ignore[assignment]
-    toolbar: RemoteNavigationToolbar2  # type: ignore[assignment]
+    canvas: FigureCanvasRemote
+    toolbar: RemoteNavigationToolbar2
 
     def __init__(self, canvas: FigureCanvasRemote, num: int) -> None:
         super().__init__(canvas, num)
-        self.toolbar = RemoteNavigationToolbar2(canvas)  # type: ignore[assignment]
+        self.toolbar = RemoteNavigationToolbar2(canvas)
 
     def destroy(self) -> None:
         """Disconnect the transport and clean up."""
