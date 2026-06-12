@@ -1,5 +1,8 @@
 """Tests for pluggable authentication in mpl_fastapi."""
 
+from collections.abc import Callable
+from typing import Any
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -342,14 +345,14 @@ class TestCustomAuthPolicy:
         calls: list[str] = []
 
         class RecordingAuth:
-            def http_dependency(self):
-                async def _dep():
+            def http_dependency(self) -> Callable[..., Any]:
+                async def _dep() -> None:
                     calls.append("http")
 
                 return _dep
 
-            def ws_dependency(self):
-                async def _dep():
+            def ws_dependency(self) -> Callable[..., Any]:
+                async def _dep() -> None:
                     calls.append("ws")
 
                 return _dep

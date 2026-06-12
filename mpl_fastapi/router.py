@@ -23,7 +23,7 @@ import os
 import struct
 import uuid
 from collections import defaultdict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -779,7 +779,7 @@ def install_mpl_router(
 
 
 def create_mpl_router(
-    plot_generators: dict[str, PlotConfig],
+    plot_generators: Mapping[str, PlotConfig],
     *,
     template_dir: Path | str | None = None,
     static_mount_path: str = "/mpl-static",
@@ -791,7 +791,7 @@ def create_mpl_router(
 
     Parameters
     ----------
-    plot_generators : dict[str, PlotConfig]
+    plot_generators : Mapping[str, PlotConfig]
         Mapping of plot names to PlotConfig objects.
         Each PlotConfig contains:
         - description: Human-readable description

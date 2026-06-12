@@ -1,9 +1,12 @@
 """Pytest fixtures and configuration for mpl_fastapi tests."""
 
+from typing import cast
+
 import numpy as np
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from matplotlib.backend_bases import MouseEvent
 from matplotlib.figure import Figure
 from pydantic import BaseModel, Field
 
@@ -181,12 +184,14 @@ def create_interactive_plot(fig: Figure, params: SimpleParams) -> dict[str, obje
     }
 
     # Callback for button press events
-    def on_button_press(event):
-        if event.inaxes == ax:
-            state["click_count"] += 1
-            state["last_click_pos"] = (event.xdata, event.ydata)
+    def on_button_press(event: MouseEvent) -> None:
+        if event.inaxes == ax and event.xdata is not None and event.ydata is not None:
+            x_data: float = event.xdata
+            y_data: float = event.ydata
+            state["click_count"] = cast(int, state["click_count"]) + 1
+            state["last_click_pos"] = (x_data, y_data)
             # Update marker position to show the click
-            marker.set_data([event.xdata], [event.ydata])
+            marker.set_data([x_data], [y_data])
             # Update title to show click count
             ax.set_title(f"Interactive Test Plot (clicks: {state['click_count']})")
             fig.canvas.draw_idle()

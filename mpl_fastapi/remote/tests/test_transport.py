@@ -10,6 +10,7 @@ import asyncio
 import io
 import threading
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
@@ -90,7 +91,7 @@ def _make_test_app() -> FastAPI:
 
 
 @pytest.fixture(scope="module")
-def server_url() -> str:
+def server_url() -> Iterator[str]:
     """Start a real uvicorn server and return its base URL."""
     app = _make_test_app()
     host = "127.0.0.1"

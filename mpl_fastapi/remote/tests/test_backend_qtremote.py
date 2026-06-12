@@ -64,7 +64,7 @@ from mpl_fastapi.ws_client import ImageFormat, ImageTypeMode
 
 def _make_server_config(**overrides: Any) -> ServerConfig:
     """Create a ServerConfig with sensible defaults."""
-    defaults = {
+    defaults: dict[str, Any] = {
         "connection_id": "test-conn-1",
         "protocol_version": 1,
         "figure_size": (640, 480),

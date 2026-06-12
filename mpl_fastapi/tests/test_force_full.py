@@ -53,7 +53,7 @@ class SimpleForcefulParams(BaseModel):
     value: float = 1.0
 
 
-def _make_simple_plot(fig: Figure, params: SimpleForcefulParams):
+def _make_simple_plot(fig: Figure, params: SimpleForcefulParams) -> dict[str, object]:
     ax = fig.add_subplot(111)
     ax.plot([0, 1], [0, params.value])
     return {"ax": ax, "params": params}

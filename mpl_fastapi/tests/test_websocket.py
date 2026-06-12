@@ -18,6 +18,7 @@ Test coverage includes:
 import io
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from PIL import Image
 from starlette.websockets import WebSocketDisconnect
@@ -779,7 +780,7 @@ class TestInteractiveCallbacks:
     """Tests that verify matplotlib callbacks are actually invoked by events."""
 
     def test_button_press_triggers_callback_byte_for_byte(
-        self, test_app_with_interactive
+        self, test_app_with_interactive: FastAPI
     ) -> None:
         """Test button press event triggers callback with image pixel comparison.
 
@@ -912,7 +913,9 @@ class TestInteractiveCallbacks:
 
                 raise
 
-    def test_double_click_event_byte_for_byte(self, test_app_with_interactive) -> None:
+    def test_double_click_event_byte_for_byte(
+        self, test_app_with_interactive: FastAPI
+    ) -> None:
         """Test double-click event with pixel comparison."""
         from pathlib import Path
 
@@ -1022,7 +1025,9 @@ class TestInteractiveCallbacks:
 
                 raise
 
-    def test_scroll_event_byte_for_byte(self, test_app_with_interactive) -> None:
+    def test_scroll_event_byte_for_byte(
+        self, test_app_with_interactive: FastAPI
+    ) -> None:
         """Test scroll event with pixel comparison."""
         from fastapi.testclient import TestClient
         from matplotlib.backend_bases import MouseEvent

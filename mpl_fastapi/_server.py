@@ -22,6 +22,7 @@ import os
 import secrets
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +36,11 @@ from mpl_fastapi.router import (
     create_mpl_router,
     install_mpl_router,
 )
+
+if TYPE_CHECKING:
+    from starlette.middleware.base import RequestResponseEndpoint
+    from starlette.requests import Request
+    from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
 
@@ -125,12 +131,18 @@ def build_app(
     # propagate the token for subsequent navigations.
     # Only add this middleware if auth is SingleUserToken (which has a token attribute).
     if isinstance(auth, SingleUserToken):
+        # Bind the token to a local so the closure below sees a plain ``str``
+        # rather than ``AuthPolicy | None`` (mypy drops the isinstance
+        # narrowing across the nested-class method boundary).
+        expected_token = auth.token
 
         class _TokenCookieMiddleware(BaseHTTPMiddleware):
-            async def dispatch(self, request, call_next):
+            async def dispatch(
+                self, request: Request, call_next: RequestResponseEndpoint
+            ) -> Response:
                 response = await call_next(request)
                 token = request.query_params.get("token")
-                if token and secrets.compare_digest(token, auth.token):
+                if token and secrets.compare_digest(token, expected_token):
                     response.set_cookie(
                         key=COOKIE_NAME,
                         value=token,
