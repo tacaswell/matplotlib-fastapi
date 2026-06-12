@@ -337,9 +337,11 @@ class TestFigureCanvasQTRemoteEvents:
         canvas = FigureCanvasQTRemote(fig, transport, config)
         qtbot.addWidget(canvas)
 
-        # Before showing: the canvas has the handshake DPR (1.0)
+        # Before showing: the canvas has the handshake DPR (1.0).
+        # ``Figure._original_dpi`` is a private matplotlib attribute (set
+        # internally for HiDPI bookkeeping) that is absent from the stubs.
         assert canvas.device_pixel_ratio == 1.0
-        assert fig._original_dpi == 100.0
+        assert fig._original_dpi == 100.0  # type: ignore[attr-defined]
 
         # Show the canvas.  On the test machine (DPR=2), showEvent fires
         # _update_pixel_ratio() which detects the real screen DPR and
@@ -354,7 +356,7 @@ class TestFigureCanvasQTRemoteEvents:
             # The DPR changed on show — verify the message was sent
             assert canvas.device_pixel_ratio == screen_dpr
             assert fig.dpi == 100.0 * screen_dpr
-            assert fig._original_dpi == 100.0
+            assert fig._original_dpi == 100.0  # type: ignore[attr-defined]
             calls = transport.send_json.call_args_list
             dpr_msgs = [
                 c for c in calls if c[0][0].get("type") == "set_device_pixel_ratio"
@@ -374,7 +376,7 @@ class TestFigureCanvasQTRemoteEvents:
 
         assert canvas.device_pixel_ratio == target_dpr
         assert fig.dpi == 100.0 * target_dpr
-        assert fig._original_dpi == 100.0
+        assert fig._original_dpi == 100.0  # type: ignore[attr-defined]
 
         calls = transport.send_json.call_args_list
         dpr_msgs = [c for c in calls if c[0][0].get("type") == "set_device_pixel_ratio"]

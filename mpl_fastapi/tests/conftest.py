@@ -196,8 +196,9 @@ def create_interactive_plot(fig: Figure, params: SimpleParams) -> dict[str, obje
             ax.set_title(f"Interactive Test Plot (clicks: {state['click_count']})")
             fig.canvas.draw_idle()
 
-    # Register the callback
-    fig.canvas.mpl_connect("button_press_event", on_button_press)
+    # Register the callback.  mpl types the callback as Callable[[Event], Any]
+    # even though "button_press_event" always delivers a MouseEvent.
+    fig.canvas.mpl_connect("button_press_event", on_button_press)  # type: ignore[arg-type]
 
     return state
 

@@ -413,15 +413,17 @@ class FigureCanvasRemote(FigureCanvasBase):
         wire_x = event.x
         wire_y = self.figure.bbox.height - event.y
 
-        modifiers = list(event.modifiers) if event.modifiers else []
+        # ``MouseEvent.modifiers``/``buttons`` exist at runtime (matplotlib
+        # >=3.6) but are missing from matplotlib's type stubs.
+        modifiers = list(event.modifiers) if event.modifiers else []  # type: ignore[attr-defined]
 
         if event.name == "motion_notify_event":
             # Convert the mpl ``buttons`` frozenset to the JS bitmask
             # convention used by the wire protocol.
             buttons_bitmask = 0
             _MPL_BUTTON_TO_JS_MASK = {1: 1, 3: 2, 2: 4, 8: 8, 9: 16}
-            if event.buttons:
-                for btn in event.buttons:
+            if event.buttons:  # type: ignore[attr-defined]
+                for btn in event.buttons:  # type: ignore[attr-defined]
                     buttons_bitmask |= _MPL_BUTTON_TO_JS_MASK.get(int(btn), 0)
             self._forward_motion_notify(
                 wire_x, wire_y, buttons=buttons_bitmask, modifiers=modifiers

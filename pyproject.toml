@@ -159,6 +159,13 @@ no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 
+# PySide6 ships no type stubs / py.typed marker, so mypy cannot analyse it.
+# Silence the "missing library stubs" import errors for the Qt remote client.
+[[tool.mypy.overrides]]
+module = ["PySide6", "PySide6.*"]
+ignore_missing_imports = true
+follow_untyped_imports = true
+
 [tool.pyright]
 pythonVersion = "3.12"
 venvPath = ".pixi/envs"

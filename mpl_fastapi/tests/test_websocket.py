@@ -20,6 +20,7 @@ import io
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from matplotlib.backend_bases import MouseButton
 from PIL import Image
 from starlette.websockets import WebSocketDisconnect
 
@@ -852,7 +853,7 @@ class TestInteractiveCallbacks:
                 local_canvas,
                 click_x,
                 local_y,
-                button=1,
+                button=MouseButton.LEFT,
             )
             # Process the event through matplotlib
             mouse_event._process()  # type: ignore[attr-defined]
@@ -980,7 +981,7 @@ class TestInteractiveCallbacks:
                 local_canvas,
                 click_x,
                 local_y,
-                button=1,
+                button=MouseButton.LEFT,
                 dblclick=True,
             )
             dbl_click_event._process()  # type: ignore[attr-defined]
