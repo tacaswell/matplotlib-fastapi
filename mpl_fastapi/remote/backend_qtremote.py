@@ -204,9 +204,10 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
         # Accept either a bare RemoteTransport (unit-testing with mocks)
         # or a TransportThread (production).  When a thread is given we
         # extract the transport *and* wire its Qt signals.
+        transport_thread: TransportThread | None
         if isinstance(transport, TransportThread):
-            transport_thread: TransportThread | None = transport
-            transport = transport_thread.transport
+            transport_thread = transport
+            transport = transport.transport
         else:
             transport_thread = None
 
@@ -467,7 +468,14 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
 # ---------------------------------------------------------------------------
 
 
-class NavigationToolbar2QTRemote(RemoteNavigationToolbar2, NavigationToolbar2QT):
+class NavigationToolbar2QTRemote(  # type: ignore[misc]
+    # mpl's RemoteNavigationToolbar2 and NavigationToolbar2QT each declare
+    # ``toolitems`` with a different (but compatible-in-practice) element
+    # type; the conflict is inside matplotlib's own class hierarchy, so we
+    # suppress the diamond-inheritance complaint here.
+    RemoteNavigationToolbar2,
+    NavigationToolbar2QT,
+):
     """Qt toolbar that sends navigation commands to the remote server.
 
     Button presses (pan, zoom, home, …) are forwarded to the server via
@@ -1064,7 +1072,7 @@ class FigureManagerQTRemote(FigureManagerQT):
         self.window.resize(width + extra_width, height + extra_height)
 
     def get_window_title(self) -> str:
-        return self.window.windowTitle()
+        return str(self.window.windowTitle())
 
     def set_window_title(self, title: str) -> None:
         self.window.setWindowTitle(title)

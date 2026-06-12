@@ -1172,6 +1172,7 @@ class TestFigureManagerQTRemoteUpdateWidget:
         qtbot.waitExposed(manager.window)
 
         # The dock widget should be a child of the main window
+        assert manager.update_widget is not None
         assert manager.update_widget.parent() is manager.window
 
     def test_destroy_cleans_up_update_widget(self, qtbot: Any) -> None:

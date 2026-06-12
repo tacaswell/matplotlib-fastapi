@@ -493,7 +493,7 @@ class FigureCanvasRemote(FigureCanvasBase):
             return
         # Convert y from mpl coords (origin bottom) to wire coords (origin top)
         x = event.x or 0
-        y = event.y or 0
+        y: float = event.y or 0
         fig = self.figure
         if fig is not None:
             y = fig.bbox.height - y
@@ -1082,7 +1082,7 @@ def fetch_watermark(
 
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read())
+            return cast("dict[str, str]", json.loads(resp.read()))
     except Exception:
         logger.debug("Could not fetch watermark from %s", url, exc_info=True)
         return {}

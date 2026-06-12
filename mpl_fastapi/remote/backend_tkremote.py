@@ -574,7 +574,14 @@ class FigureCanvasTkRemote(FigureCanvasRemote, FigureCanvasTk):
 # ---------------------------------------------------------------------------
 
 
-class NavigationToolbar2TkRemote(RemoteNavigationToolbar2, NavigationToolbar2Tk):
+class NavigationToolbar2TkRemote(  # type: ignore[misc]
+    # mpl's RemoteNavigationToolbar2 and NavigationToolbar2Tk each declare
+    # ``message`` with a slightly different type; the conflict lives inside
+    # matplotlib's own class hierarchy, so suppress the diamond-inheritance
+    # complaint here.
+    RemoteNavigationToolbar2,
+    NavigationToolbar2Tk,
+):
     """Tk toolbar that sends navigation commands to the remote server.
 
     Button presses (pan, zoom, home, …) are forwarded to the server via
@@ -589,6 +596,10 @@ class NavigationToolbar2TkRemote(RemoteNavigationToolbar2, NavigationToolbar2Tk)
     """
 
     canvas: FigureCanvasTkRemote
+
+    #: Filesystem path chosen in the save dialog, awaiting the server's
+    #: response; ``None`` when no save is in flight.
+    _pending_save_path: str | None = None
 
     def __init__(
         self,
@@ -826,6 +837,11 @@ class UpdateParametersFrame(ttk.Frame):
         prop_type = prop.get("type", "string")
         default = prop.get("default")
 
+        # ``var``/``widget`` are rebound to different concrete Tk types in
+        # each branch below, so type them by their common base classes.
+        var: tk.Variable
+        widget: tk.Widget
+
         if prop_type in ("number", "integer"):
             var = tk.DoubleVar(value=float(default) if default is not None else 0.0)
             minimum = prop.get("minimum", prop.get("exclusiveMinimum", -1e9))
@@ -995,7 +1011,7 @@ class FigureManagerTkRemote:
         self._window.title(title)
 
     def get_window_title(self) -> str:
-        return self._window.title()
+        return str(self._window.title())
 
     def resize(self, width: int, height: int) -> None:
         """Resize the window.
@@ -1545,10 +1561,10 @@ class FigureLauncherWindow(tk.Toplevel):
         """Run in background thread — fetch plot list and post result."""
         try:
             plots = list_remote_figures(self._base_url, token=self._token)
-            self.after(0, lambda p=plots: self._on_discovery_finished(p))
+            self.after(0, lambda: self._on_discovery_finished(plots))
         except Exception as exc:
             msg = str(exc)
-            self.after(0, lambda m=msg: self._on_discovery_error(m))
+            self.after(0, lambda: self._on_discovery_error(msg))
 
     def _on_discovery_finished(self, plots: list[RemotePlotInfo]) -> None:
         self._plots = plots
