@@ -19,15 +19,22 @@ extensions = [
     "sphinxcontrib.mermaid",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
-    'sphinx.ext.intersphinx',
-    'sphinx_js',
-    'numpydoc',  # Needs to be loaded *after* autodoc.
-    'sphinxcontrib.openapi',
+    "sphinx.ext.intersphinx",
+    "sphinx_js",
+    "numpydoc",  # Needs to be loaded *after* autodoc.
+    "sphinxcontrib.openapi",
 ]
-js_language = 'typescript'
-js_source_path = '../../mpl_fastapi/static/js/src'
+js_language = "typescript"
+js_source_path = "../../mpl_fastapi/static/js/src"
 templates_path = ["_templates"]
 exclude_patterns = []
+
+# -- Autosummary configuration -----------------------------------------------
+autosummary_generate = True  # Generate stub files automatically
+
+# -- Numpydoc configuration --------------------------------------------------
+# Don't create a toctree for class members (which causes stub file warnings)
+numpydoc_class_members_toctree = False
 
 
 # -- Options for HTML output -------------------------------------------------
