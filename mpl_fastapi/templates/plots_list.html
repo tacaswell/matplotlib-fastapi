@@ -255,7 +255,16 @@
                                 {% endif %}
                             </div>
                             {% endif %}
-                            {% if param_info.enum %}
+                            {% if param_info.type == 'boolean' %}
+                            {# Render a checkbox for boolean fields #}
+                            <input
+                                type="checkbox"
+                                name="{{ param_name }}"
+                                class="parameter-input"
+                                {% if param_info.default %}checked{% endif %}
+                                style="width: auto; height: 20px; cursor: pointer; margin-top: 8px;"
+                            >
+                            {% elif param_info.enum %}
                             {# Render a dropdown for enum fields #}
                             <select
                                 name="{{ param_name }}"
@@ -267,6 +276,39 @@
                                 </option>
                                 {% endfor %}
                             </select>
+                            {% elif param_info.format == 'color' %}
+                            {# Render a color picker for color fields #}
+                            <input
+                                type="color"
+                                name="{{ param_name }}"
+                                class="parameter-input"
+                                value="{% if param_info.default is defined %}{{ param_info.default }}{% else %}#000000{% endif %}"
+                                style="height: 40px; cursor: pointer;"
+                            >
+                            {% elif param_info.format == 'date' %}
+                            {# Render a date picker for date fields #}
+                            <input
+                                type="date"
+                                name="{{ param_name }}"
+                                class="parameter-input"
+                                value="{% if param_info.default is defined %}{{ param_info.default }}{% endif %}"
+                            >
+                            {% elif param_info.format == 'time' %}
+                            {# Render a time picker for time fields #}
+                            <input
+                                type="time"
+                                name="{{ param_name }}"
+                                class="parameter-input"
+                                value="{% if param_info.default is defined %}{{ param_info.default }}{% endif %}"
+                            >
+                            {% elif param_info.format == 'date-time' %}
+                            {# Render a datetime picker for datetime fields #}
+                            <input
+                                type="datetime-local"
+                                name="{{ param_name }}"
+                                class="parameter-input"
+                                value="{% if param_info.default is defined %}{{ param_info.default | replace('T', 'T') | replace('Z', '') | slice(0, 16) }}{% endif %}"
+                            >
                             {% else %}
                             {# Render a text or number input for non-enum fields #}
                             <input

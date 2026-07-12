@@ -84,6 +84,87 @@ function SchemaForm({
           );
         }
 
+        if (prop.format === 'color') {
+          return (
+            <div key={name} style={{ marginBottom: 8 }}>
+              <label style={{ display: 'block', marginBottom: 4 }}>
+                {label}
+                {desc && (
+                  <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>
+                )}
+              </label>
+              <input
+                type="color"
+                value={String(values[name] ?? prop.default ?? '#000000')}
+                onChange={(e) => onChange(name, e.target.value)}
+                style={{
+                  padding: '4px 8px',
+                  width: '100%',
+                  height: '40px',
+                  cursor: 'pointer',
+                }}
+              />
+            </div>
+          );
+        }
+
+        if (prop.format === 'date') {
+          return (
+            <div key={name} style={{ marginBottom: 8 }}>
+              <label style={{ display: 'block', marginBottom: 4 }}>
+                {label}
+                {desc && (
+                  <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>
+                )}
+              </label>
+              <input
+                type="date"
+                value={String(values[name] ?? prop.default ?? '')}
+                onChange={(e) => onChange(name, e.target.value)}
+                style={{ padding: '4px 8px', width: '100%' }}
+              />
+            </div>
+          );
+        }
+
+        if (prop.format === 'time') {
+          return (
+            <div key={name} style={{ marginBottom: 8 }}>
+              <label style={{ display: 'block', marginBottom: 4 }}>
+                {label}
+                {desc && (
+                  <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>
+                )}
+              </label>
+              <input
+                type="time"
+                value={String(values[name] ?? prop.default ?? '')}
+                onChange={(e) => onChange(name, e.target.value)}
+                style={{ padding: '4px 8px', width: '100%' }}
+              />
+            </div>
+          );
+        }
+
+        if (prop.format === 'date-time') {
+          return (
+            <div key={name} style={{ marginBottom: 8 }}>
+              <label style={{ display: 'block', marginBottom: 4 }}>
+                {label}
+                {desc && (
+                  <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>
+                )}
+              </label>
+              <input
+                type="datetime-local"
+                value={String(values[name] ?? prop.default ?? '').slice(0, 16)}
+                onChange={(e) => onChange(name, e.target.value)}
+                style={{ padding: '4px 8px', width: '100%' }}
+              />
+            </div>
+          );
+        }
+
         if (prop.type === 'number' || prop.type === 'integer') {
           return (
             <div key={name} style={{ marginBottom: 8 }}>
