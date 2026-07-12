@@ -31,6 +31,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from mpl_fastapi import __version__
 from mpl_fastapi.auth import COOKIE_NAME, AuthPolicy, SingleUserToken
 from mpl_fastapi.router import (
+    Lifespan,
     PlotConfig,
     compose_lifespans,
     create_mpl_router,
@@ -54,6 +55,7 @@ def build_app(
     prefix: str = "/plots",
     auth: AuthPolicy | None = None,
     allowed_origins: list[str] | None = None,
+    lifespan: Lifespan | None = None,
 ) -> FastAPI:
     """Build a fully-configured FastAPI application from a plots mapping.
 
@@ -89,6 +91,12 @@ def build_app(
         access is allowed.  Never pass ``["*"]`` — the cookie-based auth
         token cannot be sent with credentialled wildcard requests and a
         wildcard defeats the purpose of the token entirely.
+
+    lifespan:
+        Optional additional lifespan context manager for custom startup/shutdown
+        logic.  Will be composed with the internal lifespan handlers (figure
+        executor cleanup and URL logging).  Use this to mount additional routes,
+        initialize resources, or perform other startup tasks.
 
     Returns
     -------
@@ -184,9 +192,11 @@ def build_app(
 
     # Compose the logging lifespan with whatever install_mpl_router already
     # set (the figure-executor cleanup lifespan) so all hooks run correctly.
+    # If a user-provided lifespan was passed, compose it in as well.
     existing_lifespan = app.router.lifespan_context
-    app.router.lifespan_context = compose_lifespans(
-        existing_lifespan, _log_urls_lifespan
-    )
+    lifespans_to_compose = [existing_lifespan, _log_urls_lifespan]
+    if lifespan is not None:
+        lifespans_to_compose.append(lifespan)
+    app.router.lifespan_context = compose_lifespans(*lifespans_to_compose)
 
     return app

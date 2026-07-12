@@ -8,46 +8,32 @@ Then visit the URL printed to the console.
 """
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.responses import FileResponse, HTMLResponse
 
 from mpl_fastapi import build_app
 from mpl_fastapi.__main__ import _load_plots
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logging.getLogger('mpl_fastapi').setLevel(logging.DEBUG)
+logging.getLogger("mpl_fastapi").setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
 plots = _load_plots("demos.plots:plots")
-app = build_app(plots)
-
-
-# ---------------------------------------------------------------------------
-# Extra demo routes (home page, embeddable demo, React example)
-# ---------------------------------------------------------------------------
-
-@app.get("/")
-async def home():
-    """Serve the main menu page."""
-    from fastapi.responses import FileResponse
-    return FileResponse(Path(__file__).parent / "index.html", media_type="text/html")
-
-
-@app.get("/embeddable")
-async def embeddable_demo():
-    """Serve the embeddable component demo page."""
-    from fastapi.responses import FileResponse
-    return FileResponse(Path(__file__).parent / "embeddable_demo.html", media_type="text/html")
-
 
 _react_build_path = Path(__file__).parent / "react-example" / "dist"
 
 
-def _mount_react_app() -> None:
-    from fastapi.responses import HTMLResponse
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Handle startup and shutdown events."""
+    # Startup: mount React app
     from starlette.staticfiles import StaticFiles
 
     if _react_build_path.exists():
@@ -58,11 +44,13 @@ def _mount_react_app() -> None:
         )
         logger.info("React app mounted from %s", _react_build_path)
     else:
-        logger.warning("React build not found at %s; serving build instructions", _react_build_path)
+        logger.warning(
+            "React build not found at %s; serving build instructions", _react_build_path
+        )
 
         @app.get("/react-app")
         @app.get("/react-app/{path:path}")
-        async def react_not_built(path: str = ""):  # noqa: ARG001
+        async def react_not_built(path: str = "") -> HTMLResponse:  # noqa: ARG001
             return HTMLResponse(
                 content="""
                 <html>
@@ -87,5 +75,28 @@ npm run build
                 status_code=200,
             )
 
+    yield  # App is running
 
-app.add_event_handler("startup", _mount_react_app)
+    # Shutdown (if needed in the future)
+
+
+app = build_app(plots, lifespan=lifespan)
+
+
+# ---------------------------------------------------------------------------
+# Extra demo routes (home page, embeddable demo)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/")
+async def home() -> FileResponse:
+    """Serve the main menu page."""
+    return FileResponse(Path(__file__).parent / "index.html", media_type="text/html")
+
+
+@app.get("/embeddable")
+async def embeddable_demo() -> FileResponse:
+    """Serve the embeddable component demo page."""
+    return FileResponse(
+        Path(__file__).parent / "embeddable_demo.html", media_type="text/html"
+    )
