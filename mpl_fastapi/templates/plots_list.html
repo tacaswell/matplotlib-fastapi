@@ -144,7 +144,7 @@
 
             let allFilled = true;
             requiredParams.forEach(paramName => {
-                const input = form.querySelector(`input[name="${paramName}"]`);
+                const input = form.querySelector(`input[name="${paramName}"], select[name="${paramName}"]`);
                 if (input && input.value.trim() === '') {
                     allFilled = false;
                 }
@@ -157,11 +157,14 @@
             // Store required params for this plot
             plotRequiredParams[plotName] = requiredParams;
 
-            // Get the form and add input event listeners
+            // Get the form and add input/select event listeners
             const form = document.getElementById(formId);
-            const inputs = form.querySelectorAll('input');
+            const inputs = form.querySelectorAll('input, select');
             inputs.forEach(input => {
                 input.addEventListener('input', () => {
+                    validateForm(plotName, formId, buttonId);
+                });
+                input.addEventListener('change', () => {
                     validateForm(plotName, formId, buttonId);
                 });
             });
@@ -181,8 +184,8 @@
                 params.append('token', token);
             }
 
-            // Collect all input values
-            const inputs = form.querySelectorAll('input');
+            // Collect all input and select values
+            const inputs = form.querySelectorAll('input, select');
             inputs.forEach(input => {
                 const value = input.value.trim();
                 if (value !== '') {
@@ -252,6 +255,20 @@
                                 {% endif %}
                             </div>
                             {% endif %}
+                            {% if param_info.enum %}
+                            {# Render a dropdown for enum fields #}
+                            <select
+                                name="{{ param_name }}"
+                                class="parameter-input"
+                            >
+                                {% for enum_value in param_info.enum %}
+                                <option value="{{ enum_value }}" {% if param_info.default is defined and param_info.default == enum_value %}selected{% endif %}>
+                                    {{ enum_value }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            {% else %}
+                            {# Render a text or number input for non-enum fields #}
                             <input
                                 type="{% if param_info.type == 'number' or param_info.type == 'integer' %}number{% else %}text{% endif %}"
                                 name="{{ param_name }}"
@@ -263,6 +280,7 @@
                                 {% if param_info.exclusiveMinimum is defined %}min="{{ param_info.exclusiveMinimum }}" step="0.01"{% endif %}
                                 {% if param_info.exclusiveMaximum is defined %}max="{{ param_info.exclusiveMaximum }}"{% endif %}
                             >
+                            {% endif %}
                         </label>
                     </div>
                     {% endfor %}

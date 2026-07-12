@@ -10,6 +10,7 @@ Then visit the URL printed to the console.
 """
 
 import numpy as np
+from typing import Literal
 from matplotlib.artist import Artist
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
@@ -153,6 +154,7 @@ def create_lissajous_plot(fig: Figure, params: LissajousParams) -> None:
     ax.set_ylabel("y")
     ax.set_title(f"Lissajous Curve: {params.freq_x}:{params.freq_y}")
 
+
 # ---------------------------------------------------------------------------
 # Polygon editor
 # Copied from https://matplotlib.org/stable/gallery/event_handling/poly_editor.html
@@ -160,6 +162,8 @@ def create_lissajous_plot(fig: Figure, params: LissajousParams) -> None:
 
 
 class PolygonParams(BaseModel): ...
+
+
 def dist_point_to_segment(p, s0, s1):
     """
     Get the distance from the point *p* to the segment (*s0*, *s1*), where
@@ -172,6 +176,7 @@ def dist_point_to_segment(p, s0, s1):
     # Project onto segment, without going past segment ends.
     p1 = s0 + np.clip((s0p @ s01) / (s01 @ s01), 0, 1) * s01
     return np.hypot(*(p - p1))
+
 
 class PolygonInteractor:
     """
@@ -294,7 +299,7 @@ class PolygonInteractor:
                     )
                     self.line.set_data(zip(*self.poly.xy, strict=False))
                     break
-        print(f'{self.line.stale=}')
+        print(f"{self.line.stale=}")
         if self.line.stale:
             self.canvas.draw_idle()
 
@@ -324,7 +329,6 @@ class PolygonInteractor:
 
 
 def create_polygon_demo(fig: Figure, params: PolygonParams) -> PolygonInteractor:
-
 
     theta = np.arange(0, 2 * np.pi, 0.1)
     r = 1.5
@@ -391,6 +395,69 @@ def create_whoami_plot(
 
 
 # ---------------------------------------------------------------------------
+# Dataset Viewer (example with required parameters)
+# ---------------------------------------------------------------------------
+
+
+class DatasetParams(BaseModel):
+    """Parameters for dataset visualization - demonstrates required parameters."""
+
+    dataset_name: str = Field(description="Name of the dataset to visualize (required)")
+    colormap: Literal["viridis", "magma", "plasma", "inferno"] = Field(
+        default="viridis",
+        description="Matplotlib colormap name",
+    )
+    grid_size: int = Field(
+        default=20,
+        ge=5,
+        le=100,
+        description="Size of the data grid",
+    )
+
+
+def create_dataset_plot(fig: Figure, params: DatasetParams) -> None:
+    """Render a synthetic dataset visualization.
+
+    This plot demonstrates required parameters. The `dataset_name` field has
+    no default value, so users must provide it via query string.  When started,
+    this plot will show in the logs as:
+
+        dataset_viewer       http://...?token=... (requires: dataset_name)
+
+    Users must navigate to the plots list page or manually provide the parameter:
+
+        http://...?token=...&dataset_name=my_data&colormap=plasma
+    """
+    import numpy as np
+
+    ax = fig.subplots()
+
+    # Generate synthetic data based on the dataset name (use name as seed)
+    seed = sum(ord(c) for c in params.dataset_name) % 1000
+    rng = np.random.default_rng(seed)
+    data = rng.random((params.grid_size, params.grid_size))
+
+    im = ax.imshow(data, cmap=params.colormap, aspect="auto", interpolation="nearest")
+    ax.set_title(f"Dataset: {params.dataset_name}", fontsize=14, pad=10)
+    ax.set_xlabel("X coordinate")
+    ax.set_ylabel("Y coordinate")
+
+    # Add colorbar
+    fig.colorbar(im, ax=ax, label="Value")
+
+    # Add text annotation showing the parameters
+    ax.text(
+        0.02,
+        0.98,
+        f"Colormap: {params.colormap}\nGrid: {params.grid_size}×{params.grid_size}",
+        transform=ax.transAxes,
+        fontsize=9,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registry — the only thing mpl_fastapi needs from this file
 # ---------------------------------------------------------------------------
 
@@ -417,9 +484,13 @@ plots = {
     "polygon": PlotConfig(
         description="This is an example to show how to build cross-GUI applications using Matplotlib event handling to interact with objects on the canvas.",
         init=InitConfig(function=create_polygon_demo, params_model=PolygonParams),
-        ),
+    ),
     "whoami": PlotConfig(
         description="Context-aware plot showing the authenticated principal",
         init=InitConfig(function=create_whoami_plot, params_model=WhoAmIParams),
+    ),
+    "dataset_viewer": PlotConfig(
+        description="Dataset viewer with required dataset_name parameter",
+        init=InitConfig(function=create_dataset_plot, params_model=DatasetParams),
     ),
 }
