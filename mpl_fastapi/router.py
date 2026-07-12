@@ -16,7 +16,9 @@ Protocol v0 uses a simplified message flow:
 """
 
 import asyncio
+import functools
 import hashlib
+import inspect
 import io
 import logging
 import os
@@ -25,7 +27,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import IntEnum
@@ -350,10 +352,92 @@ class RouterState:
         }
 
 
-# Type aliases for plot generator and update functions
-# Using Any for parameters to support subclasses of BaseModel
-PlotGenerator = Callable[[Figure, Any], Any]
-UpdateFunction = Callable[[Any, Any], Any]
+# Type aliases for plot generator and update functions.
+# ``Callable[..., Any]`` (rather than a fixed 2-arg signature) is required so a
+# single alias admits both the legacy ``(fig, params)`` / ``(state, params)``
+# shape and the opt-in variant that also declares a keyword-only ``context``
+# parameter.  Arity/param types are erased here anyway: the call happens through
+# ``functools.partial`` into a thread pool (see ``_run_user_fn``), and per-user
+# type-safety comes from the user annotating their own ``context`` parameter.
+PlotGenerator = Callable[..., Any]
+UpdateFunction = Callable[..., Any]
+
+
+@dataclass(frozen=True)
+class ConnectionInfo:
+    """Curated, per-connection server state handed to user plot functions.
+
+    This is the **only** server-side surface exposed to user code.  It
+    deliberately excludes the raw :class:`~fastapi.WebSocket`, the router's
+    internal state, and anything belonging to other connections/tenants, so it
+    is safe to pass into mutually-non-trusting plot functions.
+
+    A user function opts in to receiving this (or a :ref:`context_factory
+    <context-factory>` transform of it) by declaring a keyword-only ``context``
+    parameter::
+
+        def make(fig, params, *, context: ConnectionInfo) -> State:
+            who = context.principal
+            ...
+
+    Attributes
+    ----------
+    principal : Any
+        The value returned by the auth policy's WebSocket dependency
+        (see :data:`mpl_fastapi.auth.Principal`).  ``None`` when unauthenticated
+        (e.g. under ``NoAuth``).
+    plot_name : str
+        Name of the plot being served on this connection.
+    connection_id : str
+        Unique id for this WebSocket session; useful for log/telemetry
+        correlation.
+    logger : logging.LoggerAdapter
+        Logger pre-bound with ``connection_id`` and ``plot_name``.
+    """
+
+    principal: Any
+    plot_name: str
+    connection_id: str
+    logger: logging.LoggerAdapter[logging.Logger]
+
+
+@functools.cache
+def _wants_context(fn: Callable[..., Any]) -> bool:
+    """Return whether *fn* opts in to receiving the connection ``context``.
+
+    A function opts in by declaring a parameter named ``context`` (recommended
+    keyword-only) or by accepting arbitrary keyword args (``**kwargs``).
+    Functions whose signature cannot be introspected (e.g. some C builtins) are
+    treated as not opting in.  Cached because signatures are immutable and the
+    same callables are invoked once per frame.
+    """
+    try:
+        params = inspect.signature(fn).parameters
+    except (ValueError, TypeError):
+        return False
+    return "context" in params or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+
+
+async def _run_user_fn(
+    loop: asyncio.AbstractEventLoop,
+    executor: ThreadPoolExecutor,
+    fn: Callable[..., Any],
+    *args: Any,
+    context: Any,
+) -> Any:
+    """Invoke a user plot function in the thread pool, injecting ``context``.
+
+    ``run_in_executor`` only forwards positional args, so ``context`` is bound
+    as a keyword via :func:`functools.partial` when (and only when) *fn* opts in
+    via :func:`_wants_context`.
+    """
+    if _wants_context(fn):
+        call = functools.partial(fn, *args, context=context)
+    else:
+        call = functools.partial(fn, *args)
+    return await loop.run_in_executor(executor, call)
 
 
 @dataclass
@@ -785,6 +869,9 @@ def create_mpl_router(
     static_mount_path: str = "/mpl-static",
     auth: AuthPolicy | None = None,
     allowed_origins: list[str] | None = None,
+    context_factory: (
+        Callable[[ConnectionInfo], AbstractAsyncContextManager[Any]] | None
+    ) = None,
 ) -> MPLRouter:
     """
     Create a mountable router for matplotlib figures.
@@ -816,6 +903,28 @@ def create_mpl_router(
         development or fully token-protected deployments).  Note: browsers
         do not enforce CORS on WebSocket upgrades; this check is
         server-side enforcement of the same policy.
+    context_factory : Callable[[ConnectionInfo], AbstractAsyncContextManager], optional
+        .. _context-factory:
+
+        Hook for transforming the per-connection :class:`ConnectionInfo` into an
+        application-specific context object before it is handed to user plot
+        functions (those that declare a ``context`` parameter).  It is an
+        **async context manager factory**, typically written with
+        :func:`contextlib.asynccontextmanager`::
+
+            @asynccontextmanager
+            async def make_context(conn: ConnectionInfo):
+                async with httpx.AsyncClient() as client:
+                    obo = await exchange_token(conn.principal)
+                    yield MyContext(principal=conn.principal, client=client, obo=obo)
+
+            mpl = create_mpl_router(plots, context_factory=make_context)
+
+        It is entered once per connection (on the event loop, so it may perform
+        network I/O such as on-behalf-of token exchange) and exited when the
+        connection closes, so any resources it opens are torn down deterministically.
+        When ``None`` (the default) the :class:`ConnectionInfo` is delivered
+        as-is.
 
     Returns
     -------
@@ -1135,9 +1244,16 @@ def create_mpl_router(
     # Route: WebSocket connection for interactive plotting (v0 protocol)
     @router.websocket(
         "/ws/v0/{plot_name}",
-        dependencies=[Depends(_ws_auth), Depends(_check_ws_origin)],
+        # Origin check stays a pure side-effect gate; the auth dependency is
+        # bound as the ``principal`` parameter below so its return value (the
+        # authenticated identity) is captured for the connection context.
+        dependencies=[Depends(_check_ws_origin)],
     )
-    async def websocket_endpoint_v0(websocket: WebSocket, plot_name: str) -> None:
+    async def websocket_endpoint_v0(
+        websocket: WebSocket,
+        plot_name: str,
+        principal: Any = Depends(_ws_auth),
+    ) -> None:
         """Handle WebSocket connection for a plot using v0 protocol.
 
         Protocol v0 Flow:
@@ -1269,334 +1385,377 @@ def create_mpl_router(
         loop = asyncio.get_running_loop()
         executor = _get_figure_executor()
 
-        # Create figure and call generator to populate it in background thread
-        fig = Figure()
+        # Build the curated per-connection context and enter the optional
+        # application context manager.  Everything below runs inside this stack
+        # so any resources the factory opens (httpx client, DB session, ...) are
+        # torn down deterministically when the connection ends.
+        conn_info = ConnectionInfo(
+            principal=principal,
+            plot_name=plot_name,
+            connection_id=connection_id,
+            logger=logging.LoggerAdapter(
+                logger, {"connection_id": connection_id, "plot_name": plot_name}
+            ),
+        )
+        async with AsyncExitStack() as _ctx_stack:
+            if context_factory is not None:
+                try:
+                    context = await _ctx_stack.enter_async_context(
+                        context_factory(conn_info)
+                    )
+                except Exception as e:
+                    logger.exception(
+                        "context_factory failed for plot '%s': %s", plot_name, e
+                    )
+                    await websocket.send_json(
+                        {"type": "error", "message": "Context setup failed"}
+                    )
+                    await websocket.close(code=1011, reason="Context setup failed")
+                    return
+            else:
+                context = conn_info
+            # Create figure and call generator to populate it in background thread
+            fig = Figure()
 
-        # Attach FastAPICanvas before passing into user code
-        canvas = FastAPICanvas(fig)
+            # Attach FastAPICanvas before passing into user code
+            canvas = FastAPICanvas(fig)
 
-        try:
-            logger.debug("Initializing figure '%s' in background thread", plot_name)
-            state = await loop.run_in_executor(
-                executor,
-                config.init.function,
-                fig,
-                params,
-            )
-        except Exception as e:
-            logger.exception("Error generating plot '%s': %s", plot_name, e)
-            await websocket.send_json(
-                {"type": "error", "message": f"Plot generation failed: {e}"}
-            )
-            await websocket.close(code=1011, reason=f"Plot generation failed: {e}")
-            return
-
-        # If _update.* params were provided, apply them now
-        if initial_update_params is not None and config.update is not None:
             try:
-                logger.debug(
-                    "Applying initial update params for '%s': %s",
-                    plot_name,
-                    initial_update_params,
-                )
-                state = await loop.run_in_executor(
+                logger.debug("Initializing figure '%s' in background thread", plot_name)
+                state = await _run_user_fn(
+                    loop,
                     executor,
-                    config.update.function,
-                    state,
-                    initial_update_params,
+                    config.init.function,
+                    fig,
+                    params,
+                    context=context,
                 )
             except Exception as e:
-                logger.exception(
-                    "Error applying initial update for '%s': %s", plot_name, e
-                )
+                logger.exception("Error generating plot '%s': %s", plot_name, e)
                 await websocket.send_json(
-                    {"type": "error", "message": f"Initial update failed: {e}"}
+                    {"type": "error", "message": f"Plot generation failed: {e}"}
                 )
-                await websocket.close(code=1011, reason=f"Initial update failed: {e}")
+                await websocket.close(code=1011, reason=f"Plot generation failed: {e}")
                 return
 
-        # Apply device pixel ratio
-        if device_pixel_ratio != 1.0:
-            if canvas._set_device_pixel_ratio(device_pixel_ratio):  # type: ignore[attr-defined]
-                canvas._force_full = True
-            logger.debug("Set device pixel ratio: %s", device_pixel_ratio)
-
-        # Attach manager
-        manager = FastAPIManger(canvas, 0)
-        manager.supports_binary = supports_binary
-
-        # Initialize image sequence tracker
-        seq_state = ImageSequenceState()
-
-        # Get toolbar configuration
-        toolbar_config = FastAPIManger.get_toolbar_config()
-
-        # Calculate figure size in CSS pixels
-        width_inches, height_inches = fig.get_size_inches()
-        width_px = round(width_inches * fig.dpi / canvas.device_pixel_ratio)
-        height_px = round(height_inches * fig.dpi / canvas.device_pixel_ratio)
-
-        # Build and send consolidated config message
-        config_msg = {
-            "type": "config",
-            "protocol_version": PROTOCOL_VERSION,
-            "connection_id": connection_id,
-            "figure": {
-                "size": [width_px, height_px],
-                "dpi": fig.dpi,
-                "label": fig.get_label(),
-            },
-            "toolbar": {
-                "items": toolbar_config["toolbar_items"],
-                "history": {"back": False, "forward": False},
-            },
-            "save": {
-                "formats": toolbar_config["save_formats"],
-                "default_format": toolbar_config["default_save_format"],
-            },
-            "image": {
-                "format": "png",  # Currently only PNG supported
-            },
-            "update_schema": None,
-            "init_params": params.model_dump(mode="json"),
-            "update_params": (
-                initial_update_params.model_dump(mode="json")
-                if initial_update_params is not None
-                else None
-            ),
-        }
-
-        # Include update schema if available (precomputed at construction).
-        config_msg["update_schema"] = _update_schemas[plot_name]
-
-        await websocket.send_json(config_msg)
-        logger.debug("Sent consolidated config message")
-
-        # Event loop
-        try:
-            while True:
+            # If _update.* params were provided, apply them now
+            if initial_update_params is not None and config.update is not None:
                 try:
-                    data = await websocket.receive_json()
-                except WebSocketDisconnect:
-                    logger.info("WebSocket disconnected for plot '%s'", plot_name)
-                    return
-                except Exception as e:
-                    logger.exception("Error receiving WebSocket message: %s", e)
-                    return
-
-                e_type = data.get("type")
-
-                # Skip logging for high-frequency events
-                if e_type not in ("motion_notify", "figure_enter", "figure_leave"):
                     logger.debug(
-                        "Received message type='%s' for plot '%s'", e_type, plot_name
+                        "Applying initial update params for '%s': %s",
+                        plot_name,
+                        initial_update_params,
+                    )
+                    state = await _run_user_fn(
+                        loop,
+                        executor,
+                        config.update.function,
+                        state,
+                        initial_update_params,
+                        context=context,
+                    )
+                except Exception as e:
+                    logger.exception(
+                        "Error applying initial update for '%s': %s", plot_name, e
+                    )
+                    await websocket.send_json(
+                        {"type": "error", "message": f"Initial update failed: {e}"}
+                    )
+                    await websocket.close(
+                        code=1011, reason=f"Initial update failed: {e}"
+                    )
+                    return
+
+            # Apply device pixel ratio
+            if device_pixel_ratio != 1.0:
+                if canvas._set_device_pixel_ratio(device_pixel_ratio):  # type: ignore[attr-defined]
+                    canvas._force_full = True
+                logger.debug("Set device pixel ratio: %s", device_pixel_ratio)
+
+            # Attach manager
+            manager = FastAPIManger(canvas, 0)
+            manager.supports_binary = supports_binary
+
+            # Initialize image sequence tracker
+            seq_state = ImageSequenceState()
+
+            # Get toolbar configuration
+            toolbar_config = FastAPIManger.get_toolbar_config()
+
+            # Calculate figure size in CSS pixels
+            width_inches, height_inches = fig.get_size_inches()
+            width_px = round(width_inches * fig.dpi / canvas.device_pixel_ratio)
+            height_px = round(height_inches * fig.dpi / canvas.device_pixel_ratio)
+
+            # Build and send consolidated config message
+            config_msg = {
+                "type": "config",
+                "protocol_version": PROTOCOL_VERSION,
+                "connection_id": connection_id,
+                "figure": {
+                    "size": [width_px, height_px],
+                    "dpi": fig.dpi,
+                    "label": fig.get_label(),
+                },
+                "toolbar": {
+                    "items": toolbar_config["toolbar_items"],
+                    "history": {"back": False, "forward": False},
+                },
+                "save": {
+                    "formats": toolbar_config["save_formats"],
+                    "default_format": toolbar_config["default_save_format"],
+                },
+                "image": {
+                    "format": "png",  # Currently only PNG supported
+                },
+                "update_schema": None,
+                "init_params": params.model_dump(mode="json"),
+                "update_params": (
+                    initial_update_params.model_dump(mode="json")
+                    if initial_update_params is not None
+                    else None
+                ),
+            }
+
+            # Include update schema if available (precomputed at construction).
+            config_msg["update_schema"] = _update_schemas[plot_name]
+
+            await websocket.send_json(config_msg)
+            logger.debug("Sent consolidated config message")
+
+            # Event loop
+            try:
+                while True:
+                    try:
+                        data = await websocket.receive_json()
+                    except WebSocketDisconnect:
+                        logger.info("WebSocket disconnected for plot '%s'", plot_name)
+                        return
+                    except Exception as e:
+                        logger.exception("Error receiving WebSocket message: %s", e)
+                        return
+
+                    e_type = data.get("type")
+
+                    # Skip logging for high-frequency events
+                    if e_type not in ("motion_notify", "figure_enter", "figure_leave"):
+                        logger.debug(
+                            "Received message type='%s' for plot '%s'",
+                            e_type,
+                            plot_name,
+                        )
+
+                    try:
+                        if e_type == "save_figure":
+                            # Handle save request
+                            try:
+                                file_format = data.get("format", "png")
+                                dpi = data.get("dpi", 100)
+                                transparent = data.get("transparent", False)
+
+                                # Validate format
+                                supported_formats = toolbar_config["save_formats"]
+                                format_lower = file_format.lower()
+                                if format_lower not in supported_formats:
+                                    raise ValueError(
+                                        f"Unsupported format '{file_format}'. "
+                                        f"Supported: {', '.join(supported_formats)}"
+                                    )
+
+                                # Generate unique file ID
+                                file_id = str(uuid.uuid4())
+
+                                # Save figure in thread pool
+                                logger.debug(
+                                    "Saving figure '%s' to %s", plot_name, format_lower
+                                )
+
+                                file_data = await loop.run_in_executor(
+                                    executor,
+                                    _sync_save_figure,
+                                    fig,
+                                    format_lower,
+                                    dpi,
+                                    transparent,
+                                )
+
+                                # Create saved file entry
+                                saved_file = SavedFile(
+                                    file_id=file_id,
+                                    connection_id=connection_id,
+                                    data=file_data,
+                                    format=format_lower,
+                                    filename=f"{plot_name}.{format_lower}",
+                                    created_at=datetime.now(),
+                                    metadata={"dpi": dpi, "transparent": transparent},
+                                )
+
+                                # Store in caches
+                                router_state.saved_files[file_id] = saved_file
+                                router_state.connection_files[connection_id].add(
+                                    file_id
+                                )
+
+                                # Clean old files
+                                _clean_old_saved_files(router_state)
+
+                                # Extract the router mount prefix from the
+                                # WebSocket path "/{prefix}/ws/v0/{name}".
+                                base_path = _prefix_before(websocket.url.path, "/ws/")
+
+                                download_url = f"{base_path}/download/{file_id}"
+
+                                await websocket.send_json(
+                                    {
+                                        "type": "save_complete",
+                                        "file_id": file_id,
+                                        "download_url": download_url,
+                                        "filename": saved_file.filename,
+                                        "format": format_lower,
+                                    }
+                                )
+
+                                logger.info(
+                                    "Saved figure '%s' as %s", plot_name, format_lower
+                                )
+
+                            except ValueError as e:
+                                logger.warning("Invalid save request: %s", e)
+                                await websocket.send_json(
+                                    {"type": "save_error", "message": str(e)}
+                                )
+                            except Exception as e:
+                                logger.exception(
+                                    "Error saving figure '%s': %s", plot_name, e
+                                )
+                                await websocket.send_json(
+                                    {
+                                        "type": "save_error",
+                                        "message": f"Failed to save figure: {e!s}",
+                                    }
+                                )
+
+                        elif e_type == "update_params":
+                            # Handle update request
+                            if config.update is None:
+                                logger.warning(
+                                    "Update requested for plot '%s' "
+                                    "but no update function configured",
+                                    plot_name,
+                                )
+                                continue
+                            try:
+                                update_params = config.update.params_model(
+                                    **data["params"]
+                                )
+                            except ValidationError as e:
+                                logger.warning(
+                                    "Invalid update parameters for plot %s: %s",
+                                    plot_name,
+                                    e,
+                                )
+                                continue
+                            try:
+                                logger.info(
+                                    "Updating plot '%s' with params: %s",
+                                    plot_name,
+                                    update_params,
+                                )
+
+                                state = await _run_user_fn(
+                                    loop,
+                                    executor,
+                                    config.update.function,
+                                    state,
+                                    update_params,
+                                    context=context,
+                                )
+
+                                # Only queue an invalidate if the update function
+                                # did NOT already push a frame via blit().  When
+                                # blit() was called, the image is already in
+                                # _binary_queue and will be sent by _drain_canvas()
+                                # below — sending an invalidate on top would cause
+                                # the client to request a redundant render.
+                                if not canvas._binary_queue:
+                                    canvas.draw_idle()
+
+                            except Exception as e:
+                                logger.exception(
+                                    "Error updating plot '%s': %s", plot_name, e
+                                )
+
+                        elif e_type == "render":
+                            # Client requests render with binary image response.
+                            # force_full=true means the client detected a gap and
+                            # needs a self-contained FULL frame to resync from.
+                            if data.get("force_full"):
+                                canvas._force_full = True
+                            await _send_render_response(
+                                websocket, canvas, executor, loop, seq_state
+                            )
+                            continue  # Don't drain queue - response already sent
+
+                        elif e_type == "refresh":
+                            # Client requests full refresh
+                            canvas._force_full = True
+                            await _send_render_response(
+                                websocket, canvas, executor, loop, seq_state
+                            )
+                            continue  # Don't drain queue - response already sent
+
+                        else:
+                            # Explicit dispatch table for canvas event handlers.
+                            # Every allowable client event type is listed here;
+                            # unknown types fall through to handle_unknown_event.
+                            _canvas_handlers = {
+                                "ack": canvas.handle_ack,
+                                "resize": canvas.handle_resize,
+                                "set_device_pixel_ratio": canvas.handle_set_device_pixel_ratio,
+                                "send_image_mode": canvas.handle_send_image_mode,
+                                "button_press": canvas.handle_button_press,
+                                "button_release": canvas.handle_button_release,
+                                "dblclick": canvas.handle_dblclick,
+                                "figure_enter": canvas.handle_figure_enter,
+                                "figure_leave": canvas.handle_figure_leave,
+                                "motion_notify": canvas.handle_motion_notify,
+                                "scroll": canvas.handle_scroll,
+                                "toolbar_button": canvas.handle_toolbar_button,
+                                "key_press": canvas.handle_key_press,
+                                "key_release": canvas.handle_key_release,
+                            }
+                            handler = _canvas_handlers.get(
+                                e_type, canvas.handle_unknown_event
+                            )
+                            await handler(data, websocket)
+
+                        # Drain JSON queue and any binary frames queued by blit()
+                        await _drain_canvas(canvas, websocket, seq_state)
+
+                    except Exception as e:
+                        logger.exception("Error handling event '%s': %s", e_type, e)
+            finally:
+                # Cleanup on disconnect
+                logger.debug("Cleaning up resources for plot '%s'", plot_name)
+
+                # Decrement connection counter
+                router_state.disconnect(plot_name)
+
+                # Clean up saved files for this connection
+                if connection_id in router_state.connection_files:
+                    file_ids = list(router_state.connection_files[connection_id])
+                    for file_id in file_ids:
+                        _remove_saved_file(router_state, file_id)
+                    logger.debug(
+                        "Removed %d saved file(s) for connection %s",
+                        len(file_ids),
+                        connection_id,
                     )
 
                 try:
-                    if e_type == "save_figure":
-                        # Handle save request
-                        try:
-                            file_format = data.get("format", "png")
-                            dpi = data.get("dpi", 100)
-                            transparent = data.get("transparent", False)
-
-                            # Validate format
-                            supported_formats = toolbar_config["save_formats"]
-                            format_lower = file_format.lower()
-                            if format_lower not in supported_formats:
-                                raise ValueError(
-                                    f"Unsupported format '{file_format}'. "
-                                    f"Supported: {', '.join(supported_formats)}"
-                                )
-
-                            # Generate unique file ID
-                            file_id = str(uuid.uuid4())
-
-                            # Save figure in thread pool
-                            logger.debug(
-                                "Saving figure '%s' to %s", plot_name, format_lower
-                            )
-
-                            file_data = await loop.run_in_executor(
-                                executor,
-                                _sync_save_figure,
-                                fig,
-                                format_lower,
-                                dpi,
-                                transparent,
-                            )
-
-                            # Create saved file entry
-                            saved_file = SavedFile(
-                                file_id=file_id,
-                                connection_id=connection_id,
-                                data=file_data,
-                                format=format_lower,
-                                filename=f"{plot_name}.{format_lower}",
-                                created_at=datetime.now(),
-                                metadata={"dpi": dpi, "transparent": transparent},
-                            )
-
-                            # Store in caches
-                            router_state.saved_files[file_id] = saved_file
-                            router_state.connection_files[connection_id].add(file_id)
-
-                            # Clean old files
-                            _clean_old_saved_files(router_state)
-
-                            # Extract the router mount prefix from the
-                            # WebSocket path "/{prefix}/ws/v0/{name}".
-                            base_path = _prefix_before(websocket.url.path, "/ws/")
-
-                            download_url = f"{base_path}/download/{file_id}"
-
-                            await websocket.send_json(
-                                {
-                                    "type": "save_complete",
-                                    "file_id": file_id,
-                                    "download_url": download_url,
-                                    "filename": saved_file.filename,
-                                    "format": format_lower,
-                                }
-                            )
-
-                            logger.info(
-                                "Saved figure '%s' as %s", plot_name, format_lower
-                            )
-
-                        except ValueError as e:
-                            logger.warning("Invalid save request: %s", e)
-                            await websocket.send_json(
-                                {"type": "save_error", "message": str(e)}
-                            )
-                        except Exception as e:
-                            logger.exception(
-                                "Error saving figure '%s': %s", plot_name, e
-                            )
-                            await websocket.send_json(
-                                {
-                                    "type": "save_error",
-                                    "message": f"Failed to save figure: {e!s}",
-                                }
-                            )
-
-                    elif e_type == "update_params":
-                        # Handle update request
-                        if config.update is None:
-                            logger.warning(
-                                "Update requested for plot '%s' "
-                                "but no update function configured",
-                                plot_name,
-                            )
-                            continue
-                        try:
-                            update_params = config.update.params_model(**data["params"])
-                        except ValidationError as e:
-                            logger.warning(
-                                "Invalid update parameters for plot %s: %s",
-                                plot_name,
-                                e,
-                            )
-                            continue
-                        try:
-                            logger.info(
-                                "Updating plot '%s' with params: %s",
-                                plot_name,
-                                update_params,
-                            )
-
-                            state = await loop.run_in_executor(
-                                executor,
-                                config.update.function,
-                                state,
-                                update_params,
-                            )
-
-                            # Only queue an invalidate if the update function
-                            # did NOT already push a frame via blit().  When
-                            # blit() was called, the image is already in
-                            # _binary_queue and will be sent by _drain_canvas()
-                            # below — sending an invalidate on top would cause
-                            # the client to request a redundant render.
-                            if not canvas._binary_queue:
-                                canvas.draw_idle()
-
-                        except Exception as e:
-                            logger.exception(
-                                "Error updating plot '%s': %s", plot_name, e
-                            )
-
-                    elif e_type == "render":
-                        # Client requests render with binary image response.
-                        # force_full=true means the client detected a gap and
-                        # needs a self-contained FULL frame to resync from.
-                        if data.get("force_full"):
-                            canvas._force_full = True
-                        await _send_render_response(
-                            websocket, canvas, executor, loop, seq_state
-                        )
-                        continue  # Don't drain queue - response already sent
-
-                    elif e_type == "refresh":
-                        # Client requests full refresh
-                        canvas._force_full = True
-                        await _send_render_response(
-                            websocket, canvas, executor, loop, seq_state
-                        )
-                        continue  # Don't drain queue - response already sent
-
-                    else:
-                        # Explicit dispatch table for canvas event handlers.
-                        # Every allowable client event type is listed here;
-                        # unknown types fall through to handle_unknown_event.
-                        _canvas_handlers = {
-                            "ack": canvas.handle_ack,
-                            "resize": canvas.handle_resize,
-                            "set_device_pixel_ratio": canvas.handle_set_device_pixel_ratio,
-                            "send_image_mode": canvas.handle_send_image_mode,
-                            "button_press": canvas.handle_button_press,
-                            "button_release": canvas.handle_button_release,
-                            "dblclick": canvas.handle_dblclick,
-                            "figure_enter": canvas.handle_figure_enter,
-                            "figure_leave": canvas.handle_figure_leave,
-                            "motion_notify": canvas.handle_motion_notify,
-                            "scroll": canvas.handle_scroll,
-                            "toolbar_button": canvas.handle_toolbar_button,
-                            "key_press": canvas.handle_key_press,
-                            "key_release": canvas.handle_key_release,
-                        }
-                        handler = _canvas_handlers.get(
-                            e_type, canvas.handle_unknown_event
-                        )
-                        await handler(data, websocket)
-
-                    # Drain JSON queue and any binary frames queued by blit()
-                    await _drain_canvas(canvas, websocket, seq_state)
-
+                    manager.destroy()
                 except Exception as e:
-                    logger.exception("Error handling event '%s': %s", e_type, e)
-        finally:
-            # Cleanup on disconnect
-            logger.debug("Cleaning up resources for plot '%s'", plot_name)
-
-            # Decrement connection counter
-            router_state.disconnect(plot_name)
-
-            # Clean up saved files for this connection
-            if connection_id in router_state.connection_files:
-                file_ids = list(router_state.connection_files[connection_id])
-                for file_id in file_ids:
-                    _remove_saved_file(router_state, file_id)
-                logger.debug(
-                    "Removed %d saved file(s) for connection %s",
-                    len(file_ids),
-                    connection_id,
-                )
-
-            try:
-                manager.destroy()
-            except Exception as e:
-                logger.exception("Error during cleanup: %s", e)
+                    logger.exception("Error during cleanup: %s", e)
 
     # ── Content-hashed JS routes ─────────────────────────────────────────
     # These routes embed the content hash in the URL so `immutable` caching

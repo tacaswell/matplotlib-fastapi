@@ -31,8 +31,15 @@ def _get_version() -> str:
 __version__ = _get_version()
 
 from ._server import build_app  # noqa: E402  (after __version__ computation)
-from .auth import AuthPolicy, NoAuth, SingleUserToken  # noqa: E402
+from .auth import (  # noqa: E402
+    AuthPolicy,
+    NoAuth,
+    Principal,
+    SingleUserToken,
+    TokenPrincipal,
+)
 from .router import (  # noqa: E402
+    ConnectionInfo,
     InitConfig,
     Lifespan,
     MPLRouter,
@@ -50,6 +57,7 @@ from .router import (  # noqa: E402
 
 __all__ = [
     "AuthPolicy",
+    "ConnectionInfo",
     "InitConfig",
     "Lifespan",
     "MPLRouter",
@@ -58,7 +66,9 @@ __all__ = [
     "PlotGenerator",
     "PlotInfo",
     "PlotsListResponse",
+    "Principal",
     "SingleUserToken",
+    "TokenPrincipal",
     "UpdateConfig",
     "UpdateFunction",
     "__version__",

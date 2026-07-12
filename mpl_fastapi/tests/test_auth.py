@@ -12,6 +12,7 @@ from mpl_fastapi import (
     NoAuth,
     PlotConfig,
     SingleUserToken,
+    TokenPrincipal,
     create_mpl_router,
     install_mpl_router,
 )
@@ -83,6 +84,33 @@ class TestAuthPolicyProtocol:
 
     def test_single_user_token_satisfies_protocol(self) -> None:
         assert isinstance(SingleUserToken(token="x"), AuthPolicy)
+
+
+class _FakeWebSocket:
+    """Minimal stand-in exposing the attributes the ws dependency reads."""
+
+    def __init__(self, *, query_token: str | None = None) -> None:
+        self.headers: dict[str, str] = {}
+        self.query_params: dict[str, str] = (
+            {"token": query_token} if query_token is not None else {}
+        )
+        self.cookies: dict[str, str] = {}
+
+
+class TestPrincipalProduction:
+    """The auth dependencies surface a principal on success."""
+
+    async def test_noauth_ws_principal_is_none(self) -> None:
+        # NoAuth's dependency takes no parameters (nothing to inject); it is a
+        # pure no-op returning None.
+        dep = NoAuth().ws_dependency()
+        assert await dep() is None
+
+    async def test_single_user_token_ws_returns_principal(self) -> None:
+        tok = SingleUserToken(token="x")
+        dep = tok.ws_dependency()
+        principal = await dep(_FakeWebSocket(query_token="x"))
+        assert isinstance(principal, TokenPrincipal)
 
 
 # ---------------------------------------------------------------------------

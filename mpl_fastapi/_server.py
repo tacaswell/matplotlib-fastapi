@@ -32,6 +32,7 @@ from mpl_fastapi import __version__
 from mpl_fastapi.auth import COOKIE_NAME, AuthPolicy, SingleUserToken
 from mpl_fastapi.router import (
     Lifespan,
+    ConnectionInfo,
     PlotConfig,
     compose_lifespans,
     create_mpl_router,
@@ -39,6 +40,10 @@ from mpl_fastapi.router import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from contextlib import AbstractAsyncContextManager
+    from typing import Any
+
     from starlette.middleware.base import RequestResponseEndpoint
     from starlette.requests import Request
     from starlette.responses import Response
@@ -56,6 +61,9 @@ def build_app(
     auth: AuthPolicy | None = None,
     allowed_origins: list[str] | None = None,
     lifespan: Lifespan | None = None,
+    context_factory: (
+        Callable[[ConnectionInfo], AbstractAsyncContextManager[Any]] | None
+    ) = None,
 ) -> FastAPI:
     """Build a fully-configured FastAPI application from a plots mapping.
 
@@ -98,6 +106,11 @@ def build_app(
         executor cleanup and URL logging).  Use this to mount additional routes,
         initialize resources, or perform other startup tasks.
 
+    context_factory:
+        Optional per-connection context factory forwarded verbatim to
+        :func:`~mpl_fastapi.create_mpl_router`.  See its documentation for the
+        expected async-context-manager shape.
+
     Returns
     -------
     FastAPI
@@ -121,7 +134,12 @@ def build_app(
             "with cookie-based authentication.  List exact origins instead."
         )
 
-    mpl = create_mpl_router(plots, auth=auth, allowed_origins=allowed_origins)
+    mpl = create_mpl_router(
+        plots,
+        auth=auth,
+        allowed_origins=allowed_origins,
+        context_factory=context_factory,
+    )
 
     app = FastAPI(title=title, description=description, version=version)
 

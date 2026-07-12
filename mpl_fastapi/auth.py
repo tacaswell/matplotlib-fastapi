@@ -19,7 +19,10 @@ The object must expose two methods that return FastAPI dependencies:
 
 Both dependencies should raise ``HTTPException(status_code=401)`` (HTTP)
 or call ``websocket.close(code=1008)`` and raise ``WebSocketException``
-(WebSocket) on authentication failure.
+(WebSocket) on authentication failure.  On success a dependency may
+**return a principal** (see :data:`Principal`); the router captures the
+WebSocket dependency's return value and threads it into user plot
+functions via the connection context.  ``NoAuth`` returns ``None``.
 """
 
 from __future__ import annotations
@@ -28,12 +31,39 @@ import logging
 import os
 import secrets
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from fastapi import Depends, HTTPException, Request, Response, WebSocket, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Principal
+# ---------------------------------------------------------------------------
+
+# The value an :class:`AuthPolicy` dependency returns on success.  It is
+# captured by the router and threaded (via the connection context) into user
+# plot functions.  Kept as ``Any`` at the framework boundary: real AuthN/AuthZ
+# policies return whatever principal type they like (e.g. a struct carrying the
+# user's token and claims for on-behalf-of flows), and user code annotates its
+# own ``context.principal`` for type checking.
+Principal = Any
+
+
+@dataclass(frozen=True)
+class TokenPrincipal:
+    """Minimal principal produced by :class:`SingleUserToken`.
+
+    ``SingleUserToken`` authenticates against a single shared secret, so there
+    is no distinct per-user identity behind it.  This placeholder principal
+    simply records that a valid token was presented; real policies return a
+    richer object.
+    """
+
+    kind: str = "single-user"
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +77,12 @@ class AuthPolicy(Protocol):
 
     Implementations provide two FastAPI-compatible dependency callables:
     one for regular HTTP routes and one for WebSocket routes.
+
+    On success, a dependency may **return a principal** (see
+    :data:`Principal`).  The router captures the WebSocket dependency's return
+    value and makes it available to user plot functions via the connection
+    context, so a policy can surface the authenticated user's identity/token
+    (e.g. for on-behalf-of flows).  Returning ``None`` means "no identity".
     """
 
     def http_dependency(self) -> Callable[..., Any]:
@@ -54,6 +90,7 @@ class AuthPolicy(Protocol):
 
         The dependency receives a :class:`~fastapi.Request` and should
         raise ``HTTPException(401)`` if the request is not authorised.
+        On success it may return a principal (or ``None``).
         """
         ...
 
@@ -63,6 +100,9 @@ class AuthPolicy(Protocol):
         The dependency receives a :class:`~fastapi.WebSocket` and should
         close the connection with code 1008 and raise if the request is
         not authorised.  This runs **before** the WebSocket is accepted.
+        On success it may return a principal (or ``None``); the router
+        threads that value into user plot functions via the connection
+        context.
         """
         ...
 
@@ -167,7 +207,7 @@ class SingleUserToken:
             request: Request,
             response: Response,
             credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-        ) -> None:
+        ) -> TokenPrincipal:
             # Prefer the bearer token from the Authorization header
             # (parsed by HTTPBearer), fall back to ?token= query param,
             # then to the browser cookie.
@@ -196,13 +236,14 @@ class SingleUserToken:
                     samesite="lax",
                     path="/",
                 )
+            return TokenPrincipal()
 
         return _verify
 
     def ws_dependency(self) -> Callable[..., Any]:
         expected = self._token
 
-        async def _verify(websocket: WebSocket) -> None:
+        async def _verify(websocket: WebSocket) -> TokenPrincipal:
             token = self._extract_token(
                 authorization=websocket.headers.get("authorization"),
                 query_token=websocket.query_params.get("token"),
@@ -217,5 +258,6 @@ class SingleUserToken:
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Invalid or missing authentication token",
                 )
+            return TokenPrincipal()
 
         return _verify
