@@ -11,6 +11,7 @@
     <script src="{{ js_url }}"></script>
     <script>
       var mplFigure = null;
+      var lastSentValues = {};
 
       function ready(fn) {
         if (document.readyState != "loading") {
@@ -20,9 +21,44 @@
         }
       }
 
+      function markInputDirty(input) {
+        var currentValue = input.value;
+        var lastValue = lastSentValues[input.name];
+
+        if (lastValue !== undefined && currentValue !== lastValue) {
+          input.style.backgroundColor = '#ffffe0';  // light yellow
+        } else {
+          input.style.backgroundColor = '';  // clear background
+        }
+      }
+
+      function initializeDirtyTracking() {
+        var form = document.getElementById('update-form');
+        if (!form) return;
+
+        var inputs = form.querySelectorAll('input[type="number"]');
+        inputs.forEach(function(input) {
+          // Store initial values as last sent values
+          lastSentValues[input.name] = input.value;
+
+          // Add input event listener to check for changes
+          input.addEventListener('input', function() {
+            markInputDirty(input);
+          });
+        });
+      }
+
       function sendUpdate() {
         if (mplFigure) {
           mplFigure.send_update('update-form');
+
+          // Update lastSentValues and clear dirty state
+          var form = document.getElementById('update-form');
+          var inputs = form.querySelectorAll('input[type="number"]');
+          inputs.forEach(function(input) {
+            lastSentValues[input.name] = input.value;
+            input.style.backgroundColor = '';  // clear background
+          });
         } else {
           console.error('Figure not initialized');
         }
@@ -56,6 +92,9 @@
           );
           // Connect after Figure is initialized and handlers are registered
           ws_manager.connect();
+
+          // Initialize dirty tracking for update form inputs
+          initializeDirtyTracking();
         }
       );
     </script>
@@ -70,7 +109,7 @@
     {% if update_params_schema %}
     <div id="update-controls" style="margin: 10px; padding: 10px; border: 1px solid #ccc; background: #f9f9f9;">
       <h3>Update Parameters</h3>
-      <form id="update-form">
+      <form id="update-form" onsubmit="event.preventDefault(); sendUpdate(); return false;">
         {% for prop_name, prop_info in update_params_schema.properties.items() %}
         <div style="margin: 5px 0;">
           <label for="{{ prop_name }}">
