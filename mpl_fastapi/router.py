@@ -1045,7 +1045,12 @@ def create_mpl_router(
             )
 
     # Route: HTML plots list (root)
-    @router.get("/", response_class=HTMLResponse, dependencies=[Depends(_http_auth)])
+    @router.get(
+        "/",
+        response_class=HTMLResponse,
+        dependencies=[Depends(_http_auth)],
+        tags=["Plots API"],
+    )
     async def plots_list_html(request: Request) -> HTMLResponse:
         """Render an HTML page listing all available plots."""
         plots_info = {}
@@ -1070,7 +1075,10 @@ def create_mpl_router(
 
     # Route: List all available plots (JSON API)
     @router.get(
-        "/plots", response_model=PlotsListResponse, dependencies=[Depends(_http_auth)]
+        "/plots",
+        response_model=PlotsListResponse,
+        dependencies=[Depends(_http_auth)],
+        tags=["Plots API"],
     )
     async def list_plots(request: Request) -> PlotsListResponse:
         """List all available plots with their parameter schemas."""
@@ -1098,7 +1106,7 @@ def create_mpl_router(
     # Route: Public health check endpoint (unauthenticated).
     # Deliberately returns only a bare status so it leaks no operational
     # detail (connection counts, plot names) to unauthenticated callers.
-    @router.get("/health")
+    @router.get("/health", tags=["Health & Monitoring"])
     async def health_check() -> dict[str, Any]:
         """Liveness probe returning a bare ``{"status": "ok"}``.
 
@@ -1109,7 +1117,11 @@ def create_mpl_router(
         return router_state.get_health_status()
 
     # Route: Detailed health check (authenticated).
-    @router.get("/health/details", dependencies=[Depends(_http_auth)])
+    @router.get(
+        "/health/details",
+        dependencies=[Depends(_http_auth)],
+        tags=["Health & Monitoring"],
+    )
     async def health_details() -> dict[str, Any]:
         """Health check with connection statistics (requires auth).
 
@@ -1124,7 +1136,9 @@ def create_mpl_router(
         """
         return router_state.get_health_details()
 
-    @router.get("/watermark", dependencies=[Depends(_http_auth)])
+    @router.get(
+        "/watermark", dependencies=[Depends(_http_auth)], tags=["Health & Monitoring"]
+    )
     async def watermark() -> dict[str, str]:
         """Version watermark reporting key dependency versions."""
         import importlib.metadata
@@ -1150,6 +1164,7 @@ def create_mpl_router(
         "/plot/{plot_name}",
         response_class=HTMLResponse,
         dependencies=[Depends(_http_auth)],
+        tags=["Plots API"],
     )
     async def view_plot(
         request: Request,
@@ -1194,7 +1209,9 @@ def create_mpl_router(
         )
 
     # Route: Download saved file
-    @router.get("/download/{file_id}", dependencies=[Depends(_http_auth)])
+    @router.get(
+        "/download/{file_id}", dependencies=[Depends(_http_auth)], tags=["Files"]
+    )
     async def download_saved_file(file_id: str) -> StreamingResponse:
         """
         Download a previously saved figure file.
@@ -1791,24 +1808,24 @@ def create_mpl_router(
             },
         )
 
-    @router.get("/component.{hash}.js")
+    @router.get("/component.{hash}.js", tags=["Static Assets"])
     async def get_component_js_hashed(request: Request, hash: str) -> Response:
         """Serve the IIFE component bundle at a content-hashed URL."""
         return _serve_hashed_js(request, "component.js", hash)
 
-    @router.get("/component.{hash}.esm.js")
+    @router.get("/component.{hash}.esm.js", tags=["Static Assets"])
     async def get_component_esm_js_hashed(request: Request, hash: str) -> Response:
         """Serve the ESM component bundle at a content-hashed URL."""
         return _serve_hashed_js(request, "component.esm.js", hash)
 
-    @router.get("/component.{hash}.js.map")
+    @router.get("/component.{hash}.js.map", tags=["Static Assets"])
     async def get_component_js_map_hashed(request: Request, hash: str) -> Response:
         """Serve the IIFE source map at a content-hashed URL."""
         return _serve_hashed_js(
             request, "component.js.map", hash, content_type="application/json"
         )
 
-    @router.get("/component.{hash}.esm.js.map")
+    @router.get("/component.{hash}.esm.js.map", tags=["Static Assets"])
     async def get_component_esm_js_map_hashed(request: Request, hash: str) -> Response:
         """Serve the ESM source map at a content-hashed URL."""
         return _serve_hashed_js(
@@ -1837,7 +1854,7 @@ def create_mpl_router(
             return _redirect_to_hashed(filename, url_template)
 
         _redirect.__doc__ = f"Redirect {route} to the content-hashed bundle."
-        router.add_api_route(route, _redirect, methods=["GET"])
+        router.add_api_route(route, _redirect, methods=["GET"], tags=["Static Assets"])
 
     # (stable route, source file, hashed URL template).  The legacy
     # ``/js/mpl.js`` path is kept as an alias for the IIFE bundle.
@@ -1856,7 +1873,11 @@ def create_mpl_router(
         _register_redirect(_route, _filename, _template)
 
     # Route: Get schema for a specific plot
-    @router.get("/api/plots/{plot_name}/schema", dependencies=[Depends(_http_auth)])
+    @router.get(
+        "/api/plots/{plot_name}/schema",
+        dependencies=[Depends(_http_auth)],
+        tags=["Plots API"],
+    )
     async def get_plot_schema(
         plot_name: str,
         _: None = Depends(validate_plot_name),
