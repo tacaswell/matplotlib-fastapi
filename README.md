@@ -97,17 +97,17 @@ mpl = create_mpl_router({
 
 Now users can adjust the phase parameter in real-time without reconnecting!
 
-## Embeddable Component
+## JavaScript Client
 
 You can embed matplotlib plots into React, Vue, or any JavaScript framework
-using the embeddable component:
+using the client component:
 
 ```html
 <script src="/plots/component.js"></script>
 <div id="my-plot"></div>
 
 <script>
-  const plot = new MatplotlibEmbeddable({
+  const plot = new MatplotlibClient({
     container: document.getElementById('my-plot'),
     plotName: 'sine',
     baseUrl: '/plots',
@@ -122,7 +122,7 @@ using the embeddable component:
 </script>
 ```
 
-See `demos/embeddable_demo.html` for comprehensive examples.
+See `demos/client_demo.html` for comprehensive examples.
 
 
 ## Development
@@ -155,7 +155,7 @@ pixi run check  # Run all checks (Python + TypeScript)
 See the `demos/` directory for complete examples:
 
 - `demo_server.py`: Server with basic
-- `embeddable_demo.html`: Examples of embeddable component usage
+- `client_demo.html`: Examples of JavaScript client usage
 - `index.html`: Template-based integration example
 - `react-example`: A
 

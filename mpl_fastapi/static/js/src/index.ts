@@ -8,13 +8,13 @@
 // Export core components
 export { WebSocketManager, type ReconnectConfig } from './websocket-manager.js';
 export { Figure } from './figure.js';
-export { MatplotlibEmbeddable } from './embeddable.js';
+export { MatplotlibClient } from './client.js';
 export { listPlots } from './discovery.js';
 export { VERSION } from './_version.js';
 
 // Export types for TypeScript users
 export type {
-  EmbeddableConfig,
+  ClientConfig,
   PlotSchemaResponse,
   PlotListEntry,
   PlotsListResponse,
@@ -29,13 +29,13 @@ export type {
 // Expose to global window for script tag usage
 import { WebSocketManager } from './websocket-manager.js';
 import { Figure } from './figure.js';
-import { MatplotlibEmbeddable } from './embeddable.js';
+import { MatplotlibClient } from './client.js';
 import { listPlots } from './discovery.js';
 import { VERSION } from './_version.js';
 
 declare global {
   interface Window {
-    MatplotlibEmbeddable: typeof MatplotlibEmbeddable;
+    MatplotlibClient: typeof MatplotlibClient;
     mpl: {
       WebSocketManager: typeof WebSocketManager;
       Figure: typeof Figure;
@@ -46,7 +46,7 @@ declare global {
 }
 
 if (typeof window !== 'undefined') {
-  window.MatplotlibEmbeddable = MatplotlibEmbeddable;
+  window.MatplotlibClient = MatplotlibClient;
 
   // Initialize mpl namespace if not already present
   // Note: Toolbar configuration is now sent via WebSocket messages

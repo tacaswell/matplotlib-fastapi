@@ -84,7 +84,7 @@ app = build_app(plots, lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
-# Extra demo routes (home page, embeddable demo)
+# Extra demo routes (home page, client demo)
 # ---------------------------------------------------------------------------
 
 
@@ -94,9 +94,9 @@ async def home() -> FileResponse:
     return FileResponse(Path(__file__).parent / "index.html", media_type="text/html")
 
 
-@app.get("/embeddable")
-async def embeddable_demo() -> FileResponse:
-    """Serve the embeddable component demo page."""
+@app.get("/client")
+async def client_demo() -> FileResponse:
+    """Serve the JavaScript client demo page."""
     return FileResponse(
-        Path(__file__).parent / "embeddable_demo.html", media_type="text/html"
+        Path(__file__).parent / "client_demo.html", media_type="text/html"
     )

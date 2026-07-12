@@ -92,9 +92,9 @@ export function getImageMimeType(format: ImageFormat): string {
 // ============================================================================
 
 /**
- * Configuration options for MatplotlibEmbeddable component
+ * Configuration options for MatplotlibClient component
  */
-export interface EmbeddableConfig {
+export interface ClientConfig {
   /** The DOM element to render the plot into */
   container: HTMLElement;
 

@@ -72,7 +72,7 @@ uvicorn demos.demo_server:app --reload
 1. **React imports mpl-fastapi**: The `package.json` uses `"mpl-fastapi": "file:../.."` 
    to reference the local package. Vite bundles it into the React app.
 
-2. **MatplotlibPlot component**: A React wrapper around `MatplotlibEmbeddable` that:
+2. **MatplotlibPlot component**: A React wrapper around `MatplotlibClient` that:
    - Creates the plot on mount
    - Updates parameters via props
    - Cleans up on unmount
@@ -87,7 +87,7 @@ uvicorn demos.demo_server:app --reload
 ## Files
 
 - `src/App.tsx` - Main React component with controls
-- `src/MatplotlibPlot.tsx` - Reusable React wrapper for MatplotlibEmbeddable
+- `src/MatplotlibPlot.tsx` - Reusable React wrapper for MatplotlibClient
 - `src/main.tsx` - React entry point
 - `vite.config.ts` - Vite build configuration
 - `package.json` - Dependencies including local mpl-fastapi

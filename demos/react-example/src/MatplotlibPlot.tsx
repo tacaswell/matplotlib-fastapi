@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback } from 'react';
-import { MatplotlibEmbeddable, EmbeddableConfig } from 'mpl-fastapi';
+import { MatplotlibClient, ClientConfig } from 'mpl-fastapi';
 
 export interface MatplotlibPlotProps {
   /** Name of the plot registered with create_mpl_router */
@@ -33,14 +33,14 @@ export interface MatplotlibPlotProps {
 }
 
 /**
- * React wrapper component for MatplotlibEmbeddable.
- * 
- * This component manages the lifecycle of the embeddable plot,
+ * React wrapper component for MatplotlibClient.
+ *
+ * This component manages the lifecycle of the client plot,
  * connecting on mount and disconnecting on unmount.
- * 
+ *
  * - `initParams` are sent at connection time and require reconnection to change
  * - `updateParams` can be changed at any time without reconnecting
- * 
+ *
  * @example
  * ```tsx
  * <MatplotlibPlot
@@ -69,13 +69,16 @@ export function MatplotlibPlot({
   className,
 }: MatplotlibPlotProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const plotRef = useRef<MatplotlibEmbeddable | null>(null);
+  const plotRef = useRef<MatplotlibClient | null>(null);
   const initializedRef = useRef(false);
 
   // Memoize callbacks to avoid unnecessary reconnections
   const handleConnect = useCallback(() => onConnect?.(), [onConnect]);
   const handleError = useCallback((error: Error) => onError?.(error), [onError]);
-  const handleUpdate = useCallback((params: Record<string, unknown>) => onUpdate?.(params), [onUpdate]);
+  const handleUpdate = useCallback(
+    (params: Record<string, unknown>) => onUpdate?.(params),
+    [onUpdate]
+  );
   const handleDisconnect = useCallback(() => onDisconnect?.(), [onDisconnect]);
 
   // Initialize the plot on mount (only once)
@@ -83,7 +86,7 @@ export function MatplotlibPlot({
     if (!containerRef.current || initializedRef.current) return;
     initializedRef.current = true;
 
-    const config: EmbeddableConfig = {
+    const config: ClientConfig = {
       container: containerRef.current,
       plotName,
       baseUrl,
@@ -100,7 +103,7 @@ export function MatplotlibPlot({
       autoConnect: true,
     };
 
-    plotRef.current = new MatplotlibEmbeddable(config);
+    plotRef.current = new MatplotlibClient(config);
 
     // Cleanup on unmount only
     return () => {
@@ -119,11 +122,5 @@ export function MatplotlibPlot({
     }
   }, [updateParams]);
 
-  return (
-    <div 
-      ref={containerRef} 
-      style={style} 
-      className={className}
-    />
-  );
+  return <div ref={containerRef} style={style} className={className} />;
 }

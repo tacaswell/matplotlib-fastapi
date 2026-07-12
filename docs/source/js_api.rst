@@ -1,12 +1,12 @@
 Typescript API
 ==============
 
-embeddable
-----------
+client
+------
 
-.. js:autoclass:: MatplotlibEmbeddable
+.. js:autoclass:: MatplotlibClient
    :members:
-.. js:autoclass:: EmbeddableConfig
+.. js:autoclass:: ClientConfig
    :members:
 
 discovery

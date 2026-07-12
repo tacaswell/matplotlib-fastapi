@@ -12,7 +12,7 @@
 - **Parameter validation**: Pydantic models for type-safe parameter handling
 - **Differential rendering**: Efficient image updates (only changed pixels sent)
 - **No pyplot dependency**: Pure Figure-based API for better control
-- **Embeddable component**: Framework-agnostic JavaScript API for composable plot integration
+- **JavaScript client**: Framework-agnostic JavaScript API for composable plot integration
 
 ## Architecture
 
@@ -29,7 +29,7 @@
    - `create_mpl_router()`: Factory function for creating mountable routers
    - HTTP endpoints: `/` (HTML list), `/plots` (JSON API), `/plot/{name}` (viewer)
    - WebSocket endpoint: `/ws/v0/{name}` (interactive connection)
-   - Component endpoints: `/component.js` (embeddable bundle), `/api/plots/{name}/schema` (JSON schema)
+   - Component endpoints: `/component.js` (client bundle), `/api/plots/{name}/schema` (JSON schema)
    - Configuration structures: `PlotConfig`, `InitConfig`, `UpdateConfig`
    - Response models: `PlotInfo`, `PlotsListResponse`
    - Type aliases: `PlotGenerator`, `UpdateFunction`
@@ -94,7 +94,7 @@ mpl_fastapi/
 │   │   │   ├── types.ts           # Type definitions
 │   │   │   ├── websocket-manager.ts  # WebSocket lifecycle
 │   │   │   ├── figure.ts          # Core figure renderer
-│   │   │   └── embeddable.ts      # Embeddable component
+│   │   │   └── client.ts          # JavaScript client component
 │   │   └── dist/         # Compiled JavaScript (build artifact)
 │   │       └── component.js       # Production bundle
 │   └── images/           # Toolbar icons
@@ -105,7 +105,7 @@ mpl_fastapi/
 
 demos/
 ├── sine_wave.py          # Example FastAPI application
-├── embeddable_demo.html  # Embeddable component demos
+├── client_demo.html      # JavaScript client demos
 └── README.md             # Demo documentation
 
 # Build system
@@ -172,8 +172,8 @@ The project uses a **Python-led build system** where Python's setuptools orchest
 - Created dynamic update API with WebSocket `update_params` messages
 - Comprehensive type annotations throughout
 
-### Phase 6: Embeddable Component (JavaScript) ✅
-- Created `MatplotlibEmbeddable` class for framework-agnostic integration
+### Phase 6: JavaScript Client Component ✅
+- Created `MatplotlibClient` class for framework-agnostic integration
 - Programmatic API supporting React, Vue, Angular, vanilla JS
 - Added `/component.js` and `/api/plots/{name}/schema` endpoints
 - Auto-generated update forms from JSON schemas
@@ -188,7 +188,7 @@ The project uses a **Python-led build system** where Python's setuptools orchest
 ### Phase 8: WebSocket Refactoring ✅
 - **WebSocketManager pattern**: Centralized lifecycle management
 - Event registration before connection to eliminate race conditions
-- Consistent behavior across template and embeddable components
+- Consistent behavior across template and client components
 - Clean separation: WebSocket management vs figure rendering
 - Handler registration API: `onOpen()`, `onMessage()`, `onClose()`, `onError()`
 
@@ -198,10 +198,10 @@ The project uses a **Python-led build system** where Python's setuptools orchest
 
 **Key Design Decisions**:
 1. **Unified Component Architecture (Option C)**:
-   - Single `MatplotlibEmbeddable` class replacing dual `mpl.js`/`mpl_embeddable.js` approach
+   - Single `MatplotlibClient` class replacing dual `mpl.js`/`mpl_embeddable.js` approach
    - Supports both template-based and programmatic usage patterns
    - Eliminates code duplication and maintenance burden
-   - Clean API: `new MatplotlibEmbeddable(config)` for all use cases
+   - Clean API: `new MatplotlibClient(config)` for all use cases
 
 2. **Build-at-Install-Time**:
    - Custom Python build backend (`build_backend.py`) wraps setuptools
@@ -223,10 +223,10 @@ The project uses a **Python-led build system** where Python's setuptools orchest
 
 **Implementation**:
 - **TypeScript Source** (`mpl_fastapi/static/js/src/`):
-  - `types.ts`: 300+ lines of complete type definitions (EmbeddableConfig, ServerMessage, ClientMessage, JSONSchema)
+  - `types.ts`: 300+ lines of complete type definitions (ClientConfig, ServerMessage, ClientMessage, JSONSchema)
   - `websocket-manager.ts`: WebSocket lifecycle management as ES6 class
   - `figure.ts`: Core figure renderer (~700 lines) with all matplotlib interactions
-  - `embeddable.ts`: Unified component with CSS injection, schema fetching, form generation
+  - `client.ts`: Unified component with CSS injection, schema fetching, form generation
   - `index.ts`: Main entry point exposing `window.mpl` namespace
 
 - **Build Configuration**:
@@ -310,9 +310,9 @@ app.mount(mpl.static_mount_path, mpl.static_files, name="mpl_static")
 # Visit: http://localhost:8000/plots
 ```
 
-## Embeddable Component API
+## JavaScript Client API
 
-The embeddable component provides a framework-agnostic JavaScript API for integrating matplotlib figures into any web application without requiring server-rendered HTML templates.
+The JavaScript client provides a framework-agnostic JavaScript API for integrating matplotlib figures into any web application without requiring server-rendered HTML templates.
 
 ### Key Features
 - **Composable**: Can be embedded into React, Vue, Angular, or vanilla JavaScript applications
@@ -335,7 +335,7 @@ The embeddable component provides a framework-agnostic JavaScript API for integr
 
 <script>
   // Create and configure the plot
-  const plot = new MatplotlibEmbeddable({
+  const plot = new MatplotlibClient({
     container: document.getElementById('my-plot'),
     plotName: 'sine',
     baseUrl: '/plots',
@@ -401,7 +401,7 @@ function MatplotlibPlot({ plotName, initParams, onUpdate }) {
 
   useEffect(() => {
     // Create plot on mount
-    plotRef.current = new MatplotlibEmbeddable({
+    plotRef.current = new MatplotlibClient({
       container: containerRef.current,
       plotName: plotName,
       baseUrl: '/plots',
@@ -440,7 +440,7 @@ function MatplotlibPlot({ plotName, initParams, onUpdate }) {
 1. **`GET /plots/component.js`** - Serves the TypeScript-compiled component bundle
    - Single IIFE bundle with all dependencies
    - Includes toolbar configuration (items, extensions, default format)
-   - Exposes `window.mpl` and `window.MatplotlibEmbeddable`
+   - Exposes `window.mpl` and `window.MatplotlibClient`
 
 2. **`GET /plots/component.js.map`** - Serves source map for debugging
    - Enables TypeScript debugging in browser DevTools
@@ -461,7 +461,7 @@ function MatplotlibPlot({ plotName, initParams, onUpdate }) {
 
 ### Demo
 
-See `demos/embeddable_demo.html` for comprehensive examples including:
+See `demos/client_demo.html` for comprehensive examples including:
 - Basic usage with auto-connection
 - Manual connection control
 - Multiple plots on one page
@@ -535,7 +535,7 @@ See `demos/embeddable_demo.html` for comprehensive examples including:
 - **Integration**:
   - `mpl.Figure` accepts WebSocketManager or URL string
   - Template passes URL, figure creates manager internally
-  - Embeddable component creates manager, passes to figure
+  - Client component creates manager, passes to figure
   - Both approaches guarantee handlers registered before connection
 
 ### Download Functionality

@@ -1,5 +1,5 @@
 /**
- * MatplotlibEmbeddable - Unified matplotlib component
+ * MatplotlibClient - Unified matplotlib component
  *
  * A composable, framework-agnostic matplotlib component that provides a clean
  * JavaScript API for embedding interactive matplotlib figures into any web
@@ -7,7 +7,7 @@
  *
  * @example
  * ```typescript
- * const plot = new MatplotlibEmbeddable({
+ * const plot = new MatplotlibClient({
  *   container: document.getElementById('my-plot'),
  *   plotName: 'sine',
  *   baseUrl: '/plots',
@@ -29,7 +29,7 @@
  * ```
  */
 
-import type { EmbeddableConfig, PlotSchemaResponse } from './types.js';
+import type { ClientConfig, PlotSchemaResponse } from './types.js';
 import { WebSocketManager } from './websocket-manager.js';
 import { Figure } from './figure.js';
 
@@ -39,17 +39,17 @@ import { Figure } from './figure.js';
  * All fields are required except `token` which stays optional since
  * not every deployment uses authentication.
  */
-type ResolvedConfig = Required<Omit<EmbeddableConfig, 'token'>> & {
+type ResolvedConfig = Required<Omit<ClientConfig, 'token'>> & {
   token: string | undefined;
 };
 
 /**
- * Main embeddable matplotlib component class
+ * Main matplotlib client class
  *
  * This provides a unified API for embedding interactive matplotlib figures
  * into any web application, supporting both template-based and programmatic usage.
  */
-export class MatplotlibEmbeddable {
+export class MatplotlibClient {
   private readonly config: ResolvedConfig;
   private ws_manager: WebSocketManager | null = null;
   private figure: Figure | null = null;
@@ -59,7 +59,7 @@ export class MatplotlibEmbeddable {
   private readonly instanceId: string;
 
   /**
-   * Create a new MatplotlibEmbeddable and (by default) immediately connect.
+   * Create a new MatplotlibClient and (by default) immediately connect.
    *
    * @param config - Configuration object describing the plot, server URL,
    *   display options, and lifecycle callbacks.  At minimum, ``container``
@@ -68,7 +68,7 @@ export class MatplotlibEmbeddable {
    *
    * @example
    * ```typescript
-   * const plot = new MatplotlibEmbeddable({
+   * const plot = new MatplotlibClient({
    *   container: document.getElementById('my-plot')!,
    *   plotName: 'sine',
    *   baseUrl: '/plots',
@@ -76,7 +76,7 @@ export class MatplotlibEmbeddable {
    * });
    * ```
    */
-  constructor(config: EmbeddableConfig) {
+  constructor(config: ClientConfig) {
     // Generate unique instance ID to avoid ID collisions when multiple plots on same page
     this.instanceId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 

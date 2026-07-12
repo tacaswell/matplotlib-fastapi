@@ -29,7 +29,7 @@ Then visit:
 - http://localhost:8000/plots/plot/sine?frequency=2.0&amplitude=1.5 - With custom parameters
 - http://localhost:8000/plots/plot/cosine - Cosine wave with damping
 - http://localhost:8000/plots/plot/lissajous - Lissajous curves
-- **http://localhost:8000/embeddable** - Embeddable component demos
+- **http://localhost:8000/client** - JavaScript client demos
 - **http://localhost:8000/react-app/** - React integration example
 
 ### Qt Thin-Client Demo
@@ -65,9 +65,9 @@ What to try:
   shows coordinates from the server.
 - **Close a window** — its WebSocket disconnects cleanly.
 
-### Embeddable Component Demo
+### JavaScript Client Demo
 
-The `embeddable_demo.html` file demonstrates the new **MatplotlibEmbeddable** JavaScript API for framework-agnostic plot integration. This shows:
+The `client_demo.html` file demonstrates the new **MatplotlibClient** JavaScript API for framework-agnostic plot integration. This shows:
 
 - Basic usage with auto-connection
 - Manual connection control
@@ -77,7 +77,7 @@ The `embeddable_demo.html` file demonstrates the new **MatplotlibEmbeddable** Ja
 - Error handling
 - React integration patterns
 
-Visit http://localhost:8000/embeddable to see interactive examples.
+Visit http://localhost:8000/client to see interactive examples.
 
 ### React Integration Example
 
@@ -119,7 +119,7 @@ npm link mpl-fastapi
 
 Then import in your project:
 ```javascript
-import { MatplotlibEmbeddable } from 'mpl-fastapi';
+  import { MatplotlibClient } from 'mpl-fastapi';
 ```
 
 ### Option 2: file: dependency
@@ -138,7 +138,7 @@ In your test project's `package.json`:
 After building (`npm run build:npm`), you can import directly in modern browsers:
 ```html
 <script type="module">
-  import { MatplotlibEmbeddable } from '/path/to/dist/mpl-fastapi.js';
+  import { MatplotlibClient } from '/path/to/dist/mpl-fastapi.js';
 </script>
 ```
 
@@ -153,7 +153,7 @@ After building (`npm run build:npm`), you can import directly in modern browsers
 }
 </script>
 <script type="module">
-  import { MatplotlibEmbeddable } from 'mpl-fastapi';
+import { MatplotlibClient } from 'mpl-fastapi';
 </script>
 ```
 
