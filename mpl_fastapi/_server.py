@@ -187,25 +187,89 @@ def build_app(
     _host = os.environ.get("HOST", "127.0.0.1")
     _port = int(os.environ.get("PORT", "8000"))
 
+    def _build_default_params(plot_config: PlotConfig) -> tuple[str, bool]:
+        """Build query string with default/placeholder parameter values.
+
+        Returns
+        -------
+        params_str : str
+            URL-encoded query string with parameter values (defaults or placeholders).
+        has_required : bool
+            True if any parameters are required (have no defaults).
+        """
+        from urllib.parse import urlencode
+
+        from pydantic_core import PydanticUndefined
+
+        # Get the Pydantic model's default values
+        model = plot_config.init.params_model
+        params = {}
+        has_required = False
+
+        # Use model_fields (Pydantic v2) to extract defaults or create placeholders
+        for field_name, field_info in model.model_fields.items():
+            if field_info.default is not PydanticUndefined:
+                # Has a default value - use it
+                params[field_name] = str(field_info.default)
+            elif field_info.default_factory is not None:
+                # Has a default_factory - try to use it
+                try:
+                    default_val = field_info.default_factory()
+                    params[field_name] = str(default_val)
+                except Exception:
+                    # Factory failed - use placeholder
+                    params[field_name] = f"<{field_name}>"
+                    has_required = True
+            else:
+                # No default - use placeholder based on type
+                has_required = True
+                # Try to infer a sensible placeholder from the type annotation
+                annotation = field_info.annotation
+                if annotation == str or (
+                    hasattr(annotation, "__origin__") and annotation.__origin__ is str
+                ):
+                    params[field_name] = f"<{field_name}>"
+                elif annotation in (int, float) or (
+                    hasattr(annotation, "__origin__")
+                    and annotation.__origin__ in (int, float)
+                ):
+                    params[field_name] = f"<{field_name}>"
+                else:
+                    params[field_name] = f"<{field_name}>"
+
+        params_str = urlencode(params) if params else ""
+        return params_str, has_required
+
     @asynccontextmanager
     async def _log_urls_lifespan(_app: FastAPI) -> AsyncIterator[None]:
         base = f"http://{_host}:{_port}"
         if isinstance(auth, SingleUserToken):
             logger.info("Plots list:  %s%s/?token=%s", base, prefix, auth.token)
-            for name in plots:
-                logger.info(
-                    "  %-20s %s%s/plot/%s?token=%s",
-                    name,
-                    base,
-                    prefix,
-                    name,
-                    auth.token,
+            for name, plot_config in plots.items():
+                params, has_required = _build_default_params(plot_config)
+                param_sep = "&" if params else ""
+                url = (
+                    f"{base}{prefix}/plot/{name}?token={auth.token}{param_sep}{params}"
                 )
+                if has_required:
+                    logger.info(
+                        "  %-20s %s  [edit placeholders: %s]", name, url, params
+                    )
+                else:
+                    logger.info("  %-20s %s", name, url)
             logger.info("Auth token:  %s", auth.token)
         else:
             logger.info("Plots list:  %s%s/", base, prefix)
-            for name in plots:
-                logger.info("  %-20s %s%s/plot/%s", name, base, prefix, name)
+            for name, plot_config in plots.items():
+                params, has_required = _build_default_params(plot_config)
+                param_sep = "?" if params else ""
+                url = f"{base}{prefix}/plot/{name}{param_sep}{params}"
+                if has_required:
+                    logger.info(
+                        "  %-20s %s  [edit placeholders: %s]", name, url, params
+                    )
+                else:
+                    logger.info("  %-20s %s", name, url)
         yield
 
     # Compose the logging lifespan with whatever install_mpl_router already
