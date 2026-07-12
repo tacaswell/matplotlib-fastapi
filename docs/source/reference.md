@@ -3,12 +3,12 @@
 
 ```{toctree}
 ---
-maxdepth: 2
+maxdepth: 3
 ---
 API.md
 open_api.rst
-python_client.rst
 js_api.rst
+python_client.rst
 websocket-protocol
 
 ```
