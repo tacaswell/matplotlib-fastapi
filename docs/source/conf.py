@@ -53,3 +53,10 @@ numpydoc_class_members_toctree = False
 
 html_theme = "pydata_sphinx_theme"
 html_static_path = ["_static"]
+
+# Customize the header title (shorter for narrow screens)
+html_theme_options = {
+    "logo": {
+        "text": f"{project} {release}",
+    }
+}
