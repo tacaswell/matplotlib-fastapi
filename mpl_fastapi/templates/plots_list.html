@@ -176,7 +176,7 @@
                 {{ info.description }}
             </div>
 
-            <form id="form-{{ name }}" class="parameters-section">
+            <form id="form-{{ name }}" class="parameters-section" onsubmit="event.preventDefault(); openPlotWithParams('{{ name }}', 'form-{{ name }}'); return false;">
                 <div class="parameters-title">Parameters:</div>
                 <div class="parameter-list">
                     {% for param_name, param_info in info.parameters.properties.items() %}
