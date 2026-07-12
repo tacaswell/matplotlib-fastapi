@@ -23,11 +23,22 @@ extensions = [
     "sphinx_js",
     "numpydoc",  # Needs to be loaded *after* autodoc.
     "sphinxcontrib.openapi",
+    "matplotlib.sphinxext.roles",  # For :rc: and other matplotlib roles
 ]
 js_language = "typescript"
 js_source_path = "../../mpl_fastapi/static/js/src"
 templates_path = ["_templates"]
 exclude_patterns = []
+
+# -- Intersphinx configuration -----------------------------------------------
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "matplotlib": ("https://matplotlib.org/stable", None),
+    "numpy": ("https://numpy.org/doc/stable", None),
+}
+
+# -- MyST configuration ------------------------------------------------------
+myst_heading_anchors = 3  # Auto-generate anchors for h1, h2, h3
 
 # -- Autosummary configuration -----------------------------------------------
 autosummary_generate = True  # Generate stub files automatically

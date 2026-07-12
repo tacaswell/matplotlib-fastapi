@@ -126,7 +126,11 @@ sequenceDiagram
     "label": "My Figure"
   },
   "toolbar": {
-    "items": [["Home", "Reset view", "home", "home"], ...],
+    "items": [
+      ["Home", "Reset view", "home", "home"],
+      ["Back", "Back", "back", "arrow-left"],
+      ["Forward", "Forward", "forward", "arrow-right"]
+    ],
     "history": {"back": false, "forward": false}
   },
   "save": {

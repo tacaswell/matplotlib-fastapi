@@ -59,6 +59,7 @@ class FastAPICanvas(FigureCanvasAgg):
     """Matplotlib canvas with WebSocket communication for FastAPI.
 
     This canvas extends the Agg backend with:
+
     - Differential image updates to reduce bandwidth
     - Event queue for async WebSocket messages
     - Mouse and keyboard event handling from browser
