@@ -28,7 +28,7 @@
 2. **Router Layer** (`mpl_fastapi/router.py`)
    - `create_mpl_router()`: Factory function for creating mountable routers
    - HTTP endpoints: `/` (HTML list), `/plots` (JSON API), `/plot/{name}` (viewer)
-   - WebSocket endpoint: `/ws/{name}` (interactive connection)
+   - WebSocket endpoint: `/ws/v0/{name}` (interactive connection)
    - Component endpoints: `/component.js` (embeddable bundle), `/api/plots/{name}/schema` (JSON schema)
    - Configuration structures: `PlotConfig`, `InitConfig`, `UpdateConfig`
    - Response models: `PlotInfo`, `PlotsListResponse`

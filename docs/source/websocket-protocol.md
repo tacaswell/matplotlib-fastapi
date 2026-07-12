@@ -19,7 +19,6 @@ This document describes the matplotlib-fastapi WebSocket protocol version 0 for 
 
 The WebSocket endpoint includes the protocol version in the URL path:
 - **v0**: `/ws/v0/{plot_name}` (current)
-- Legacy endpoint `/ws/{plot_name}` redirects to v0
 
 ### Key Design Principles
 
