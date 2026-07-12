@@ -45,16 +45,18 @@ export default function App() {
       </div>
 
       {tab === 'picker' && (
-        <div style={{
-          background: 'white',
-          padding: 20,
-          borderRadius: 8,
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        }}>
+        <div
+          style={{
+            background: 'white',
+            padding: 20,
+            borderRadius: 8,
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          }}
+        >
           <h2 style={{ marginTop: 0 }}>Plot Picker</h2>
           <p style={{ color: '#666' }}>
-            Discover all available plots on the server.  Select one, fill in
-            parameters, and click <strong>Open Plot</strong> to view it.
+            Discover all available plots on the server. Select one, fill in parameters,
+            and click <strong>Open Plot</strong> to view it.
           </p>
           <PlotPicker baseUrl="/plots" />
         </div>
@@ -62,13 +64,15 @@ export default function App() {
 
       {tab === 'direct' && (
         <>
-          <div style={{
-            background: 'white',
-            padding: 20,
-            borderRadius: 8,
-            marginBottom: 20,
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-          }}>
+          <div
+            style={{
+              background: 'white',
+              padding: 20,
+              borderRadius: 8,
+              marginBottom: 20,
+              boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+            }}
+          >
             <h2>Phase Control</h2>
             <p style={{ color: '#666', marginBottom: 15 }}>
               Drag the slider to update the sine wave phase in real-time via WebSocket.
@@ -87,12 +91,14 @@ export default function App() {
             </label>
           </div>
 
-          <div style={{
-            background: 'white',
-            padding: 20,
-            borderRadius: 8,
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-          }}>
+          <div
+            style={{
+              background: 'white',
+              padding: 20,
+              borderRadius: 8,
+              boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+            }}
+          >
             <h2>Interactive Sine Plot</h2>
             <MatplotlibPlot
               plotName="interactive_sine"
@@ -108,15 +114,23 @@ export default function App() {
           <div style={{ marginTop: 20, color: '#666', fontSize: 14 }}>
             <strong>How it works:</strong>
             <ul>
-              <li>React app built with Vite, outputs to <code>demos/react-example/dist/</code></li>
-              <li>FastAPI serves the built React app at <code>/react-app/</code></li>
-              <li>WebSocket connects to <code>/plots/ws/v0/interactive_sine</code></li>
+              <li>
+                React app built with Vite, outputs to{' '}
+                <code>demos/react-example/dist/</code>
+              </li>
+              <li>
+                FastAPI serves the built React app at <code>/react-app/</code>
+              </li>
+              <li>
+                WebSocket connects to <code>/plots/ws/v0/interactive_sine</code>
+              </li>
               <li>Phase updates are sent via WebSocket without reconnecting</li>
               <li>Single server handles everything - no CORS issues!</li>
             </ul>
             <p style={{ marginTop: 10 }}>
-              <strong>Note:</strong> <code>initParams</code> (frequency, amplitude) are set at connection time.
-              Only <code>updateParams</code> (phase) can be changed without reconnecting.
+              <strong>Note:</strong> <code>initParams</code> (frequency, amplitude) are
+              set at connection time. Only <code>updateParams</code> (phase) can be
+              changed without reconnecting.
             </p>
           </div>
         </>

@@ -1,5 +1,10 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { listPlots, type PlotsListResponse, type PlotListEntry, type JSONSchemaProperty } from 'mpl-fastapi';
+import {
+  listPlots,
+  type PlotsListResponse,
+  type PlotListEntry,
+  type JSONSchemaProperty,
+} from 'mpl-fastapi';
 import { MatplotlibPlot } from './MatplotlibPlot';
 
 interface OpenedPlot {
@@ -46,7 +51,9 @@ function SchemaForm({
                 />
                 <span>
                   {label}
-                  {desc && <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>}
+                  {desc && (
+                    <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>
+                  )}
                 </span>
               </label>
             </div>
@@ -58,7 +65,9 @@ function SchemaForm({
             <div key={name} style={{ marginBottom: 8 }}>
               <label style={{ display: 'block', marginBottom: 4 }}>
                 {label}
-                {desc && <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>}
+                {desc && (
+                  <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>
+                )}
               </label>
               <select
                 value={String(values[name] ?? prop.default ?? '')}
@@ -80,7 +89,9 @@ function SchemaForm({
             <div key={name} style={{ marginBottom: 8 }}>
               <label style={{ display: 'block', marginBottom: 4 }}>
                 {label}
-                {desc && <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>}
+                {desc && (
+                  <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>
+                )}
               </label>
               <input
                 type="number"
@@ -89,9 +100,10 @@ function SchemaForm({
                 max={prop.maximum}
                 value={String(values[name] ?? prop.default ?? '')}
                 onChange={(e) => {
-                  const v = prop.type === 'integer'
-                    ? parseInt(e.target.value, 10)
-                    : parseFloat(e.target.value);
+                  const v =
+                    prop.type === 'integer'
+                      ? parseInt(e.target.value, 10)
+                      : parseFloat(e.target.value);
                   if (!isNaN(v)) onChange(name, v);
                 }}
                 style={{ padding: '4px 8px', width: '100%' }}
@@ -105,7 +117,9 @@ function SchemaForm({
           <div key={name} style={{ marginBottom: 8 }}>
             <label style={{ display: 'block', marginBottom: 4 }}>
               {label}
-              {desc && <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>}
+              {desc && (
+                <span style={{ color: '#888', fontSize: '0.9em' }}> ({desc})</span>
+              )}
             </label>
             <input
               type="text"
@@ -158,7 +172,9 @@ export function PlotPicker({ baseUrl = '/plots', token }: PlotPickerProps) {
           setLoading(false);
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [baseUrl, token]);
 
   const _resetFormValues = useCallback((entry: PlotListEntry) => {
@@ -185,7 +201,7 @@ export function PlotPicker({ baseUrl = '/plots', token }: PlotPickerProps) {
       const entry = plots[name];
       if (entry) _resetFormValues(entry);
     },
-    [plots, _resetFormValues],
+    [plots, _resetFormValues]
   );
 
   const handleOpen = useCallback(() => {
@@ -255,8 +271,17 @@ export function PlotPicker({ baseUrl = '/plots', token }: PlotPickerProps) {
             {/* Init params */}
             {selectedEntry.parameters?.properties &&
               Object.keys(selectedEntry.parameters.properties).length > 0 && (
-                <fieldset style={{ marginBottom: 16, border: '1px solid #ddd', borderRadius: 4, padding: 12 }}>
-                  <legend><strong>Init Parameters</strong></legend>
+                <fieldset
+                  style={{
+                    marginBottom: 16,
+                    border: '1px solid #ddd',
+                    borderRadius: 4,
+                    padding: 12,
+                  }}
+                >
+                  <legend>
+                    <strong>Init Parameters</strong>
+                  </legend>
                   <SchemaForm
                     schema={selectedEntry.parameters.properties}
                     values={initValues}
@@ -270,8 +295,17 @@ export function PlotPicker({ baseUrl = '/plots', token }: PlotPickerProps) {
             {/* Update params */}
             {selectedEntry.update_schema?.properties &&
               Object.keys(selectedEntry.update_schema.properties).length > 0 && (
-                <fieldset style={{ marginBottom: 16, border: '1px solid #ddd', borderRadius: 4, padding: 12 }}>
-                  <legend><strong>Update Parameters</strong></legend>
+                <fieldset
+                  style={{
+                    marginBottom: 16,
+                    border: '1px solid #ddd',
+                    borderRadius: 4,
+                    padding: 12,
+                  }}
+                >
+                  <legend>
+                    <strong>Update Parameters</strong>
+                  </legend>
                   <SchemaForm
                     schema={selectedEntry.update_schema.properties}
                     values={updateValues}

@@ -31,8 +31,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from mpl_fastapi import __version__
 from mpl_fastapi.auth import COOKIE_NAME, AuthPolicy, SingleUserToken
 from mpl_fastapi.router import (
-    Lifespan,
     ConnectionInfo,
+    Lifespan,
     PlotConfig,
     compose_lifespans,
     create_mpl_router,

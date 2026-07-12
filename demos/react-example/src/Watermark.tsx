@@ -26,7 +26,9 @@ export function Watermark({ baseUrl = '/plots' }: WatermarkProps) {
           setVersions({ mpl_fastapi_js: VERSION });
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [baseUrl]);
 
   if (!versions) return null;
