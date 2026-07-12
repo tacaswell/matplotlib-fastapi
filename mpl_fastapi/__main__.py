@@ -121,6 +121,18 @@ def main() -> None:
         os.environ["_MPL_FASTAPI_NO_AUTH"] = "1"
         uvicorn_args.remove("--no-auth")
 
+    # Extract --host and --port if present to set environment variables
+    # so the startup log displays the correct URLs
+    for i, arg in enumerate(uvicorn_args):
+        if arg == "--host" and i + 1 < len(uvicorn_args):
+            os.environ["HOST"] = uvicorn_args[i + 1]
+        elif arg == "--port" and i + 1 < len(uvicorn_args):
+            os.environ["PORT"] = uvicorn_args[i + 1]
+        elif arg.startswith("--host="):
+            os.environ["HOST"] = arg.split("=", 1)[1]
+        elif arg.startswith("--port="):
+            os.environ["PORT"] = arg.split("=", 1)[1]
+
     # Pass args directly to Click so sys.argv is never mutated.
     uvicorn.main(args=["mpl_fastapi._app:app", *uvicorn_args], standalone_mode=True)
 
