@@ -78,12 +78,14 @@ format = "ruff format mpl_fastapi"
 format-check = "ruff format --check mpl_fastapi"
 typecheck = "mypy mpl_fastapi"
 
-# Run the example server
-run = "MPL_NO_CACHE_JS=1 uvicorn demos.demo_server:app --reload --host 127.0.0.1 --port 8000"
+# Run the example server. Port is configurable via argument (default 8000),
+# e.g. `pixi run run 8080`.
+run = { cmd = "MPL_NO_CACHE_JS=1 uvicorn demos.demo_server:app --reload --host 127.0.0.1 --port {{ port }}", args = [{ arg = "port", default = "8000" }] }
 
 # Development mode with hot reload (TypeScript watch + React watch + Python server in parallel)
 # Note: Runs all processes; Ctrl+C will stop all
-dev = "(cd demos/react-example && npm install && npm run build) && MPL_NO_CACHE_JS=1 npm run watch & (cd demos/react-example && npm run dev) & MPL_NO_CACHE_JS=1 uvicorn demos.demo_server:app --reload --host 127.0.0.1 --port 8000"
+# Port is configurable via argument (default 8000), e.g. `pixi run dev 8080`.
+dev = { cmd = "(cd demos/react-example && npm install && npm run build) && MPL_NO_CACHE_JS=1 npm run watch & (cd demos/react-example && npm run dev) & MPL_NO_CACHE_JS=1 uvicorn demos.demo_server:app --reload --host 127.0.0.1 --port {{ port }}", args = [{ arg = "port", default = "8000" }] }
 
 # Documentation
 docs-openapi = { cmd = "python docs/export_openapi.py", default-environment = "docs" }
