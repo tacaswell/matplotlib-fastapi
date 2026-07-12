@@ -81,10 +81,18 @@
             font-size: 16px;
             text-decoration: none;
             display: inline-block;
-            transition: background-color 0.2s;
+            transition: background-color 0.2s, opacity 0.2s;
         }
         .view-button:hover {
             background-color: #0056b3;
+        }
+        .view-button:disabled {
+            background-color: #6c757d;
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .view-button:disabled:hover {
+            background-color: #6c757d;
         }
         .json-link {
             color: #6c757d;
@@ -126,6 +134,42 @@
         }
     </style>
     <script>
+        // Store required parameters for each plot
+        const plotRequiredParams = {};
+
+        function validateForm(plotName, formId, buttonId) {
+            const form = document.getElementById(formId);
+            const button = document.getElementById(buttonId);
+            const requiredParams = plotRequiredParams[plotName] || [];
+
+            let allFilled = true;
+            requiredParams.forEach(paramName => {
+                const input = form.querySelector(`input[name="${paramName}"]`);
+                if (input && input.value.trim() === '') {
+                    allFilled = false;
+                }
+            });
+
+            button.disabled = !allFilled;
+        }
+
+        function setupFormValidation(plotName, formId, buttonId, requiredParams) {
+            // Store required params for this plot
+            plotRequiredParams[plotName] = requiredParams;
+
+            // Get the form and add input event listeners
+            const form = document.getElementById(formId);
+            const inputs = form.querySelectorAll('input');
+            inputs.forEach(input => {
+                input.addEventListener('input', () => {
+                    validateForm(plotName, formId, buttonId);
+                });
+            });
+
+            // Run initial validation
+            validateForm(plotName, formId, buttonId);
+        }
+
         function openPlotWithParams(plotName, formId) {
             const form = document.getElementById(formId);
             const params = new URLSearchParams();
@@ -167,7 +211,7 @@
             <div class="plot-header">
                 <div class="plot-name">{{ name }}</div>
                 <div>
-                    <button onclick="openPlotWithParams('{{ name }}', 'form-{{ name }}')" class="view-button">Open Plot</button>
+                    <button id="button-{{ name }}" onclick="openPlotWithParams('{{ name }}', 'form-{{ name }}')" class="view-button">Open Plot</button>
                     <a href="/plots" class="json-link">JSON API</a>
                 </div>
             </div>
@@ -224,6 +268,13 @@
                     {% endfor %}
                 </div>
             </form>
+            <script>
+                // Initialize validation for this plot
+                (function() {
+                    const requiredParams = {{ info.parameters.get('required', []) | tojson }};
+                    setupFormValidation('{{ name }}', 'form-{{ name }}', 'button-{{ name }}', requiredParams);
+                })();
+            </script>
         </div>
         {% endfor %}
     {% else %}
