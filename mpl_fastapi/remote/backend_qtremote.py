@@ -183,8 +183,10 @@ class FigureCanvasQTRemote(FigureCanvasRemote, FigureCanvasQT):
     Inherits from both :class:`FigureCanvasRemote` (protocol logic) and
     :class:`FigureCanvasQT` (Qt widget integration).
 
-    Threading
-    ---------
+    Notes
+    -----
+    **Threading**
+
     * ``paintEvent()`` / ``draw()`` run on the **main** thread (blit only).
     * Transport IO runs on :class:`TransportThread`.
     * Incoming messages arrive via Qt signals → main-thread slots.

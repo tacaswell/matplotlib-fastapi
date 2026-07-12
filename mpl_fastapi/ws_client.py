@@ -394,8 +394,8 @@ class MatplotlibWebSocketClient:
         MatplotlibWebSocketClient
             This client instance after initialization
 
-        Example
-        -------
+        Examples
+        --------
         >>> with client.connect():
         ...     image = client.send_refresh()
         """
@@ -902,8 +902,8 @@ class MatplotlibWebSocketClient:
         TimeoutError
             If timeout is reached (adapter-dependent)
 
-        Example
-        -------
+        Examples
+        --------
         >>> with client.connect():
         ...     client.send_toolbar_button("pan")
         ...     msg = client.receive_message()

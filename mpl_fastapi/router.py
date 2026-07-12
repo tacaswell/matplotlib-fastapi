@@ -932,8 +932,8 @@ def create_mpl_router(
         Container with .router (APIRouter), .static_files (StaticFiles),
         and .static_mount_path (str)
 
-    Example
-    -------
+    Examples
+    --------
     >>> class SinePlotParams(BaseModel):
     ...     frequency: float = 1.0
     ...     amplitude: float = 1.0

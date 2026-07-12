@@ -59,8 +59,10 @@ class FigureCanvasRemote(FigureCanvasBase):
     local renderer.  All images come from the server via the WebSocket
     protocol.
 
-    Threading contract
-    ------------------
+    Notes
+    -----
+    **Threading contract**
+
     * ``draw()`` and ``schedule_repaint()`` run on the **main** (GUI) thread
       and only blit the last received image.
     * Network IO runs on the transport's background thread/task.
@@ -68,8 +70,8 @@ class FigureCanvasRemote(FigureCanvasBase):
       on the main thread (the toolkit layer must marshal via signals or
       similar).
 
-    Subclass responsibilities (toolkit layer)
-    ------------------------------------------
+    **Subclass responsibilities (toolkit layer)**
+
     * :meth:`schedule_repaint` — post a repaint/update to the toolkit event
       loop so that ``draw()`` / ``paintEvent()`` will be called.
     """
