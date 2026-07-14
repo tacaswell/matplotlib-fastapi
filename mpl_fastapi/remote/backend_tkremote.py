@@ -1317,8 +1317,16 @@ class _LauncherFormFrame(ttk.Frame):
     def _create_input(master: Any, name: str, prop: dict[str, Any]) -> tuple[Any, Any]:
         """Return (widget, tk variable) for the given JSON Schema property."""
         prop_type = prop.get("type", "string")
+        prop_format = prop.get("format")
         default = prop.get("default")
 
+        # Boolean: checkbox
+        if prop_type == "boolean":
+            var = tk.BooleanVar(value=bool(default) if default is not None else False)
+            widget = ttk.Checkbutton(master, variable=var)
+            return widget, var
+
+        # Number/Integer: spinbox
         if prop_type in ("number", "integer"):
             var: Any = tk.DoubleVar(
                 value=float(default) if default is not None else 0.0
@@ -1341,12 +1349,9 @@ class _LauncherFormFrame(ttk.Frame):
             )
             return widget, var
 
-        if prop_type == "boolean":
-            var = tk.BooleanVar(value=bool(default) if default is not None else False)
-            widget = ttk.Checkbutton(master, variable=var)
-            return widget, var
-
+        # String with special formats or enum
         if prop_type == "string":
+            # Enum: combo box
             enum_values = prop.get("enum")
             if enum_values is not None:
                 var = tk.StringVar(
@@ -1359,6 +1364,74 @@ class _LauncherFormFrame(ttk.Frame):
                     state="readonly",
                 )
                 return widget, var
+
+            # Color: button that opens color picker
+            if prop_format == "color":
+                var = tk.StringVar(
+                    value=str(default) if default is not None else "#000000"
+                )
+
+                # Create frame to hold button
+                frame = ttk.Frame(master)
+
+                # Color display button
+                color_btn = tk.Button(
+                    frame,
+                    text=var.get(),
+                    bg=var.get(),
+                    width=10,
+                    relief="solid",
+                    borderwidth=1,
+                )
+                color_btn.pack(side=tk.LEFT, padx=2)
+
+                def _choose_color() -> None:
+                    from tkinter import colorchooser
+
+                    color = colorchooser.askcolor(
+                        color=var.get(), title=f"Choose {name}"
+                    )
+                    if color[1]:  # color[1] is the hex string
+                        var.set(color[1])
+                        color_btn.config(text=color[1], bg=color[1])
+
+                color_btn.config(command=_choose_color)
+                return frame, var
+
+            # Date: entry with date validation
+            if prop_format == "date":
+                var = tk.StringVar(value=str(default) if default is not None else "")
+                widget = ttk.Entry(master, textvariable=var, width=12)
+                # Add placeholder text in the entry
+                if not var.get():
+                    from datetime import date
+
+                    var.set(date.today().isoformat())
+                return widget, var
+
+            # Time: entry with time validation
+            if prop_format == "time":
+                var = tk.StringVar(value=str(default) if default is not None else "")
+                widget = ttk.Entry(master, textvariable=var, width=12)
+                # Add placeholder text
+                if not var.get():
+                    from datetime import datetime
+
+                    var.set(datetime.now().strftime("%H:%M:%S"))
+                return widget, var
+
+            # DateTime: entry with datetime validation
+            if prop_format == "date-time":
+                var = tk.StringVar(value=str(default) if default is not None else "")
+                widget = ttk.Entry(master, textvariable=var, width=20)
+                # Add placeholder text
+                if not var.get():
+                    from datetime import datetime
+
+                    var.set(datetime.now().strftime("%Y-%m-%dT%H:%M:%S"))
+                return widget, var
+
+            # Default string: entry
             var = tk.StringVar(value=str(default) if default is not None else "")
             widget = ttk.Entry(master, textvariable=var)
             return widget, var

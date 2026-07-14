@@ -721,8 +721,18 @@ class SchemaFormBuilder:
             The created widget, or ``None`` for unsupported types.
         """
         prop_type = prop.get("type", "string")
+        prop_format = prop.get("format")
         default = prop.get("default")
 
+        # Boolean: checkbox
+        if prop_type == "boolean":
+            widget = QtWidgets.QCheckBox()
+            widget.setObjectName(name)
+            if default is not None:
+                widget.setChecked(bool(default))
+            return widget
+
+        # Number/Integer: spinbox
         if prop_type in ("number", "integer"):
             widget = QtWidgets.QDoubleSpinBox()
             widget.setObjectName(name)
@@ -750,14 +760,9 @@ class SchemaFormBuilder:
 
             return widget
 
-        if prop_type == "boolean":
-            widget = QtWidgets.QCheckBox()
-            widget.setObjectName(name)
-            if default is not None:
-                widget.setChecked(bool(default))
-            return widget
-
+        # String with special formats or enum
         if prop_type == "string":
+            # Enum: combo box
             enum_values = prop.get("enum")
             if enum_values is not None:
                 widget = QtWidgets.QComboBox()
@@ -769,6 +774,94 @@ class SchemaFormBuilder:
                     if idx >= 0:
                         widget.setCurrentIndex(idx)
                 return widget
+
+            # Color: color picker button
+            if prop_format == "color":
+
+                widget = QtWidgets.QPushButton()
+                widget.setObjectName(name)
+                # Parse default color
+                color_str = str(default) if default is not None else "#000000"
+                # Handle hex colors
+                if color_str.startswith("#"):
+                    color = QtGui.QColor(color_str)
+                # Handle named colors
+                elif not color_str.startswith("rgb"):
+                    color = QtGui.QColor(color_str)
+                else:
+                    # Fallback for rgb/rgba - just use black
+                    color = QtGui.QColor("#000000")
+
+                widget.setStyleSheet(
+                    f"background-color: {color.name()}; border: 1px solid #999;"
+                )
+                widget.setText(color.name())
+
+                def _on_color_click() -> None:
+                    current = QtGui.QColor(widget.text())
+                    new_color = QtWidgets.QColorDialog.getColor(
+                        current, None, f"Choose {name}"
+                    )
+                    if new_color.isValid():
+                        widget.setText(new_color.name())
+                        widget.setStyleSheet(
+                            f"background-color: {new_color.name()}; border: 1px solid #999;"
+                        )
+
+                widget.clicked.connect(_on_color_click)
+                return widget
+
+            # Date: date picker
+            if prop_format == "date":
+
+                widget = QtWidgets.QDateEdit()
+                widget.setObjectName(name)
+                widget.setCalendarPopup(True)
+                widget.setDisplayFormat("yyyy-MM-dd")
+                if default is not None:
+                    # Parse ISO date string (YYYY-MM-DD)
+                    date = QtCore.QDate.fromString(str(default), "yyyy-MM-dd")
+                    if date.isValid():
+                        widget.setDate(date)
+                else:
+                    widget.setDate(QtCore.QDate.currentDate())
+                return widget
+
+            # Time: time picker
+            if prop_format == "time":
+
+                widget = QtWidgets.QTimeEdit()
+                widget.setObjectName(name)
+                widget.setDisplayFormat("HH:mm:ss")
+                if default is not None:
+                    # Parse ISO time string (HH:MM:SS)
+                    time = QtCore.QTime.fromString(str(default), "HH:mm:ss")
+                    if time.isValid():
+                        widget.setTime(time)
+                else:
+                    widget.setTime(QtCore.QTime.currentTime())
+                return widget
+
+            # DateTime: datetime picker
+            if prop_format == "date-time":
+
+                widget = QtWidgets.QDateTimeEdit()
+                widget.setObjectName(name)
+                widget.setCalendarPopup(True)
+                widget.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+                if default is not None:
+                    # Parse ISO datetime string
+                    dt_str = (
+                        str(default).replace("T", " ").split(".")[0]
+                    )  # Remove microseconds
+                    dt = QtCore.QDateTime.fromString(dt_str, "yyyy-MM-dd HH:mm:ss")
+                    if dt.isValid():
+                        widget.setDateTime(dt)
+                else:
+                    widget.setDateTime(QtCore.QDateTime.currentDateTime())
+                return widget
+
+            # Default string: line edit
             widget = QtWidgets.QLineEdit()
             widget.setObjectName(name)
             if default is not None:
@@ -792,6 +885,8 @@ class SchemaFormBuilder:
         properties = self._schema.get("properties", {})
         for name, widget in self._inputs.items():
             prop_type = properties[name].get("type", "string")
+            prop_format = properties[name].get("format")
+
             if isinstance(widget, QtWidgets.QDoubleSpinBox):
                 val = widget.value()
                 if prop_type == "integer":
@@ -801,6 +896,18 @@ class SchemaFormBuilder:
                 values[name] = widget.isChecked()
             elif isinstance(widget, QtWidgets.QComboBox):
                 values[name] = widget.currentText()
+            elif isinstance(widget, QtWidgets.QPushButton):
+                # Color picker button - text contains the hex color
+                values[name] = widget.text()
+            elif isinstance(widget, QtWidgets.QDateEdit):
+                # Date picker - return ISO format YYYY-MM-DD
+                values[name] = widget.date().toString("yyyy-MM-dd")
+            elif isinstance(widget, QtWidgets.QTimeEdit):
+                # Time picker - return ISO format HH:MM:SS
+                values[name] = widget.time().toString("HH:mm:ss")
+            elif isinstance(widget, QtWidgets.QDateTimeEdit):
+                # DateTime picker - return ISO format YYYY-MM-DDTHH:MM:SS
+                values[name] = widget.dateTime().toString("yyyy-MM-ddTHH:mm:ss")
             elif isinstance(widget, QtWidgets.QLineEdit):
                 values[name] = widget.text()
         return values
@@ -813,6 +920,7 @@ class SchemaFormBuilder:
         params : dict
             Parameter name → value.  Unknown names are silently ignored.
         """
+
         for name, value in params.items():
             widget = self._inputs.get(name)
             if widget is None:
@@ -825,6 +933,34 @@ class SchemaFormBuilder:
                 idx = widget.findText(str(value))
                 if idx >= 0:
                     widget.setCurrentIndex(idx)
+            elif isinstance(widget, QtWidgets.QPushButton):
+                # Color picker button
+                color_str = str(value)
+                if color_str.startswith("#"):
+                    color = QtGui.QColor(color_str)
+                else:
+                    color = QtGui.QColor(color_str)
+                if color.isValid():
+                    widget.setText(color.name())
+                    widget.setStyleSheet(
+                        f"background-color: {color.name()}; border: 1px solid #999;"
+                    )
+            elif isinstance(widget, QtWidgets.QDateEdit):
+                # Date picker
+                date = QtCore.QDate.fromString(str(value), "yyyy-MM-dd")
+                if date.isValid():
+                    widget.setDate(date)
+            elif isinstance(widget, QtWidgets.QTimeEdit):
+                # Time picker
+                time = QtCore.QTime.fromString(str(value), "HH:mm:ss")
+                if time.isValid():
+                    widget.setTime(time)
+            elif isinstance(widget, QtWidgets.QDateTimeEdit):
+                # DateTime picker
+                dt_str = str(value).replace("T", " ").split(".")[0]
+                dt = QtCore.QDateTime.fromString(dt_str, "yyyy-MM-dd HH:mm:ss")
+                if dt.isValid():
+                    widget.setDateTime(dt)
             elif isinstance(widget, QtWidgets.QLineEdit):
                 widget.setText(str(value))
 
