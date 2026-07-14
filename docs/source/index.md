@@ -1,40 +1,65 @@
 # mpl-fastapi documentation
 
-The goal of this project is to provide a [fastapi](https://fastapi.tiangolo.com)
-[`APIRouter`](https://fastapi.tiangolo.com/reference/apirouter/?h=apirouter) that
-serves interactive [Matplotlib](https://matplotlib.org) figures via a websocket.
-The provides the ability to serve visualization developed in Python via Matplotlib
-to the web with server-side rendering.
+
+```{toctree}
+---
+hidden: true
+---
+
+reference.md
+explain.md
+tutorials.md
+how-to.md
+
+```
+
+
+The goal of this project is to provide a
+[fastapi](https://fastapi.tiangolo.com)
+[`APIRouter`](https://fastapi.tiangolo.com/reference/apirouter/?h=apirouter)
+that serves interactive [Matplotlib](https://matplotlib.org) figures via a
+websocket.  This provides the ability to serve visualization developed in
+Python via Matplotlib to the web with server-side rendering and all user
+events.
 
 
 ```{admonition} 🤖 generated code ahead
-This project was half about generating a useful tool and half about having a
-real project to try out LLM tools on.  The initial proof of concept was done almost
-4 years ago (late 2021/early 2022) and then sat somewhere too far down my todo list
-to ever get done until early 2026.
 
-I am not sure about the future of LLMs in this project.  I suspect I'll do a few more
-big things, but if this moves beyond being a toy will move to follow Matplotlib's policy.
+This project was half about generating a useful tool and half about having a
+real project to try out LLM tools on.
+
+The initial proof of concept was done in late 2021/early 2022 and then sat
+somewhere too far down my todo list to ever get done until early 2026.
+
+I am not sure about the future of LLMs in this project.  If this moves beyond
+being a toy we will move to follow
+[Matplotlib's
+policy](https://matplotlib.org/devdocs/devel/contribute.html#use-of-generative-ai).
+
 ```
 
-## Components
+## Overview
 
-There are three main parts to this library:
-
-1. The server backend
-2. javascript/typescript client/frontend
-3. Python thin-client/frontend
-
-The backend is a FastAPI router, with the intent of being added into other
-servers (although a Configurable Application is included in the package).  The
-router provides a handful of static routes and then a web-socket route per
-defined figure that can be used to serve a fully interactive figure.  All of
-the rendering is done on the server side and user interaction events are
-forwarded from the browser to the server.  This means that any interactions
-written Matplotlib's [event
+This project provides a Configurable Application for serving pre-defined
+interactive Matplotlib figures via FastAPI.  A FastAPI Router is also exposed
+for embedding into other servers.  The router provides a handful of static
+routes and then a web-socket route per defined figure.  When a client connects
+the websocket is used to serve a fully interactive figure.  All of the
+rendering is done on the server side sent to the client as a png.  This means
+that the raw data does not need to be shipped to the client.  User interaction
+events are forwarded from the client to the server to be handled.  This means
+that any interactions written Matplotlib's [event
 system](https://matplotlib.org/stable/users/explain/figure/event_handling.html#id1)
-will directly work with no modification.  However, doing the rendering on the
-server side may introduce additional latency in the interaction.
+will directly work with no modification.  However, doing the rendering and
+event handling on the server side will introduce additional latency.
+
+The server provides the hooks to introduce AuthN and AuthZ as well as optionally
+inject identity information into the plot initialization function.
+
+The package contains a TypeScript client and three Python clients (headless, tk
+and Qt) understand the http and websocket protocols that the server provides.
+In addition, in both languages the low-level client classes are exposed for
+custom applications.
 
 ## Minimal example
 
@@ -61,7 +86,8 @@ def plot_init(fig: Figure, params: Params) -> Any:
 
 ```
 
-The actual name of the class and function does not matter.
+The actual name of the class and function do not matter.  If using the default
+configurable application you will need to explicitly export them.
 
 Concretely:
 
@@ -78,7 +104,7 @@ from mpl_fastapi import PlotConfig, InitConfig
 class InitParams(BaseModel):
     """Parameters for sine wave visualization."""
 
-    frequency: float
+    frequency: float = 3.5
 
 
 def create_plot(fig: Figure, params: InitParams) -> None:
@@ -93,8 +119,15 @@ def create_plot(fig: Figure, params: InitParams) -> None:
     ax.legend()
 
 
+# expose your plot to the server
 plots: dict[str, InitConfig] = {
-    "sine": PlotConfig("Sine wave", InitConfig(create_plot, InitParams))
+    "sine": PlotConfig(
+        "Sine wave",
+        InitConfig(
+            create_plot,
+            InitParams,
+        ),
+    )
 }
 
 ```
@@ -111,31 +144,33 @@ found.  Both names are arbitrary so long as the module can be imported.  All of
 the standard `uvicorn` command line flags can be passed and are forwarded
 through to `uvicorn`.
 
-This is a live figure rendered on the server and displayed in a browser.  Each
+Connecting to the displayed url with a browser will show a live figure.  Each
 connection to the server is a new websocket which in turn generates it's own
 `Figure` instance.  Thus, multiple independent clients can be served
-simultaneously.  All of the user events from the browser (mouse motion, mouse
-buttons, key press/release, and enter/exit events) are sent back to the server
-over the websocket and handled on the server side.  Thus, any code that
-currently uses Matplotlib's event system will "just work" out of the box.
+simultaneously and will not conflict with each other.  All of the user events
+from the browser (mouse motion, mouse buttons, key press/release, and
+enter/exit events) are sent back to the server over the websocket and handled
+on the server side.  Thus, any code that currently uses Matplotlib's event
+system will "just work" out of the box.
 
-At this point
+By providing an additional function
 
-## Reference
 
-# Table of Contents
+## Development
 
-```{toctree}
----
-maxdepth: 2
----
-reference.md
-explain.md
-tutorials.md
-how-to.md
+This project uses [pixi](https://pixi.prefix.dev/latest/) for dependency,
+package management, and development tooling.  The three main entry points are:
 
+```bash
+# to run example server with hot-reloading of Python and TS
+pixi run dev
+# serve docs with auto-rebuild
+pixi run docs-serve
+# run all of the linting
+pixi run check
 ```
+
 
 [^1]: In the future it is conceivable that we could auto-construct the
     BaseModel from introspecting the signature, however that FastAPI does not
-    do this
+    do this so it is unlikely to be a good idea.
