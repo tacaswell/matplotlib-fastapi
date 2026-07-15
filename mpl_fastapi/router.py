@@ -140,40 +140,6 @@ def _get_js_hash(filename: str) -> str | None:
     return result[1].strip('"')
 
 
-def _prefix_before(path: str, marker: str) -> str:
-    """Return the router-mount prefix that precedes *marker* in *path*.
-
-    The router exposes its routes under a mount prefix (e.g. ``/plots``),
-    so a request path looks like ``/plots/plot/sine`` or
-    ``/plots/ws/v0/sine``.  Given the marker segment that begins the
-    router-internal portion of the path (``/plot/``, ``/ws/``, ``/plots``),
-    return everything before it (``/plots``), or ``""`` when the router is
-    mounted at the application root.
-
-    This is the single source of truth for deriving the mount prefix from
-    a request URL so that the HTML, JSON, and save handlers all agree.
-    """
-    idx = path.find(marker)
-    if idx == -1:
-        return path.rstrip("/")
-    return path[:idx].rstrip("/")
-
-
-def _http_scheme(request: Request) -> str:
-    """Return the effective HTTP scheme, honoring a reverse proxy."""
-    return request.headers.get("x-forwarded-proto", request.url.scheme)
-
-
-def _request_host(request: Request) -> str:
-    """Return the effective host:port, honoring a reverse proxy."""
-    return request.headers.get("x-forwarded-host", request.headers.get("host", ""))
-
-
-def _ws_scheme(request: Request) -> str:
-    """Return ``wss`` when the page is served over HTTPS, else ``ws``."""
-    return "wss" if _http_scheme(request) == "https" else "ws"
-
-
 def _normalize_origin(origin: str) -> str:
     """Normalize an HTTP ``Origin`` for case/slash-insensitive comparison.
 
@@ -1168,23 +1134,21 @@ def create_mpl_router(
         # Check if update functionality is available (precomputed schema).
         update_params_schema = _update_schemas[plot_name]
 
-        # Derive the router mount prefix (e.g. "/plots") from the request
-        # path "/plots/plot/{name}".
-        base_path = _prefix_before(request.url.path, "/plot/")
+        # Build the WebSocket URL base (scheme + host + prefix) for the template.
+        # The template appends /ws/v0/{fig_id} and query params dynamically.
+        ws_full_url = request.url_for("websocket_endpoint_v0", plot_name=plot_name)
+        ws_uri = str(ws_full_url).rsplit("/ws/v0/", 1)[0]
 
-        # Build the WebSocket origin honoring TLS and any reverse proxy.
-        # Using the forwarded scheme/host fixes mixed-content failures when
-        # the page itself is served over HTTPS (ws:// would be blocked).
-        ws_uri = f"{_ws_scheme(request)}://{_request_host(request)}{base_path}"
+        # Get the JS URL using url_for (the route is dynamically registered).
+        # We need to construct it manually since it's registered via add_api_route.
+        js_full_url = str(request.url_for("view_plot", plot_name=plot_name))
+        base_path = js_full_url.rsplit("/plot/", 1)[0]
+        js_url = f"{base_path}/component.js"
 
         # Extract _update.* values from the page URL so the form can
         # be pre-populated with them instead of schema defaults.
         _init_values, update_values = _split_query_params(dict(request.query_params))
         del _init_values
-
-        # Reference the stable JS URL; the redirect route resolves it to the
-        # current content-hashed bundle (single source of truth for the hash).
-        js_url = f"{base_path}/component.js"
 
         return templates.TemplateResponse(
             request,
@@ -1609,11 +1573,11 @@ def create_mpl_router(
                                 # Clean old files
                                 _clean_old_saved_files(router_state)
 
-                                # Extract the router mount prefix from the
-                                # WebSocket path "/{prefix}/ws/v0/{name}".
-                                base_path = _prefix_before(websocket.url.path, "/ws/")
-
-                                download_url = f"{base_path}/download/{file_id}"
+                                # Build the download URL using websocket.url_for
+                                download_full_url = websocket.url_for(
+                                    "download_saved_file", file_id=file_id
+                                )
+                                download_url = download_full_url.path
 
                                 await websocket.send_json(
                                     {
