@@ -1082,24 +1082,17 @@ def create_mpl_router(
     )
     async def list_plots(request: Request) -> PlotsListResponse:
         """List all available plots with their parameter schemas."""
-        # Derive base URLs from the request so clients get absolute,
-        # ready-to-use WebSocket and HTTP addresses for each plot.
-        http_scheme = _http_scheme(request)
-        host = _request_host(request)
-        ws_scheme = _ws_scheme(request)
-
-        # Extract the router prefix from the request path.
-        # request.url.path for this endpoint is e.g. "/plots/plots".
-        prefix = _prefix_before(request.url.path, "/plots")
-
         plots_info = {}
         for name, config in plot_generators.items():
+            # Use request.url_for to generate URLs — automatically handles
+            # the router mount prefix, reverse proxy headers, and WebSocket
+            # scheme conversion.
             plots_info[name] = PlotInfo(
                 description=config.description,
                 parameters=_init_schemas[name],
                 update_schema=_update_schemas[name],
-                ws_url=f"{ws_scheme}://{host}{prefix}/ws/v0/{name}",
-                view_url=f"{http_scheme}://{host}{prefix}/plot/{name}",
+                ws_url=str(request.url_for("websocket_endpoint_v0", plot_name=name)),
+                view_url=str(request.url_for("view_plot", plot_name=name)),
             )
         return PlotsListResponse(plots=plots_info)
 
