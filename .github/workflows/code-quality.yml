@@ -1,0 +1,38 @@
+name: Code Quality Checks
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Pixi
+        uses: prefix-dev/setup-pixi@v0.9.4
+        with:
+          pixi-version: v0.62.2
+          cache: true
+
+      - name: Run ruff linting (Python)
+        run: pixi run lint
+
+      - name: Run ruff format check (Python)
+        run: pixi run format-check
+
+      - name: Run mypy type checking (Python)
+        run: pixi run typecheck
+
+      - name: Install JavaScript dependencies
+        run: pixi run js-install
+
+      - name: Run ESLint (TypeScript)
+        run: pixi run js-lint
+
+      - name: Run Prettier format check (TypeScript)
+        run: pixi run js-format-check
+
+      - name: Run TypeScript type checking
+        run: pixi run js-typecheck

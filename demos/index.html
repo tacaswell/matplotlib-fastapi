@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Matplotlib FastAPI Demo</title>
+    <style>
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu,
+          Cantarell, sans-serif;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 40px 20px;
+        background-color: #f5f5f5;
+        line-height: 1.6;
+      }
+      h1 {
+        color: #333;
+        border-bottom: 3px solid #4caf50;
+        padding-bottom: 10px;
+      }
+      h2 {
+        color: #555;
+        margin-top: 30px;
+      }
+      .section {
+        background: white;
+        padding: 25px;
+        margin: 20px 0;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      .plot-list {
+        list-style: none;
+        padding: 0;
+      }
+      .plot-list li {
+        margin: 15px 0;
+        padding: 15px;
+        background: #f9f9f9;
+        border-left: 4px solid #4caf50;
+        border-radius: 4px;
+      }
+      .plot-list a {
+        color: #2196f3;
+        text-decoration: none;
+        font-weight: 500;
+        font-size: 1.1em;
+      }
+      .plot-list a:hover {
+        text-decoration: underline;
+      }
+      .plot-list .description {
+        color: #666;
+        margin-top: 5px;
+        font-size: 0.95em;
+      }
+      .highlight {
+        background: #e8f5e9;
+        border-left-color: #4caf50;
+      }
+      code {
+        background: #f4f4f4;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: 'Courier New', monospace;
+        font-size: 0.9em;
+      }
+      .api-link {
+        color: #9c27b0;
+      }
+      .info {
+        background: #e3f2fd;
+        border-left: 4px solid #2196f3;
+        padding: 15px;
+        margin: 15px 0;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🎨 Matplotlib FastAPI Demo</h1>
+
+    <div class="section">
+      <p>
+        Welcome to the matplotlib-fastapi demo! This application demonstrates how to
+        serve interactive matplotlib plots via FastAPI and WebSockets.
+      </p>
+    </div>
+
+    <div class="section">
+      <h2>📊 Full-Page Interactive Plots</h2>
+      <p>View all available plots with their full interactive interface:</p>
+      <ul class="plot-list">
+        <li>
+          <a href="/plots">Browse All Plots</a>
+          <div class="description">
+            View the complete list of available plots with descriptions and parameter
+            schemas. Each plot includes matplotlib's standard toolbar with pan, zoom,
+            and home buttons.
+          </div>
+        </li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>🧩 JavaScript Client</h2>
+      <p>
+        New! Framework-agnostic JavaScript client for integrating matplotlib plots into
+        your own web applications:
+      </p>
+      <ul class="plot-list">
+        <li class="highlight">
+          <a href="/client">JavaScript Client Demo</a>
+          <div class="description">
+            See how to embed matplotlib plots in your own HTML pages using the
+            <code>MatplotlibClient</code> JavaScript class
+          </div>
+        </li>
+        <li class="highlight">
+          <a href="/react-app/">React Integration Example</a>
+          <div class="description">
+            Full React application using the <code>mpl-fastapi</code> npm package with a
+            reusable <code>&lt;MatplotlibPlot&gt;</code> component
+          </div>
+        </li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>🔌 API Endpoints</h2>
+      <ul class="plot-list">
+        <li>
+          <a href="/plots" class="api-link">GET /plots</a>
+          <div class="description">
+            List all available plots with their schemas (JSON)
+          </div>
+        </li>
+        <li>
+          <a href="/plots/component.js" class="api-link">GET /plots/component.js</a>
+          <div class="description">JavaScript bundle for client component</div>
+        </li>
+        <li>
+          <a href="/plots/api/plots/interactive_sine/schema" class="api-link"
+            >GET /plots/api/plots/{name}/schema</a
+          >
+          <div class="description">
+            Get initialization and update schemas for a specific plot (JSON)
+          </div>
+        </li>
+        <li>
+          <a href="/docs" class="api-link">GET /docs</a>
+          <div class="description">Interactive API documentation (Swagger UI)</div>
+        </li>
+      </ul>
+    </div>
+
+    <div class="info">
+      <strong>💡 Tip:</strong> All plots support matplotlib's standard toolbar with pan,
+      zoom, and home buttons. Plots marked with "live updates" also have parameter
+      adjustment forms for real-time interaction.
+    </div>
+  </body>
+</html>

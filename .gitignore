@@ -55,10 +55,16 @@ coverage.xml
 
 # Sphinx documentation
 docs/build/
+docs/_build/
 docs/source/generated/
 
 # pytest
 .pytest_cache/
+test_results/
+
+# Type checker / linter caches
+.mypy_cache/
+.ruff_cache/
 
 # PyBuilder
 target/
@@ -80,3 +86,21 @@ target/
 
 #Ipython Notebook
 .ipynb_checkpoints
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+_version.py
+_version.ts
+
+# JavaScript / Node.js
+node_modules/
+package-lock.json
+mpl_fastapi/static/js/dist/
+*.tsbuildinfo
+
+# Keep directory structure but ignore build outputs
+!mpl_fastapi/static/js/dist/.gitkeep
+
+docs/_ts_api
+docs/source/_as_gen
+docs/source/_static/openapi.json

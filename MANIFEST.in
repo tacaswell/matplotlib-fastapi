@@ -1,16 +1,16 @@
+include .mpl-fastapi-repo
 include AUTHORS.rst
 include CONTRIBUTING.rst
 include LICENSE
 include README.rst
 include requirements.txt
+include pyproject.toml
+include pixi.toml
 
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
 
 recursive-include docs *.rst conf.py Makefile make.bat
-
-include versioneer.py
-include mpl_fastapi/_version.py
-
-# If including data files in the package, add them like:
-# include path/to/data_file
+recursive-include mpl_fastapi/static *
+recursive-include mpl_fastapi/templates *
+include mpl_fastapi/py.typed

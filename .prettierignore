@@ -1,0 +1,13 @@
+# Build outputs
+mpl_fastapi/static/js/dist/
+node_modules/
+
+# Python files (handled by ruff)
+*.py
+
+# Jinja2 templates (prettier breaks the template syntax)
+mpl_fastapi/templates/**/*.html
+
+# Other
+*.md
+*.rst

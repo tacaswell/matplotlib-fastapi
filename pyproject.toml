@@ -1,0 +1,179 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "build_backend"
+backend-path = ["."]
+
+[project]
+name = "mpl-fastapi"
+dynamic = ["version"]
+description = "Matplotlib backend integrated with FastAPI"
+readme = "README.rst"
+requires-python = ">=3.12"
+license = {text = "BSD-3-Clause"}
+authors = [
+    {name = "Thomas A Caswell", email = "tcaswell@gmail.com"},
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: BSD License",
+    "Framework :: FastAPI",
+]
+dependencies = [
+    "fastapi>=0.100.0",
+    "starlette>=0.29.0",  # get new API for templates
+    "matplotlib>=3.10.0",
+    "uvicorn>=0.20.0",
+    "python-multipart>=0.0.6",
+    "websockets>=11.0",
+    "jinja2>=3.1.0",
+    "pillow>=10.0.0",
+    "numpy>=1.24.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/tacaswell/matplotlib-fastapi"
+Repository = "https://github.com/tacaswell/matplotlib-fastapi"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.24.0",
+    "coverage>=7.0.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+]
+docs = [
+    "sphinx>=6.0.0",
+    "pydata-sphinx-theme>=0.15.0",
+    "numpydoc>=1.5.0",
+    "sphinx-copybutton>=0.5.0",
+    "ipython>=8.0.0",
+]
+
+[project.scripts]
+# Serve a user-supplied plots file: mpl-fastapi path/to/plots.py [uvicorn opts]
+mpl-fastapi = "mpl_fastapi.__main__:main"
+# Tk launcher — requires only stdlib Tk (no extra dependencies)
+mpl-fastapi-tk = "mpl_fastapi.remote.backend_tkremote:_main"
+# Qt launcher — requires a Qt binding such as PySide6 or PyQt6
+mpl-fastapi-qt = "mpl_fastapi.remote.backend_qtremote:_main"
+
+[tool.setuptools]
+packages = ["mpl_fastapi"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+mpl_fastapi = ["static/**/*", "templates/**/*", "py.typed"]
+
+[tool.setuptools_scm]
+version_scheme = "post-release"
+local_scheme = "no-local-version"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+extend-select = [
+  "ARG",      # flake8-unused-arguments
+  "B",        # flake8-bugbear
+  "C4",       # flake8-comprehensions
+  "EM",       # flake8-errmsg
+  "EXE",      # flake8-executable
+  "G",        # flake8-logging-format
+  "I",        # isort
+  "ICN",      # flake8-import-conventions
+  "NPY",      # NumPy specific rules
+  "PD",       # pandas-vet
+  "PGH",      # pygrep-hooks
+  "PIE",      # flake8-pie
+  "PL",       # pylint
+  "PT",       # flake8-pytest-style
+  "PTH",      # flake8-use-pathlib
+  "RET",      # flake8-return
+  "RUF",      # Ruff-specific
+  "SIM",      # flake8-simplify
+  "T20",      # flake8-print
+  "UP",       # pyupgrade
+  "YTT"      # flake8-2020
+]
+ignore = [
+  "PLR",    # Design related pylint codes
+  "E501",   # Line too long, trust the formatter to get it right
+  "ISC001", # implicit concat, can be handy
+  # QA for wrong opinions
+  "E741",   # allow l as variable name
+  "ICN001", # allow verbose numpy
+  "RET504", # can use a 'redundent' local if you want
+  "RET505", # return in else (clearer with the `else`)
+  "SIM105", # contextlib.suppress rather than try...except (just use language)
+  "SIM108", # ternaries are not actually clearer (just fewer lines)
+  "PTH123", # Path.open vs open (using the builtin is fine)
+  "PIE804", # creating dict to ** it is fine
+  "C408",   # using dict() is fine
+  "NPY002", # allow the old numpy random generator
+  "EM102",  # use an fstring in an exception if you want
+  "EM101",  # use strings in exceptions if you want
+  "T20",    # Removes print statements
+  "UP015",  # "redundant" read mode is OK
+  "UP031",  # % formats are fine
+  "PLC2401", # allow greek to make equations clearer
+  "PTH113",
+  "SIM102",
+  "SIM114",
+  "SIM115",
+  "PLC0415",
+  "PLW0603",  # trust that if we use global, we mean it.
+]
+unfixable = [
+  "T20",  # Removes print statements
+  "F841" # Removes unused variables
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection markers are designed to be used as argument
+# defaults, so they are not the mutable-default antipattern B008 targets.
+extend-immutable-calls = [
+  "fastapi.Depends",
+  "fastapi.Query",
+  "fastapi.Path",
+  "fastapi.Header",
+  "fastapi.Cookie",
+  "fastapi.Body",
+  "fastapi.Form",
+  "fastapi.File",
+]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+# PySide6 ships no type stubs / py.typed marker, so mypy cannot analyse it.
+# Silence the "missing library stubs" import errors for the Qt remote client.
+[[tool.mypy.overrides]]
+module = ["PySide6", "PySide6.*"]
+ignore_missing_imports = true
+follow_untyped_imports = true
+
+[tool.pyright]
+pythonVersion = "3.12"
+venvPath = ".pixi/envs"
+venv = "default"
+reportUnknownParameterType = "none"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+
+[tool.pytest.ini_options]
+testpaths = ["mpl_fastapi/tests"]
+asyncio_mode = "auto"

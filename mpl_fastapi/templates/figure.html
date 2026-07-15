@@ -1,11 +1,18 @@
 <html>
   <head>
-    <link rel="stylesheet" href="/static/css/page.css" type="text/css">
-    <link rel="stylesheet" href="/static/css/boilerplate.css" type="text/css" />
-    <link rel="stylesheet" href="/static/css/fbm.css" type="text/css" />
-    <link rel="stylesheet" href="/static/css/mpl.css" type="text/css">
-    <script src="/js/mpl.js"></script>
+    <link rel="stylesheet" href="{{ static_path }}/css/page.css" type="text/css">
+    <link rel="stylesheet" href="{{ static_path }}/css/boilerplate.css" type="text/css" />
+    <link rel="stylesheet" href="{{ static_path }}/css/fbm.css" type="text/css" />
+    <link rel="stylesheet" href="{{ static_path }}/css/mpl.css" type="text/css">
     <script>
+      // Set the static path for matplotlib to use
+      window.MPL_STATIC_PATH = "{{ static_path }}";
+    </script>
+    <script src="{{ js_url }}"></script>
+    <script>
+      var mplFigure = null;
+      var lastSentValues = {};
+
       function ready(fn) {
         if (document.readyState != "loading") {
           fn();
@@ -14,14 +21,80 @@
         }
       }
 
+      function markInputDirty(input) {
+        var currentValue = input.value;
+        var lastValue = lastSentValues[input.name];
+
+        if (lastValue !== undefined && currentValue !== lastValue) {
+          input.style.backgroundColor = '#ffffe0';  // light yellow
+        } else {
+          input.style.backgroundColor = '';  // clear background
+        }
+      }
+
+      function initializeDirtyTracking() {
+        var form = document.getElementById('update-form');
+        if (!form) return;
+
+        var inputs = form.querySelectorAll('input[type="number"]');
+        inputs.forEach(function(input) {
+          // Store initial values as last sent values
+          lastSentValues[input.name] = input.value;
+
+          // Add input event listener to check for changes
+          input.addEventListener('input', function() {
+            markInputDirty(input);
+          });
+        });
+      }
+
+      function sendUpdate() {
+        if (mplFigure) {
+          mplFigure.send_update('update-form');
+
+          // Update lastSentValues and clear dirty state
+          var form = document.getElementById('update-form');
+          var inputs = form.querySelectorAll('input[type="number"]');
+          inputs.forEach(function(input) {
+            lastSentValues[input.name] = input.value;
+            input.style.backgroundColor = '';  // clear background
+          });
+        } else {
+          console.error('Figure not initialized');
+        }
+      }
+
       ready(
         function () {
-          var websocket_type = mpl.get_websocket_type();
-          var websocket = new websocket_type(
-              "{{ ws_uri }}/ws/{{ fig_id }}");
-          var fig = new mpl.figure(
-              "{{ fig_id }}", websocket, (figure, format)=>nil,
-              document.getElementById("figure"));
+          // Pass query parameters from the page URL to the WebSocket
+          var ws_url = "{{ ws_uri }}/ws/v0/{{ fig_id }}";
+          if (window.location.search) {
+            // Forward all query params except 'token' (which is for HTTP auth)
+            // and re-attach 'token' separately so it reaches the WS auth dep.
+            var pageParams = new URLSearchParams(window.location.search);
+            var token = pageParams.get('token');
+            // Remove 'token' so it doesn't get misinterpreted as an init param
+            pageParams.delete('token');
+            var remaining = pageParams.toString();
+            if (remaining) {
+              ws_url += '?' + remaining;
+            }
+            if (token) {
+              ws_url += (remaining ? '&' : '?') + 'token=' + encodeURIComponent(token);
+            }
+          }
+          // Create WebSocketManager and Figure, then connect
+          var ws_manager = new mpl.WebSocketManager(ws_url);
+          mplFigure = new mpl.Figure(
+              "{{ fig_id }}",
+              ws_manager,
+              document.getElementById("figure")
+          );
+          // Connect after Figure is initialized and handlers are registered
+          ws_manager.connect();
+
+          // Initialize dirty tracking for update form inputs
+          initializeDirtyTracking();
         }
       );
     </script>
@@ -32,5 +105,45 @@
   <body>
     <div id="mpl-warnings" class="mpl-warnings"></div>
     <div id="figure" style="margin: 10px 10px;"></div>
+
+    {% if update_params_schema %}
+    <div id="update-controls" style="margin: 10px; padding: 10px; border: 1px solid #ccc; background: #f9f9f9;">
+      <h3>Update Parameters</h3>
+      <form id="update-form" onsubmit="event.preventDefault(); sendUpdate(); return false;">
+        {% for prop_name, prop_info in update_params_schema.properties.items() %}
+        <div style="margin: 5px 0;">
+          <label for="{{ prop_name }}">
+            {{ prop_info.get('title', prop_name) }}
+            {% if prop_info.get('description') %}
+            <span style="font-size: 0.9em; color: #666;">({{ prop_info.description }})</span>
+            {% endif %}
+          </label>
+          <input
+            type="number"
+            id="{{ prop_name }}"
+            name="{{ prop_name }}"
+            value="{{ update_values.get(prop_name, prop_info.get('default', 0)) }}"
+            {% if prop_info.get('minimum') is not none %}min="{{ prop_info.minimum }}"{% endif %}
+            {% if prop_info.get('maximum') is not none %}max="{{ prop_info.maximum }}"{% endif %}
+            step="any"
+          />
+        </div>
+        {% endfor %}
+        <button type="button" onclick="sendUpdate()" style="margin-top: 10px;">Update Plot</button>
+      </form>
+    </div>
+    {% endif %}
+
+    {% if watermark %}
+    <div id="watermark" style="margin: 10px; padding: 8px 12px; background: #f0f0f0; border-radius: 4px; font-size: 11px; color: #888; font-family: monospace;">
+      {% for key, value in watermark.items() %}{{ key }}: {{ value }}{% if not loop.last %} | {% endif %}{% endfor %}{% if watermark %} | mpl_fastapi_js: <span id="js-version">…</span>{% endif %}
+    </div>
+    <script>
+      ready(function() {
+        var el = document.getElementById('js-version');
+        if (el && window.mpl && window.mpl.VERSION) el.textContent = window.mpl.VERSION;
+      });
+    </script>
+    {% endif %}
   </body>
 </html>
